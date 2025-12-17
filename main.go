@@ -18,6 +18,20 @@ import (
 var version string = "dev"
 
 func dciConfigDir() string {
+	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+		cfgDir := filepath.Join(dir, "dci")
+
+		// Prefer existing config directories to avoid breaking users on macOS.
+		if _, err := os.Stat(cfgDir); err == nil {
+			return cfgDir
+		}
+		legacy := filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "dci")
+		if _, err := os.Stat(legacy); err == nil {
+			return legacy
+		}
+		return cfgDir
+	}
+
 	return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "dci")
 }
 

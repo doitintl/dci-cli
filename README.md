@@ -77,7 +77,10 @@ This is a thin wrapper around [restish](https://github.com/rest-sh/restish) that
 
 ## Configuration
 
-Config file: `~/Library/Application Support/dci/apis.json`
+Config file (per OS `user config` dir):
+- macOS: `~/Library/Application Support/dci/apis.json` (legacy path still read)
+- Linux: `$XDG_CONFIG_HOME/dci/apis.json` or `~/.config/dci/apis.json`
+- Windows: `%APPDATA%\\dci\\apis.json`
 
 Auto-created on first run. Delete it to reset.
 
