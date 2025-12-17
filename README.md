@@ -1,6 +1,6 @@
-# DCI CLI
+# DCI CLI PoC
 
-A CLI for the DCI API - works exactly like `restish dci` but as a standalone `dci` command. This wrapper builds on Shay’s work (#dci-cli) enabling DCI for restish.
+A CLI PoC for the DCI API - works exactly like `restish dci` but as a standalone `dci` command. This wrapper builds on Shay’s work (#dci-cli), enabling DCI for restish.
 
 ## Installation
 
