@@ -1,16 +1,16 @@
 # DCI CLI
 
-A CLI for the DoiT API - works exactly like `restish dci` but as a standalone `dci` command.
+A CLI for the DCI API - works exactly like `restish dci` but as a standalone `dci` command. This wrapper builds on Shay’s work (#dci-cli) enabling DCI for restish.
 
 ## Installation
 
 ```bash
 # Go install (recommended)
-go install github.com/doitintl/dci-cli@latest
+go install github.com/doitintl/dci-cli-poc@latest
 
 # Or build locally
-git clone https://github.com/doitintl/dci-cli.git
-cd dci-cli
+git clone https://github.com/doitintl/dci-cli-poc.git
+cd dci-cli-poc
 go build -o dci
 
 # Run any command - authentication happens automatically on first use
@@ -55,20 +55,17 @@ The CLI automatically appends `-q customerContext=<TOKEN>` to your calls when a 
 
 ### Examples
 
-```bash
+````bash
 # Get help for any command
 ./dci list-budgets --help
 
 # Use filters and output formats
 ./dci list-budgets -f body.budgets -o json
 
-# Create resources
-./dci create-budget name:"My Budget" amount:1000
-```
-
 ## What This Does
 
 This is a thin wrapper around [restish](https://github.com/rest-sh/restish) that:
+
 - Auto-configures the DoiT API on first run (`https://api.doit.com`)
 - Makes all API commands available directly (no need for `restish dci`)
 - Automatically prompts for OAuth2 authentication when needed
@@ -78,6 +75,7 @@ This is a thin wrapper around [restish](https://github.com/rest-sh/restish) that
 ## Configuration
 
 Config file (per OS `user config` dir):
+
 - macOS: `~/Library/Application Support/dci/apis.json` (legacy path still read)
 - Linux: `$XDG_CONFIG_HOME/dci/apis.json` or `~/.config/dci/apis.json`
 - Windows: `%APPDATA%\\dci\\apis.json`
@@ -90,4 +88,4 @@ Auto-created on first run. Delete it to reset.
 go get -u github.com/rest-sh/restish
 go mod tidy
 go build -o dci
-```
+````
