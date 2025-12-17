@@ -55,13 +55,16 @@ The CLI automatically appends `-q customerContext=<TOKEN>` to your calls when a 
 
 ### Examples
 
-````bash
+```bash
 # Get help for any command
 ./dci list-budgets --help
 
 # Use filters and output formats
 ./dci list-budgets -f body.budgets -o json
 
+# Create resources
+./dci create-budget name:"My Budget" amount:1000
+```
 
 ## What This Does
 
@@ -87,4 +90,4 @@ Auto-created on first run. Delete it to reset.
 go get -u github.com/rest-sh/restish
 go mod tidy
 go build -o dci
-````
+```
