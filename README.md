@@ -1,16 +1,26 @@
-# DCI CLI PoC
+# DCI CLI
 
 A CLI PoC for the DCI API - works exactly like `restish dci` but as a standalone `dci` command. This wrapper builds on Shay’s work (#dci-cli), enabling DCI for restish.
+
+## What This Does
+
+This is a thin wrapper around [restish](https://github.com/rest-sh/restish) that:
+
+- Auto-configures the DoiT API on first run (`https://api.doit.com`)
+- Makes all API commands available directly (no need for `restish dci`)
+- Automatically prompts for OAuth2 authentication when needed
+- Tracks the upstream restish library for updates
+- Single binary - no external dependencies or install scripts
 
 ## Installation
 
 ```bash
 # Go install (recommended)
-go install github.com/doitintl/dci-cli-poc@latest
+go install github.com/doitintl/dci-cli@latest
 
 # Or build locally
-git clone https://github.com/doitintl/dci-cli-poc.git
-cd dci-cli-poc
+git clone https://github.com/doitintl/dci-cli.git
+cd dci-cli
 go build -o dci
 
 # Run any command - authentication happens automatically on first use
@@ -61,16 +71,15 @@ The CLI automatically appends `-q customerContext=<TOKEN>` to your calls when a 
 
 # Use filters and output formats
 ./dci list-budgets -f body.budgets -o json
+````
 
-## What This Does
+## Updating
 
-This is a thin wrapper around [restish](https://github.com/rest-sh/restish) that:
-
-- Auto-configures the DoiT API on first run (`https://api.doit.com`)
-- Makes all API commands available directly (no need for `restish dci`)
-- Automatically prompts for OAuth2 authentication when needed
-- Tracks the upstream restish library for updates
-- Single binary - no external dependencies or install scripts
+```bash
+go get -u github.com/rest-sh/restish
+go mod tidy
+go build -o dci
+````
 
 ## Configuration
 
@@ -81,11 +90,3 @@ Config file (per OS `user config` dir):
 - Windows: `%APPDATA%\\dci\\apis.json`
 
 Auto-created on first run. Delete it to reset.
-
-## Updating
-
-```bash
-go get -u github.com/rest-sh/restish
-go mod tidy
-go build -o dci
-````
