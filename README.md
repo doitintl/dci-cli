@@ -1,12 +1,12 @@
 # DCI CLI
 
-A CLI PoC for the DCI API - works exactly like `restish dci` but as a standalone `dci` command. This wrapper builds on Shay’s work (#dci-cli), enabling DCI for restish.
+A CLI for the DCI API - works exactly like `restish dci` but as a standalone `dci` command. This wrapper builds on Shay's work (#dci-cli), enabling DCI for restish.
 
 ## What This Does
 
 This is a thin wrapper around [restish](https://github.com/rest-sh/restish) that:
 
-- Auto-configures the DoiT API on first run (`https://api.doit.com`)
+- Auto-configures the DCI API on first run (`https://api.doit.com`)
 - Makes all API commands available directly (no need for `restish dci`)
 - Automatically prompts for OAuth2 authentication when needed
 - Tracks the upstream restish library for updates
@@ -65,13 +65,25 @@ The CLI automatically appends `-q customerContext=<TOKEN>` to your calls when a 
 
 ### Examples
 
-````bash
+```bash
 # Get help for any command
 ./dci list-budgets --help
 
 # Use filters and output formats
-./dci list-budgets -f body.budgets -o json
-````
+./dci list-budgets -f body.budgets --output json
+
+# Table output
+./dci list-budgets --output table
+
+# Table options
+# Wrap cells instead of truncating (or use -M wrap)
+./dci list-budgets --output table --table-mode wrap
+# Pick columns to include
+./dci list-budgets --output table --table-columns id,name,amount
+
+# Create resources
+./dci create-budget name:"My Budget" amount:1000
+```
 
 ## Updating
 
@@ -79,7 +91,7 @@ The CLI automatically appends `-q customerContext=<TOKEN>` to your calls when a 
 go get -u github.com/rest-sh/restish
 go mod tidy
 go build -o dci
-````
+```
 
 ## Configuration
 
