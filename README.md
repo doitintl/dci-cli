@@ -63,6 +63,8 @@ If you have access to multiple customer tenants, set a default `customerContext`
 
 The CLI automatically appends `-q customerContext=<TOKEN>` to your calls when a default is set.
 
+Default output format is `table`. Override with `--output json`, `--output yaml`, or `--output auto`.
+
 ### Examples
 
 ```bash
@@ -72,8 +74,8 @@ The CLI automatically appends `-q customerContext=<TOKEN>` to your calls when a 
 # Use filters and output formats
 ./dci list-budgets -f body.budgets --output json
 
-# Table output
-./dci list-budgets --output table
+# Table output (default)
+./dci list-budgets
 
 # Table options
 # Wrap cells instead of truncating (or use -M wrap)

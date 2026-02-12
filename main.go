@@ -330,7 +330,7 @@ func addOutputFlag() {
 		return
 	}
 
-	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, auto")
+	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, auto (default: table)")
 	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate) or wrap (multi-line)")
 	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
@@ -347,6 +347,7 @@ func addOutputFlag() {
 
 		outFlag := cmd.Flags().Lookup("output")
 		if outFlag == nil || !outFlag.Changed {
+			viper.Set("rsh-output-format", "table")
 			if err := defaultToBodyOutput(); err != nil {
 				return err
 			}
