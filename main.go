@@ -462,6 +462,12 @@ func toTableRows(value interface{}) ([]map[string]interface{}, error) {
 		}
 		return rows, nil
 	case map[string]interface{}:
+		// Special case for get-report responses where rows are in
+		// result.rows/results.rows and each row can be an array.
+		if rows, handled, err := extractGetReportRows(v); handled {
+			return rows, err
+		}
+
 		// If this is a list response wrapper, pull out the most likely list field.
 		if list := pickObjectArrayField(v); list != nil {
 			return toTableRows(list)
@@ -471,6 +477,80 @@ func toTableRows(value interface{}) ([]map[string]interface{}, error) {
 	default:
 		return nil, fmt.Errorf("error building table. Must be array of objects")
 	}
+}
+
+func extractGetReportRows(root map[string]interface{}) ([]map[string]interface{}, bool, error) {
+	containers := []string{"result", "results"}
+	for _, key := range containers {
+		rawContainer, ok := root[key]
+		if !ok {
+			continue
+		}
+
+		container, ok := rawContainer.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		rawRows, ok := container["rows"]
+		if !ok {
+			continue
+		}
+
+		rowItems, ok := rawRows.([]interface{})
+		if !ok {
+			// It looked like a get-report container, but rows is malformed.
+			return nil, true, fmt.Errorf("error building table. result.rows must be an array")
+		}
+
+		colNames := readReportSchemaColumnNames(container["schema"])
+		rows := make([]map[string]interface{}, 0, len(rowItems))
+		for _, item := range rowItems {
+			switch row := item.(type) {
+			case map[string]interface{}:
+				rows = append(rows, row)
+			case []interface{}:
+				obj := map[string]interface{}{}
+				for i, cell := range row {
+					obj[reportColumnName(colNames, i)] = cell
+				}
+				rows = append(rows, obj)
+			default:
+				// Defensive fallback for unexpected scalar rows.
+				obj := map[string]interface{}{
+					reportColumnName(colNames, 0): row,
+				}
+				rows = append(rows, obj)
+			}
+		}
+		return rows, true, nil
+	}
+
+	return nil, false, nil
+}
+
+func readReportSchemaColumnNames(rawSchema interface{}) []string {
+	schema, ok := rawSchema.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	names := make([]string, 0, len(schema))
+	for _, col := range schema {
+		if m, ok := col.(map[string]interface{}); ok {
+			if n, ok := m["name"].(string); ok && strings.TrimSpace(n) != "" {
+				names = append(names, n)
+			}
+		}
+	}
+	return names
+}
+
+func reportColumnName(schemaCols []string, i int) string {
+	if i >= 0 && i < len(schemaCols) {
+		return schemaCols[i]
+	}
+	return fmt.Sprintf("col_%d", i+1)
 }
 
 func pickObjectArrayField(m map[string]interface{}) interface{} {
