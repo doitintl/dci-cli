@@ -1,16 +1,15 @@
-# DCI CLI
+# DoiT Cloud Intelligence CLI
 
-A CLI for the DCI API - works exactly like `restish dci` but as a standalone `dci` command. This wrapper builds on Shay's work (#dci-cli), enabling DCI for restish.
+`dci` is the command-line interface for the DoiT Cloud Intelligence API.
+It is built on top of [restish](https://github.com/rest-sh/restish), with DCI preconfigured and optimized for DoiT workflows.
 
 ## What This Does
 
-This is a thin wrapper around [restish](https://github.com/rest-sh/restish) that:
-
 - Auto-configures the DCI API on first run (`https://api.doit.com`)
-- Makes all API commands available directly (no need for `restish dci`)
-- Automatically prompts for OAuth2 authentication when needed
-- Tracks the upstream restish library for updates
-- Single binary - no external dependencies or install scripts
+- Uses OAuth2 with the DoiT console (`https://console.doit.com`)
+- Lets you run DCI API operations directly as `dci <command>`
+- Defaults to body-focused table output for day-to-day FinOps usage
+- Tracks upstream restish improvements
 
 ## Installation
 
@@ -22,69 +21,67 @@ go install github.com/doitintl/dci-cli@latest
 git clone https://github.com/doitintl/dci-cli.git
 cd dci-cli
 go build -o dci
-
-# Run any command - authentication happens automatically on first use
-./dci list-budgets
 ```
 
-That's it! The binary auto-configures itself and prompts for authentication when needed.
+## Quickstart
+
+```bash
+# See local DoiT CLI context
+./dci status
+
+# Common DCI workflows
+./dci list-budgets
+./dci list-reports --output table
+./dci query body.query:"SELECT * FROM aws_cur_2_0 LIMIT 10"
+```
+
+`./dci status` shows local CLI configuration and default context.
 
 ## Usage
 
-All API commands work directly without the `dci` prefix:
+```bash
+# Show all available DCI API commands
+./dci --help
+
+# Show details for a specific command
+./dci list-budgets --help
+```
+
+Help commands are local and do not trigger OAuth:
 
 ```bash
-# These all work:
-./dci list-budgets
-./dci create-report
-./dci query
+./dci
+./dci --help
+./dci help
+```
+
+All API commands work directly without `restish dci`:
+
+```bash
 ./dci list-alerts
+./dci create-report
 ./dci validate
 ```
 
-### See all available commands
+## Output
+
+Default output format is `table`.
+
+You can override with:
+
+- `--output table`
+- `--output json`
+- `--output yaml`
+- `--output auto`
+
+Table options:
 
 ```bash
-./dci --help
-```
-
-This shows all API commands organized by category (Alerts, Budgets, Reports, etc.)
-
-### Customer context defaults (Doers)
-
-If you have access to multiple customer tenants, set a default `customerContext` once and it will be applied to every request (unless you override it with your own `-q` flags):
-
-```bash
-# Set / show / clear the default context
-./dci customer-context set <TOKEN>
-./dci customer-context show
-./dci customer-context clear
-```
-
-The CLI automatically appends `-q customerContext=<TOKEN>` to your calls when a default is set.
-
-Default output format is `table`. Override with `--output json`, `--output yaml`, or `--output auto`.
-
-### Examples
-
-```bash
-# Get help for any command
-./dci list-budgets --help
-
-# Use filters and output formats
-./dci list-budgets -f body.budgets --output json
-
-# Table output (default)
-./dci list-budgets
-
-# Table options
-# Wrap cells instead of truncating (or use -M wrap)
+# Wrap cells instead of truncating
 ./dci list-budgets --output table --table-mode wrap
-# Pick columns to include
-./dci list-budgets --output table --table-columns id,name,amount
 
-# Create resources
-./dci create-budget name:"My Budget" amount:1000
+# Pick columns
+./dci list-budgets --output table --table-columns id,name,amount
 ```
 
 ## Updating
@@ -95,12 +92,31 @@ go mod tidy
 go build -o dci
 ```
 
+## Development
+
+```bash
+# Keep the binary name stable for local use
+go build -o dci .
+
+# Quality checks
+go test ./...
+go vet ./...
+```
+
+CI runs these checks automatically on pull requests and pushes to `main`.
+
 ## Configuration
 
-Config file (per OS `user config` dir):
+Config file (per OS user config directory):
 
 - macOS: `~/Library/Application Support/dci/apis.json` (legacy path still read)
 - Linux: `$XDG_CONFIG_HOME/dci/apis.json` or `~/.config/dci/apis.json`
 - Windows: `%APPDATA%\\dci\\apis.json`
 
 Auto-created on first run. Delete it to reset.
+The CLI currently uses a single fixed profile (`default`).
+Profile override flags (`-p`, `--profile`, `--rsh-profile`) are intentionally disabled.
+
+## Internal Commands
+
+`customer-context` is intentionally hidden from regular help and reserved for internal Doer workflows.

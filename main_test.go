@@ -72,6 +72,8 @@ func TestNormalizeArgs(t *testing.T) {
 }
 
 func TestRejectProfileFlags(t *testing.T) {
+	setupTestRoot(t)
+
 	tests := []struct {
 		name    string
 		args    []string
@@ -86,6 +88,8 @@ func TestRejectProfileFlags(t *testing.T) {
 		{name: "short profile compact", args: []string{"dci", "-pother", "status"}, wantErr: true},
 		{name: "short profile equals", args: []string{"dci", "-p=other", "status"}, wantErr: true},
 		{name: "profile flag later", args: []string{"dci", "status", "-p", "other"}, wantErr: true},
+		{name: "operand after double dash", args: []string{"dci", "status", "--", "-p"}, wantErr: false},
+		{name: "value containing p for another short flag", args: []string{"dci", "-Mprofile", "status"}, wantErr: false},
 		{name: "other short flags", args: []string{"dci", "-hv", "status"}, wantErr: false},
 	}
 
@@ -365,6 +369,7 @@ func setupTestRoot(t *testing.T) {
 	root.PersistentFlags().BoolP("help", "h", false, "")
 	root.PersistentFlags().Bool("version", false, "")
 	root.PersistentFlags().StringP("rsh-profile", "p", "default", "")
+	root.PersistentFlags().StringP("mode", "M", "", "")
 	root.PersistentFlags().String("rsh-timeout", "", "")
 	root.AddCommand(
 		&cobra.Command{Use: "dci"},

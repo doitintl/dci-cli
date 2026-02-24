@@ -176,15 +176,38 @@ func run() (exitCode int) {
 }
 
 func rejectProfileFlags(args []string) error {
+	flags := cli.Root.PersistentFlags()
+
 	for _, arg := range args[1:] {
+		if arg == "--" {
+			// Everything after `--` is a positional operand.
+			return nil
+		}
 		if arg == "--profile" || arg == "--rsh-profile" || strings.HasPrefix(arg, "--profile=") || strings.HasPrefix(arg, "--rsh-profile=") {
 			return fmt.Errorf("profile selection is currently disabled")
 		}
-		if arg == "-p" || strings.HasPrefix(arg, "-p=") || strings.HasPrefix(arg, "-p") {
-			return fmt.Errorf("profile selection is currently disabled")
+		if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") || arg == "-" {
+			continue
 		}
-		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.ContainsRune(arg[1:], 'p') {
-			return fmt.Errorf("profile selection is currently disabled")
+
+		shorts := strings.TrimPrefix(arg, "-")
+		if shorts == "" {
+			continue
+		}
+		if beforeEq, _, ok := strings.Cut(shorts, "="); ok {
+			shorts = beforeEq
+		}
+
+		for i := 0; i < len(shorts); i++ {
+			ch := string(shorts[i])
+			if ch == "p" {
+				return fmt.Errorf("profile selection is currently disabled")
+			}
+			flag := flags.ShorthandLookup(ch)
+			if flag != nil && !isBoolFlag(flag) {
+				// Remaining bytes belong to this flag's value.
+				break
+			}
 		}
 	}
 	return nil
