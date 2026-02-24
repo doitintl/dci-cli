@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/alexeyco/simpletable"
 	"github.com/mattn/go-runewidth"
@@ -41,84 +41,250 @@ func dciConfigDir() string {
 	return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "dci")
 }
 
-func ensureConfig(configDir string) {
+func ensureConfig(configDir string) (bool, error) {
 	configFile := filepath.Join(configDir, "apis.json")
 
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		os.MkdirAll(configDir, 0755)
+	if _, err := os.Stat(configFile); err == nil {
+		if err := tightenFilePermissions(configFile, 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: unable to tighten config permissions for %s: %v\n", configFile, err)
+		}
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
 
-		config := map[string]interface{}{
-			"$schema": "https://rest.sh/schemas/apis.json",
-			"dci": map[string]interface{}{
-				"base": "https://api.doit.com",
-				"profiles": map[string]interface{}{
-					"default": map[string]interface{}{
-						"auth": map[string]interface{}{
-							"name": "oauth-authorization-code",
-							"params": map[string]interface{}{
-								"authorize_url": "https://console.doit.com/sign-in/oauth",
-								"client_id":     "cli",
-								"token_url":     "https://console.doit.com/api/auth/token",
-							},
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return false, err
+	}
+
+	config := map[string]interface{}{
+		"$schema": "https://rest.sh/schemas/apis.json",
+		"dci": map[string]interface{}{
+			"base": "https://api.doit.com",
+			"profiles": map[string]interface{}{
+				"default": map[string]interface{}{
+					"auth": map[string]interface{}{
+						"name": "oauth-authorization-code",
+						"params": map[string]interface{}{
+							"authorize_url": "https://console.doit.com/sign-in/oauth",
+							"client_id":     "cli",
+							"token_url":     "https://console.doit.com/api/auth/token",
 						},
 					},
 				},
-				"tls": map[string]interface{}{},
 			},
-		}
-
-		data, _ := json.MarshalIndent(config, "", "  ")
-		os.WriteFile(configFile, data, 0644)
+			"tls": map[string]interface{}{},
+		},
 	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(configFile, data, 0o600); err != nil {
+		return false, err
+	}
+	if err := tightenFilePermissions(configFile, 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: unable to tighten config permissions for %s: %v\n", configFile, err)
+	}
+
+	return true, nil
+}
+
+func tightenFilePermissions(path string, desired os.FileMode) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	perm := info.Mode().Perm()
+	if perm&^desired == 0 {
+		return nil
+	}
+
+	return os.Chmod(path, desired)
+}
+
+func printFirstRunOnboarding(configured bool) {
+	if !configured || !term.IsTerminal(int(os.Stderr.Fd())) {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr, "DoiT Cloud Intelligence CLI is ready.")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Next steps:")
+	fmt.Fprintln(os.Stderr, "  dci status")
+	fmt.Fprintln(os.Stderr, "  dci list-budgets")
+	fmt.Fprintln(os.Stderr, "  dci list-reports --output table")
+	fmt.Fprintln(os.Stderr, "")
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() (exitCode int) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "dci encountered an internal error: %v\n", r)
+			if os.Getenv("DCI_DEBUG_PANIC") == "1" {
+				debug.PrintStack()
+			}
+			exitCode = 1
+		}
+	}()
+
 	configDir := dciConfigDir()
-	ensureConfig(configDir)
+	configured, err := ensureConfig(configDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize config: %v\n", err)
+		return 1
+	}
 
 	cli.Init("dci", version)
 	cli.Defaults()
 	overrideTableOutput()
+	printFirstRunOnboarding(configured)
 
 	cli.AddLoader(openapi.New())
 	cli.AddAuth("oauth-authorization-code", &oauth.AuthorizationCodeHandler{})
 
+	if err := rejectProfileFlags(os.Args); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
+	// Keep profile fixed until we support multi-profile UX.
+	os.Setenv("RSH_PROFILE", "default")
+	viper.Set("rsh-profile", "default")
+
 	cli.Load("dci", cli.Root)
+	brandDCIRootCommand()
+	registerStatusCommands(configDir)
 	registerCustomerContextCommands(configDir)
 	addOutputFlag()
 	hideGlobalFlags()
 	customizeDCIUsage()
-	customizeDCISubcommandUsage()
 	applyCustomerContext(configDir)
 	lockToDCI()
+	os.Args = normalizeArgs(os.Args)
 
-	// Prepend "dci" to args if not a known root command so users can call
-	// API commands directly without the restish prefix.
-	if len(os.Args) > 1 {
-		firstArg := os.Args[1]
+	if err := cli.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
+	return cli.GetExitCode()
+}
 
-		if len(os.Args) == 2 && (firstArg == "--help" || firstArg == "-h") {
-			// Make `./dci --help` show the DCI commands instead of the generic restish help.
-			os.Args = []string{os.Args[0], "dci", "dci", "--help"}
-		} else if firstArg != "--help" && firstArg != "-h" && firstArg != "--version" {
-			isRootCmd := false
-			for _, cmd := range cli.Root.Commands() {
-				if cmd.Name() == firstArg {
-					isRootCmd = true
-					break
-				}
+func rejectProfileFlags(args []string) error {
+	for _, arg := range args[1:] {
+		if arg == "--profile" || arg == "--rsh-profile" || strings.HasPrefix(arg, "--profile=") || strings.HasPrefix(arg, "--rsh-profile=") {
+			return fmt.Errorf("profile selection is currently disabled")
+		}
+		if arg == "-p" || strings.HasPrefix(arg, "-p=") || strings.HasPrefix(arg, "-p") {
+			return fmt.Errorf("profile selection is currently disabled")
+		}
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.ContainsRune(arg[1:], 'p') {
+			return fmt.Errorf("profile selection is currently disabled")
+		}
+	}
+	return nil
+}
+
+func normalizeArgs(args []string) []string {
+	if len(args) <= 1 {
+		return []string{args[0], "--help"}
+	}
+
+	cmd := firstCommandArg(args)
+	if cmd == "" || cmd == "help" || cmd == "version" || isRootCommand(cmd) {
+		return args
+	}
+
+	return append([]string{args[0], "dci"}, args[1:]...)
+}
+
+func firstCommandArg(args []string) string {
+	flags := cli.Root.PersistentFlags()
+
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1]
 			}
+			return ""
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			return arg
+		}
 
-			if !isRootCmd {
-				os.Args = append([]string{os.Args[0], "dci"}, os.Args[1:]...)
+		// Long flag.
+		if strings.HasPrefix(arg, "--") {
+			name, hasValue := splitLongFlag(arg)
+			if name == "" {
+				continue
 			}
+			if hasValue {
+				continue
+			}
+			flag := flags.Lookup(name)
+			if flag != nil && !isBoolFlag(flag) && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+
+		// Short flag(s), including compact values (e.g. -pfoo).
+		shorts := arg[1:]
+		for j := 0; j < len(shorts); j++ {
+			flag := flags.ShorthandLookup(string(shorts[j]))
+			if flag == nil {
+				continue
+			}
+			if isBoolFlag(flag) {
+				continue
+			}
+			if j == len(shorts)-1 && i+1 < len(args) {
+				i++
+			}
+			break
 		}
 	}
 
-	if err := cli.Run(); err != nil {
-		os.Exit(1)
+	return ""
+}
+
+func splitLongFlag(arg string) (name string, hasValue bool) {
+	s := strings.TrimPrefix(arg, "--")
+	if s == "" {
+		return "", false
 	}
-	os.Exit(cli.GetExitCode())
+	if n, _, ok := strings.Cut(s, "="); ok {
+		return n, true
+	}
+	return s, false
+}
+
+func isBoolFlag(flag *pflag.Flag) bool {
+	if flag == nil || flag.Value == nil {
+		return false
+	}
+	return flag.Value.Type() == "bool"
+}
+
+func isRootCommand(name string) bool {
+	for _, cmd := range cli.Root.Commands() {
+		if cmd.Name() == name {
+			return true
+		}
+		for _, alias := range cmd.Aliases {
+			if alias == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hideGlobalFlags() {
@@ -128,15 +294,11 @@ func hideGlobalFlags() {
 	})
 }
 
-func customizeDCIUsage() {
-	for _, cmd := range cli.Root.Commands() {
-		if cmd.Name() != "dci" {
-			continue
-		}
-
-		cmd.SetUsageTemplate(`Usage:{{if .Runnable}}
+const dciUsageTemplate = `Usage:{{if .Runnable}}
   {{.Use}}{{if .HasAvailableFlags}} [flags]{{end}}{{end}}{{if .HasAvailableSubCommands}}
-  {{.Use}} [command]{{end}}{{if gt (len .Aliases) 0}}
+  dci [command]
+  dci [command] --help{{else}}
+  {{.Use}} --help{{end}}{{if gt (len .Aliases) 0}}
 
 Aliases:
   {{.NameAndAliases}}{{end}}{{if .HasExample}}
@@ -145,28 +307,32 @@ Examples:
 {{.Example}}{{end}}{{if .HasAvailableSubCommands}}{{$cmds := .Commands}}{{if eq (len .Groups) 0}}
 
 Available Commands:{{range $cmds}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
-  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{else}}{{range $group := .Groups}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{else}}{{range $group := .Groups}}{{if hasVisibleCommandsInGroup $cmds $group.ID}}
 
 {{.Title}}{{range $cmds}}{{if (and (eq .GroupID $group.ID) (or .IsAvailableCommand (eq .Name "help")))}}
-  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
 
 Additional Commands:{{range $cmds}}{{if (and (eq .GroupID "") (or .IsAvailableCommand (eq .Name "help")))}}
-  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{if or .HasAvailableLocalFlags .HasAvailableInheritedFlags}}
 
 Flags:
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{if .HasAvailableInheritedFlags}}
 {{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{end}}{{if .HasHelpSubCommands}}
 
 Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
-  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
+  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}
+`
 
-Use "{{.Use}} [command] --help" for more information about a command.{{end}}
-`)
-		break
-	}
-}
+func customizeDCIUsage() {
+	cobra.AddTemplateFunc("hasVisibleCommandsInGroup", func(cmds []*cobra.Command, groupID string) bool {
+		for _, cmd := range cmds {
+			if cmd.GroupID == groupID && (cmd.IsAvailableCommand() || cmd.Name() == "help") {
+				return true
+			}
+		}
+		return false
+	})
 
-func customizeDCISubcommandUsage() {
 	var dciCmd *cobra.Command
 	for _, cmd := range cli.Root.Commands() {
 		if cmd.Name() == "dci" {
@@ -178,40 +344,9 @@ func customizeDCISubcommandUsage() {
 		return
 	}
 
-	tpl := `Usage:{{if .Runnable}}
-  {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
-  {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
-
-Aliases:
-  {{.NameAndAliases}}{{end}}{{if .HasExample}}
-
-Examples:
-{{.Example}}{{end}}{{if .HasAvailableSubCommands}}{{$cmds := .Commands}}{{if eq (len .Groups) 0}}
-
-Available Commands:{{range $cmds}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
-  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{else}}{{range $group := .Groups}}
-
-{{.Title}}{{range $cmds}}{{if (and (eq .GroupID $group.ID) (or .IsAvailableCommand (eq .Name "help")))}}
-  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
-
-Additional Commands:{{range $cmds}}{{if (and (eq .GroupID "") (or .IsAvailableCommand (eq .Name "help")))}}
-  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{if or .HasAvailableLocalFlags .HasAvailableInheritedFlags}}
-
-Flags:
-{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{if .HasAvailableInheritedFlags}}
-{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{end}}{{if .HasHelpSubCommands}}
-
-Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
-  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
-
-Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
-`
-
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if c != dciCmd {
-			c.SetUsageTemplate(tpl)
-		}
+		c.SetUsageTemplate(dciUsageTemplate)
 		for _, child := range c.Commands() {
 			walk(child)
 		}
@@ -226,21 +361,26 @@ func lockToDCI() {
 		"dci":  true,
 		"help": true,
 	}
+	toRemove := make([]*cobra.Command, 0)
 	for _, cmd := range cli.Root.Commands() {
 		if allowed[cmd.Name()] {
 			continue
 		}
 
 		if cmd.Name() == "api" || cmd.Name() == "completion" || cmd.GroupID == "generic" || (cmd.GroupID == "api" && cmd.Name() != "dci") {
-			cli.Root.RemoveCommand(cmd)
+			toRemove = append(toRemove, cmd)
 		}
+	}
+	for _, cmd := range toRemove {
+		cli.Root.RemoveCommand(cmd)
 	}
 }
 
 func registerCustomerContextCommands(configDir string) {
 	cmd := &cobra.Command{
-		Use:   "customer-context",
-		Short: "Manage default customerContext for requests",
+		Use:    "customer-context",
+		Short:  "Manage default customerContext for requests",
+		Hidden: true,
 	}
 
 	cmd.AddCommand(&cobra.Command{
@@ -288,6 +428,54 @@ func registerCustomerContextCommands(configDir string) {
 	})
 
 	cli.Root.AddCommand(cmd)
+}
+
+func brandDCIRootCommand() {
+	for _, cmd := range cli.Root.Commands() {
+		if cmd.Name() != "dci" {
+			continue
+		}
+
+		cmd.Short = "DoiT Cloud Intelligence API CLI"
+		cmd.Long = "Command-line interface for the DoiT Cloud Intelligence API."
+
+		cmd.Example = strings.Join([]string{
+			"  dci list-budgets",
+			"  dci list-reports --output table",
+			"  dci query body.query:\"SELECT * FROM aws_cur_2_0 LIMIT 10\"",
+		}, "\n")
+		return
+	}
+}
+
+func registerStatusCommands(configDir string) {
+	currentOutput := func() string {
+		output := strings.TrimSpace(viper.GetString("rsh-output-format"))
+		if output == "" || output == "auto" {
+			output = "table"
+		}
+		return output
+	}
+
+	renderStatus := func(cmd *cobra.Command, args []string) error {
+		ctx := readCustomerContext(configDir)
+
+		fmt.Fprintln(os.Stdout, "DoiT Cloud Intelligence")
+		fmt.Fprintln(os.Stdout, "API Base: https://api.doit.com")
+		fmt.Fprintf(os.Stdout, "Default Output: %s\n", currentOutput())
+		fmt.Fprintf(os.Stdout, "Config Dir: %s\n", configDir)
+		if ctx != "" {
+			fmt.Fprintf(os.Stdout, "Internal customer context: %s\n", ctx)
+		}
+		return nil
+	}
+
+	cli.Root.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show DoiT CLI configuration and active context",
+		Args:  cobra.NoArgs,
+		RunE:  renderStatus,
+	})
 }
 
 func customerContextPath(configDir string) string {
@@ -883,8 +1071,19 @@ func wrapText(s string, width int) string {
 			currentWidth = 0
 			continue
 		}
+
+		rw := runewidth.RuneWidth(r)
+		if rw < 0 {
+			rw = 0
+		}
+		if currentWidth+rw > width && current.Len() > 0 {
+			lines = append(lines, current.String())
+			current.Reset()
+			currentWidth = 0
+		}
+
 		current.WriteRune(r)
-		currentWidth++
+		currentWidth += rw
 		if currentWidth >= width {
 			lines = append(lines, current.String())
 			current.Reset()
@@ -901,23 +1100,34 @@ func truncateText(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
-	if utf8.RuneCountInString(s) <= width {
+	if runewidth.StringWidth(s) <= width {
 		return s
 	}
+
+	ellipsis := "…"
+	ellipsisWidth := runewidth.StringWidth(ellipsis)
+	if width <= ellipsisWidth {
+		return ellipsis
+	}
+
 	// Leave room for ellipsis.
-	target := width - 1
+	target := width - ellipsisWidth
 	if target < 1 {
 		target = 1
 	}
 	var b strings.Builder
-	count := 0
+	curWidth := 0
 	for _, r := range s {
-		if count >= target {
+		rw := runewidth.RuneWidth(r)
+		if rw < 0 {
+			rw = 0
+		}
+		if curWidth+rw > target {
 			break
 		}
 		b.WriteRune(r)
-		count++
+		curWidth += rw
 	}
-	b.WriteString("…")
+	b.WriteString(ellipsis)
 	return b.String()
 }
