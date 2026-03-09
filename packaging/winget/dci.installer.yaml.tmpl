@@ -1,0 +1,16 @@
+PackageIdentifier: DoiT.dci
+PackageVersion: __VERSION__
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: dci.exe
+    PortableCommandAlias: dci
+Installers:
+  - Architecture: x64
+    InstallerUrl: __WINDOWS_AMD64_URL__
+    InstallerSha256: __WINDOWS_AMD64_SHA256__
+  - Architecture: arm64
+    InstallerUrl: __WINDOWS_ARM64_URL__
+    InstallerSha256: __WINDOWS_ARM64_SHA256__
+ManifestType: installer
+ManifestVersion: 1.6.0

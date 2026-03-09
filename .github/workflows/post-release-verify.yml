@@ -1,0 +1,174 @@
+name: Post-release Verify
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew-smoke:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${{ github.event.release.tag_name }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/verify
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern checksums.txt \
+            --dir dist/verify
+
+      - name: Render formula
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          bash packaging/render.sh \
+            dist/verify/checksums.txt "$version" "$base_url" \
+            packaging/homebrew/dci.rb.tmpl dist/verify/dci.rb
+
+      - name: Install via Homebrew formula
+        run: |
+          brew install --formula ./dist/verify/dci.rb
+          dci --version
+          dci --help >/dev/null
+
+  linux-deb-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${{ github.event.release.tag_name }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download amd64 deb
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/verify
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "*_amd64.deb" \
+            --dir dist/verify
+
+      - name: Install and verify
+        run: |
+          set -euo pipefail
+          pkg="$(find dist/verify -maxdepth 1 -type f -name '*_amd64.deb' | head -n 1)"
+          if [ -z "$pkg" ]; then
+            echo "ERROR: No amd64 .deb found in dist/verify" >&2
+            ls -la dist/verify/
+            exit 1
+          fi
+          sudo dpkg -i "$pkg"
+          dci --version
+          dci --help >/dev/null
+
+  linux-rpm-smoke:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${{ github.event.release.tag_name }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Install gh CLI
+        run: dnf install -y gh
+
+      - name: Download amd64 rpm
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/verify
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "*_amd64.rpm" \
+            --dir dist/verify
+
+      - name: Install and verify
+        run: |
+          set -euo pipefail
+          pkg="$(find dist/verify -maxdepth 1 -type f -name '*_amd64.rpm' | head -n 1)"
+          if [ -z "$pkg" ]; then
+            echo "ERROR: No amd64 .rpm found in dist/verify" >&2
+            ls -la dist/verify/
+            exit 1
+          fi
+          dnf install -y "$pkg"
+          dci --version
+          dci --help >/dev/null
+
+  windows-zip-smoke:
+    runs-on: windows-latest
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${{ github.event.release.tag_name }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download amd64 zip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/verify
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "*_windows_amd64.zip" \
+            --dir dist/verify
+
+      - name: Extract and verify
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist/verify/*_windows_amd64.zip | Select-Object -First 1
+          Expand-Archive -Path $zip.FullName -DestinationPath dist/verify/windows
+          & "$PWD\dist\verify\windows\dci.exe" --version
+          & "$PWD\dist\verify\windows\dci.exe" --help | Out-Null

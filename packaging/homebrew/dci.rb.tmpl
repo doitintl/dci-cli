@@ -1,0 +1,34 @@
+class Dci < Formula
+  desc "DoiT Cloud Intelligence CLI"
+  homepage "https://github.com/doitintl/dci-cli"
+  version "__VERSION__"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "__DARWIN_ARM64_URL__"
+      sha256 "__DARWIN_ARM64_SHA256__"
+    else
+      url "__DARWIN_AMD64_URL__"
+      sha256 "__DARWIN_AMD64_SHA256__"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "__LINUX_ARM64_URL__"
+      sha256 "__LINUX_ARM64_SHA256__"
+    else
+      url "__LINUX_AMD64_URL__"
+      sha256 "__LINUX_AMD64_SHA256__"
+    end
+  end
+
+  def install
+    bin.install "dci"
+  end
+
+  test do
+    output = shell_output("#{bin}/dci --help")
+    assert_match "DoiT Cloud Intelligence", output
+  end
+end

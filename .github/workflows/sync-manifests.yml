@@ -1,0 +1,108 @@
+name: Sync Package Manifests
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to render and sync
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-manifests
+  cancel-in-progress: false
+
+jobs:
+  render-and-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Resolve release tag
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${{ github.event.release.tag_name }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/render
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern checksums.txt \
+            --dir dist/render
+
+      - name: Render manifests
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          cs="dist/render/checksums.txt"
+
+          bash packaging/render.sh "$cs" "$version" "$base_url" \
+            packaging/homebrew/dci.rb.tmpl dist/render/homebrew/dci.rb
+
+          bash packaging/render.sh "$cs" "$version" "$base_url" \
+            packaging/scoop/dci.json.tmpl dist/render/scoop/dci.json
+
+          bash packaging/render.sh "$cs" "$version" "$base_url" \
+            packaging/winget/dci.yaml.tmpl dist/render/winget/DoiT.dci.yaml
+
+          bash packaging/render.sh "$cs" "$version" "$base_url" \
+            packaging/winget/dci.installer.yaml.tmpl dist/render/winget/DoiT.dci.installer.yaml
+
+          bash packaging/render.sh "$cs" "$version" "$base_url" \
+            packaging/winget/dci.locale.en-US.yaml.tmpl dist/render/winget/DoiT.dci.locale.en-US.yaml
+
+      - name: Upload rendered manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-manifests-${{ steps.release.outputs.tag }}
+          path: dist/render
+
+      - name: Commit Homebrew formula and Scoop manifest
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          cp dist/render/homebrew/dci.rb Formula/dci.rb
+          cp dist/render/scoop/dci.json bucket/dci.json
+
+          if git diff --quiet -- Formula/dci.rb bucket/dci.json; then
+            echo "Homebrew formula and Scoop manifest already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/dci.rb bucket/dci.json
+          git commit -m "Update Homebrew formula and Scoop manifest for ${TAG}"
+          git push
+
+      - name: Summarize WinGet handoff
+        run: |
+          {
+            echo "### WinGet"
+            echo
+            echo "Rendered WinGet manifests are attached as a workflow artifact."
+            echo "Submit the files in dist/render/winget to microsoft/winget-pkgs for this release."
+          } >> "$GITHUB_STEP_SUMMARY"

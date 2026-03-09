@@ -1,0 +1,76 @@
+version: 2
+
+project_name: dci
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: dci
+    main: .
+    binary: dci
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: bundle
+    ids:
+      - dci
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: doitintl
+    name: dci-cli
+  draft: false
+  prerelease: auto
+
+nfpms:
+  - id: linux-packages
+    ids:
+      - dci
+    package_name: dci
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    homepage: https://github.com/doitintl/dci-cli
+    maintainer: DoiT
+    description: DoiT Cloud Intelligence CLI
+    vendor: DoiT
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_linux_{{ .Arch }}.{{ .Format }}"
+    contents:
+      - src: ./README.md
+        dst: /usr/share/doc/dci/README.md

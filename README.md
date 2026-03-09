@@ -14,7 +14,23 @@ It is built on top of [restish](https://github.com/rest-sh/restish), with DCI pr
 ## Installation
 
 ```bash
-# Go install (recommended)
+# Homebrew (preferred on macOS; also works for Homebrew-on-Linux users)
+brew install doitintl/dci-cli/dci
+
+# Windows
+winget install DoiT.dci
+
+# Or, for Scoop users
+scoop bucket add doitintl https://github.com/doitintl/dci-cli
+scoop install dci
+
+# Linux (.deb) — download from https://github.com/doitintl/dci-cli/releases/latest
+sudo dpkg -i dci_*_linux_amd64.deb
+
+# Linux (.rpm)
+sudo rpm -i dci_*_linux_amd64.rpm
+
+# Go install fallback
 go install github.com/doitintl/dci-cli@latest
 
 # Or build locally
@@ -22,6 +38,10 @@ git clone https://github.com/doitintl/dci-cli.git
 cd dci-cli
 go build -o dci
 ```
+
+Tagged releases also publish prebuilt tarballs/zip files plus Linux `.deb` and `.rpm`
+packages. See `DISTRIBUTION.md` for release operations and packaging details.
+Package-manager installs become available after the first tagged release is published.
 
 ## Quickstart
 
@@ -87,9 +107,17 @@ Table options:
 ## Updating
 
 ```bash
-go get -u github.com/rest-sh/restish
-go mod tidy
-go build -o dci
+# Homebrew
+brew update && brew upgrade dci
+
+# Windows (WinGet)
+winget upgrade DoiT.dci
+
+# Windows (Scoop)
+scoop update dci
+
+# Go install fallback
+go install github.com/doitintl/dci-cli@latest
 ```
 
 ## Development
@@ -104,6 +132,8 @@ go vet ./...
 ```
 
 CI runs these checks automatically on pull requests and pushes to `main`.
+Tagged releases additionally run GoReleaser, publish GitHub release assets, render
+package-manager manifests, and execute post-release smoke checks.
 
 ## Configuration
 

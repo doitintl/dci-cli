@@ -1,4 +1,5 @@
 dci
+dist/
 *.exe
 *.dll
 *.so
