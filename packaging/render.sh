@@ -30,7 +30,6 @@ darwin_arm64="dci_${version}_darwin_arm64.tar.gz"
 linux_amd64="dci_${version}_linux_amd64.tar.gz"
 linux_arm64="dci_${version}_linux_arm64.tar.gz"
 windows_amd64="dci_${version}_windows_amd64.zip"
-windows_arm64="dci_${version}_windows_arm64.zip"
 
 # Resolve all checksums upfront so missing hashes fail before any rendering.
 sha_darwin_amd64="$(sha_for "$darwin_amd64")"
@@ -38,7 +37,6 @@ sha_darwin_arm64="$(sha_for "$darwin_arm64")"
 sha_linux_amd64="$(sha_for "$linux_amd64")"
 sha_linux_arm64="$(sha_for "$linux_arm64")"
 sha_windows_amd64="$(sha_for "$windows_amd64")"
-sha_windows_arm64="$(sha_for "$windows_arm64")"
 
 mkdir -p "$(dirname "$output")"
 
@@ -54,6 +52,4 @@ sed \
   -e "s|__LINUX_ARM64_SHA256__|${sha_linux_arm64}|g" \
   -e "s|__WINDOWS_AMD64_URL__|${base_url}/${windows_amd64}|g" \
   -e "s|__WINDOWS_AMD64_SHA256__|${sha_windows_amd64}|g" \
-  -e "s|__WINDOWS_ARM64_URL__|${base_url}/${windows_arm64}|g" \
-  -e "s|__WINDOWS_ARM64_SHA256__|${sha_windows_arm64}|g" \
   "$template" > "$output"

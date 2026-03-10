@@ -44,7 +44,7 @@ The goal is:
 3. `release.yml` runs and publishes:
    - macOS tarballs (`amd64`, `arm64`)
    - Linux tarballs (`amd64`, `arm64`)
-   - Windows zip files (`amd64`, `arm64`)
+   - Windows zip files (`amd64`)
    - Linux `.deb` and `.rpm`
    - `checksums.txt`
 
@@ -70,7 +70,6 @@ The release pipeline expects these archive names:
 - `dci_<version>_linux_amd64.tar.gz`
 - `dci_<version>_linux_arm64.tar.gz`
 - `dci_<version>_windows_amd64.zip`
-- `dci_<version>_windows_arm64.zip`
 
 Linux package names:
 
@@ -88,6 +87,7 @@ Linux package names:
 - the package templates in `packaging/` are the human-reviewed source used by the manifest render workflow
 - `packaging/render.sh` exits non-zero if any expected checksum is missing from `checksums.txt`, preventing manifests with blank hashes
 - WinGet is intentionally generated but not auto-submitted here; that keeps the repo automation simple and avoids coupling this repository to a fork-and-PR flow for `winget-pkgs`
+- Windows ARM64 is currently excluded because the `goreleaser-cross` Docker image is missing the `aarch64-w64-mingw32-gcc` compiler ([goreleaser-cross#117](https://github.com/goreleaser/goreleaser-cross/issues/117)); remove the `ignore` entry in `.goreleaser.yaml` and restore the ARM64 sections in the packaging templates when the upstream image is fixed
 
 ## Rollback
 

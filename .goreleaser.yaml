@@ -21,10 +21,7 @@ builds:
           {{- if eq .Arch "amd64" }}CC=x86_64-linux-gnu-gcc
           {{- else }}CC=aarch64-linux-gnu-gcc
           {{- end }}
-        {{- else if eq .Os "windows" }}
-          {{- if eq .Arch "amd64" }}CC=x86_64-w64-mingw32-gcc
-          {{- else }}CC=/llvm-mingw/bin/aarch64-w64-mingw32-gcc
-          {{- end }}
+        {{- else if eq .Os "windows" }}CC=x86_64-w64-mingw32-gcc
         {{- end }}
       - >-
         {{- if eq .Os "darwin" }}
@@ -35,10 +32,7 @@ builds:
           {{- if eq .Arch "amd64" }}CXX=x86_64-linux-gnu-g++
           {{- else }}CXX=aarch64-linux-gnu-g++
           {{- end }}
-        {{- else if eq .Os "windows" }}
-          {{- if eq .Arch "amd64" }}CXX=x86_64-w64-mingw32-g++
-          {{- else }}CXX=/llvm-mingw/bin/aarch64-w64-mingw32-g++
-          {{- end }}
+        {{- else if eq .Os "windows" }}CXX=x86_64-w64-mingw32-g++
         {{- end }}
     goos:
       - darwin
@@ -47,6 +41,12 @@ builds:
     goarch:
       - amd64
       - arm64
+    ignore:
+      # goreleaser-cross is missing the llvm-mingw ARM64 compiler
+      # (https://github.com/goreleaser/goreleaser-cross/issues/117).
+      # Re-enable when the upstream image ships aarch64-w64-mingw32-gcc.
+      - goos: windows
+        goarch: arm64
     ldflags:
       - -s -w -X main.version={{ .Version }}
 
