@@ -126,6 +126,10 @@ func TestLockToDCI(t *testing.T) {
 
 	lockToDCI()
 
+	if !cli.Root.CompletionOptions.DisableDefaultCmd {
+		t.Fatalf("expected default completion command to be disabled")
+	}
+
 	got := make([]string, 0)
 	for _, cmd := range cli.Root.Commands() {
 		got = append(got, cmd.Name())
@@ -135,6 +139,70 @@ func TestLockToDCI(t *testing.T) {
 	want := []string{"dci", "help", "status"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("remaining commands = %v, want %v", got, want)
+	}
+}
+
+func TestBrandRootAndDCICommands(t *testing.T) {
+	oldRoot := cli.Root
+	root := &cobra.Command{Use: "dci"}
+	dciCmd := &cobra.Command{Use: "dci"}
+	root.AddCommand(dciCmd)
+	cli.Root = root
+	t.Cleanup(func() {
+		cli.Root = oldRoot
+	})
+
+	brandRootCommand()
+	brandDCIRootCommand()
+
+	if cli.Root.Short != "DoiT Cloud Intelligence CLI" {
+		t.Fatalf("root short = %q", cli.Root.Short)
+	}
+	if cli.Root.Long != dciLongDescription {
+		t.Fatalf("root long = %q", cli.Root.Long)
+	}
+	if cli.Root.Example != strings.Join(rootExamples, "\n") {
+		t.Fatalf("root example mismatch:\n%s", cli.Root.Example)
+	}
+	if cli.Root.UsageTemplate() != dciUsageTemplate {
+		t.Fatalf("root usage template mismatch")
+	}
+
+	if dciCmd.Short != "DoiT Cloud Intelligence API CLI" {
+		t.Fatalf("dci short = %q", dciCmd.Short)
+	}
+	if dciCmd.Long != dciLongDescription {
+		t.Fatalf("dci long = %q", dciCmd.Long)
+	}
+	if dciCmd.Example != strings.Join(apiExamples, "\n") {
+		t.Fatalf("dci example mismatch:\n%s", dciCmd.Example)
+	}
+}
+
+func TestCustomizeDCIUsageAppliesTemplateRecursively(t *testing.T) {
+	oldRoot := cli.Root
+	root := &cobra.Command{Use: "dci"}
+	dciCmd := &cobra.Command{Use: "dci"}
+	child := &cobra.Command{Use: "list-budgets"}
+	grandChild := &cobra.Command{Use: "get-report"}
+	child.AddCommand(grandChild)
+	dciCmd.AddCommand(child)
+	root.AddCommand(dciCmd)
+	cli.Root = root
+	t.Cleanup(func() {
+		cli.Root = oldRoot
+	})
+
+	customizeDCIUsage()
+
+	if dciCmd.UsageTemplate() != dciUsageTemplate {
+		t.Fatalf("dci command usage template mismatch")
+	}
+	if child.UsageTemplate() != dciUsageTemplate {
+		t.Fatalf("child usage template mismatch")
+	}
+	if grandChild.UsageTemplate() != dciUsageTemplate {
+		t.Fatalf("grandchild usage template mismatch")
 	}
 }
 

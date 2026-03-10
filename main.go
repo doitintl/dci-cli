@@ -347,6 +347,20 @@ Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
   {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}
 `
 
+const dciLongDescription = "Command-line interface for the DoiT Cloud Intelligence API."
+
+var rootExamples = []string{
+	"  dci status",
+	"  dci list-budgets",
+	"  dci list-reports --output table",
+}
+
+var apiExamples = []string{
+	"  dci list-budgets",
+	"  dci list-reports --output table",
+	"  dci query body.query:\"SELECT * FROM aws_cur_2_0 LIMIT 10\"",
+}
+
 func customizeDCIUsage() {
 	cobra.AddTemplateFunc("hasVisibleCommandsInGroup", func(cmds []*cobra.Command, groupID string) bool {
 		for _, cmd := range cmds {
@@ -378,14 +392,17 @@ func customizeDCIUsage() {
 	walk(dciCmd)
 }
 
+func applyCommandBranding(cmd *cobra.Command, short string, examples []string) {
+	if cmd == nil {
+		return
+	}
+	cmd.Short = short
+	cmd.Long = dciLongDescription
+	cmd.Example = strings.Join(examples, "\n")
+}
+
 func brandRootCommand() {
-	cli.Root.Short = "DoiT Cloud Intelligence CLI"
-	cli.Root.Long = "Command-line interface for the DoiT Cloud Intelligence API."
-	cli.Root.Example = strings.Join([]string{
-		"  dci status",
-		"  dci list-budgets",
-		"  dci list-reports --output table",
-	}, "\n")
+	applyCommandBranding(cli.Root, "DoiT Cloud Intelligence CLI", rootExamples)
 	cli.Root.SetUsageTemplate(dciUsageTemplate)
 }
 
@@ -472,15 +489,7 @@ func brandDCIRootCommand() {
 		if cmd.Name() != "dci" {
 			continue
 		}
-
-		cmd.Short = "DoiT Cloud Intelligence API CLI"
-		cmd.Long = "Command-line interface for the DoiT Cloud Intelligence API."
-
-		cmd.Example = strings.Join([]string{
-			"  dci list-budgets",
-			"  dci list-reports --output table",
-			"  dci query body.query:\"SELECT * FROM aws_cur_2_0 LIMIT 10\"",
-		}, "\n")
+		applyCommandBranding(cmd, "DoiT Cloud Intelligence API CLI", apiExamples)
 		return
 	}
 }
