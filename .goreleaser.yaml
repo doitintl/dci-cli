@@ -12,6 +12,34 @@ builds:
     binary: dci
     env:
       - CGO_ENABLED=1
+      - >-
+        {{- if eq .Os "darwin" }}
+          {{- if eq .Arch "amd64" }}CC=o64-clang
+          {{- else }}CC=oa64-clang
+          {{- end }}
+        {{- else if eq .Os "linux" }}
+          {{- if eq .Arch "amd64" }}CC=x86_64-linux-gnu-gcc
+          {{- else }}CC=aarch64-linux-gnu-gcc
+          {{- end }}
+        {{- else if eq .Os "windows" }}
+          {{- if eq .Arch "amd64" }}CC=x86_64-w64-mingw32-gcc
+          {{- else }}CC=/llvm-mingw/bin/aarch64-w64-mingw32-gcc
+          {{- end }}
+        {{- end }}
+      - >-
+        {{- if eq .Os "darwin" }}
+          {{- if eq .Arch "amd64" }}CXX=o64-clang++
+          {{- else }}CXX=oa64-clang++
+          {{- end }}
+        {{- else if eq .Os "linux" }}
+          {{- if eq .Arch "amd64" }}CXX=x86_64-linux-gnu-g++
+          {{- else }}CXX=aarch64-linux-gnu-g++
+          {{- end }}
+        {{- else if eq .Os "windows" }}
+          {{- if eq .Arch "amd64" }}CXX=x86_64-w64-mingw32-g++
+          {{- else }}CXX=/llvm-mingw/bin/aarch64-w64-mingw32-g++
+          {{- end }}
+        {{- end }}
     goos:
       - darwin
       - linux
