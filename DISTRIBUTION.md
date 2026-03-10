@@ -12,7 +12,7 @@ The goal is:
 ## Release channels
 
 - GitHub Releases: canonical source of binaries, checksums, and Linux packages
-- Homebrew: `brew install doitintl/dci-cli/dci`
+- Homebrew: `brew tap doitintl/dci-cli https://github.com/doitintl/dci-cli && brew install doitintl/dci-cli/dci`
 - Scoop: `scoop bucket add doitintl https://github.com/doitintl/dci-cli && scoop install dci`
 - WinGet: `winget install DoiT.dci`
 - Linux packages: `.deb` and `.rpm` release assets
