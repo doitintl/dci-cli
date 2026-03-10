@@ -15,7 +15,6 @@ It is built on top of [restish](https://github.com/rest-sh/restish), with DCI pr
 
 ```bash
 # Homebrew (preferred on macOS; also works for Homebrew-on-Linux users)
-brew tap doitintl/dci-cli https://github.com/doitintl/dci-cli
 brew install doitintl/dci-cli/dci
 
 # Windows

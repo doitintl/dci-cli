@@ -12,7 +12,7 @@ The goal is:
 ## Release channels
 
 - GitHub Releases: canonical source of binaries, checksums, and Linux packages
-- Homebrew: `brew tap doitintl/dci-cli https://github.com/doitintl/dci-cli && brew install doitintl/dci-cli/dci`
+- Homebrew: `brew install doitintl/dci-cli/dci`
 - Scoop: `scoop bucket add doitintl https://github.com/doitintl/dci-cli && scoop install dci`
 - WinGet: `winget install DoiT.dci`
 - Linux packages: `.deb` and `.rpm` release assets
@@ -88,6 +88,7 @@ Linux package names:
 - `packaging/render.sh` exits non-zero if any expected checksum is missing from `checksums.txt`, preventing manifests with blank hashes
 - WinGet is intentionally generated but not auto-submitted here; that keeps the repo automation simple and avoids coupling this repository to a fork-and-PR flow for `winget-pkgs`
 - Windows ARM64 is currently excluded because the `goreleaser-cross` Docker image is missing the `aarch64-w64-mingw32-gcc` compiler ([goreleaser-cross#117](https://github.com/goreleaser/goreleaser-cross/issues/117)); remove the `ignore` entry in `.goreleaser.yaml` and restore the ARM64 sections in the packaging templates when the upstream image is fixed
+- Homebrew tap works via a GitHub redirect: `doitintl/homebrew-dci-cli` redirects to `doitintl/dci-cli`. Do not create a repo named `homebrew-dci-cli` in the org — it would break the redirect and the `brew install` one-liner
 
 ## Rollback
 
