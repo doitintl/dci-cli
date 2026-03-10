@@ -10,6 +10,8 @@ builds:
   - id: dci
     main: .
     binary: dci
+    env:
+      - CGO_ENABLED=1
     goos:
       - darwin
       - linux
