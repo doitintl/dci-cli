@@ -200,6 +200,7 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 			t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
 		}
 		assertNoOAuthOrPanic(t, res.output)
+		assertRootHelpBranded(t, res.output)
 	})
 
 	t.Run("help flag stays offline", func(t *testing.T) {
@@ -211,6 +212,7 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 			t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
 		}
 		assertNoOAuthOrPanic(t, res.output)
+		assertRootHelpBranded(t, res.output)
 	})
 
 	t.Run("help command stays offline", func(t *testing.T) {
@@ -336,6 +338,19 @@ func assertNoOAuthOrPanic(t *testing.T, out string) {
 	}
 	if strings.Contains(strings.ToLower(out), "panic") {
 		t.Fatalf("unexpected panic output:\n%s", out)
+	}
+}
+
+func assertRootHelpBranded(t *testing.T, out string) {
+	t.Helper()
+	if strings.Contains(out, "A generic client for REST-ish APIs") {
+		t.Fatalf("unexpected stock restish root help:\n%s", out)
+	}
+	if strings.Contains(out, "\n  completion       ") {
+		t.Fatalf("unexpected completion command in root help:\n%s", out)
+	}
+	if !strings.Contains(out, "Command-line interface for the DoiT Cloud Intelligence API.") {
+		t.Fatalf("missing DCI root branding in help output:\n%s", out)
 	}
 }
 

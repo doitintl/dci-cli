@@ -158,6 +158,7 @@ func run() (exitCode int) {
 	viper.Set("rsh-profile", "default")
 
 	cli.Load("dci", cli.Root)
+	brandRootCommand()
 	brandDCIRootCommand()
 	registerStatusCommands(configDir)
 	registerCustomerContextCommands(configDir)
@@ -377,7 +378,20 @@ func customizeDCIUsage() {
 	walk(dciCmd)
 }
 
+func brandRootCommand() {
+	cli.Root.Short = "DoiT Cloud Intelligence CLI"
+	cli.Root.Long = "Command-line interface for the DoiT Cloud Intelligence API."
+	cli.Root.Example = strings.Join([]string{
+		"  dci status",
+		"  dci list-budgets",
+		"  dci list-reports --output table",
+	}, "\n")
+	cli.Root.SetUsageTemplate(dciUsageTemplate)
+}
+
 func lockToDCI() {
+	cli.Root.CompletionOptions.DisableDefaultCmd = true
+
 	// Remove API management commands, generic RESTish commands, and any
 	// additional API entrypoints so users can only call the DCI API.
 	allowed := map[string]bool{
