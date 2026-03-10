@@ -56,7 +56,9 @@ jobs:
 
       - name: Install via Homebrew formula
         run: |
-          brew install --formula ./dist/verify/dci.rb
+          brew tap-new verify/test
+          cp dist/verify/dci.rb "$(brew --repository)/Library/Taps/verify/homebrew-test/Formula/dci.rb"
+          brew install verify/test/dci
           dci --version
           dci --help >/dev/null
 

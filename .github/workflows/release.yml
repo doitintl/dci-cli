@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -31,3 +32,11 @@ jobs:
             -e CGO_ENABLED=1 \
             ghcr.io/goreleaser/goreleaser-cross:v1.25.7 \
             release --clean
+
+      - name: Trigger downstream workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh workflow run "Sync Package Manifests" --field tag="$tag"
+          gh workflow run "Post-release Verify" --field tag="$tag"

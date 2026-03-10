@@ -87,14 +87,15 @@ jobs:
           cp dist/render/homebrew/dci.rb Formula/dci.rb
           cp dist/render/scoop/dci.json bucket/dci.json
 
-          if git diff --quiet -- Formula/dci.rb bucket/dci.json; then
+          git add Formula/dci.rb bucket/dci.json
+
+          if git diff --cached --quiet -- Formula/dci.rb bucket/dci.json; then
             echo "Homebrew formula and Scoop manifest already up to date."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/dci.rb bucket/dci.json
           git commit -m "Update Homebrew formula and Scoop manifest for ${TAG}"
           git push
 
