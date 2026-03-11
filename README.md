@@ -8,9 +8,6 @@
 # macOS (Homebrew)
 brew install doitintl/dci-cli/dci
 
-# Windows (WinGet)
-winget install DoiT.dci
-
 # Windows (Scoop)
 scoop bucket add doitintl https://github.com/doitintl/dci-cli
 scoop install dci
@@ -77,9 +74,6 @@ dci list-budgets --table-columns id,name,amount
 ```bash
 # macOS (Homebrew)
 brew update && brew upgrade dci
-
-# Windows (WinGet)
-winget upgrade DoiT.dci
 
 # Windows (Scoop)
 scoop update dci
