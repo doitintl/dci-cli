@@ -161,6 +161,7 @@ func run() (exitCode int) {
 	brandRootCommand()
 	brandDCIRootCommand()
 	registerStatusCommands(configDir)
+	registerAuthCommands()
 	registerCustomerContextCommands(configDir)
 	addOutputFlag()
 	hideGlobalFlags()
@@ -412,8 +413,10 @@ func lockToDCI() {
 	// Remove API management commands, generic RESTish commands, and any
 	// additional API entrypoints so users can only call the DCI API.
 	allowed := map[string]bool{
-		"dci":  true,
-		"help": true,
+		"dci":    true,
+		"help":   true,
+		"login":  true,
+		"logout": true,
 	}
 	toRemove := make([]*cobra.Command, 0)
 	for _, cmd := range cli.Root.Commands() {
@@ -521,6 +524,45 @@ func registerStatusCommands(configDir string) {
 		Short: "Show DoiT CLI configuration and active context",
 		Args:  cobra.NoArgs,
 		RunE:  renderStatus,
+	})
+}
+
+func registerAuthCommands() {
+	cli.Root.AddCommand(&cobra.Command{
+		Use:     "login",
+		Aliases: []string{"auth", "init"},
+		Short:   "Authenticate with the DoiT Console",
+		Long:    "Opens a browser window to sign in via the DoiT Console. Credentials are cached locally for subsequent commands.",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Trigger the OAuth flow by calling a lightweight endpoint.
+			os.Args = []string{os.Args[0], "dci", "validate"}
+			if err := cli.Run(); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stderr, "Authenticated successfully.")
+			return nil
+		},
+	})
+
+	cli.Root.AddCommand(&cobra.Command{
+		Use:   "logout",
+		Short: "Clear stored authentication credentials",
+		Long:  "Removes cached OAuth tokens. You will need to sign in again on the next API call.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			profile := viper.GetString("rsh-profile")
+			key := "dci:" + profile
+			cli.Cache.Set(key+".token", "")
+			cli.Cache.Set(key+".refresh", "")
+			cli.Cache.Set(key+".type", "")
+			cli.Cache.Set(key+".expires", nil)
+			if err := cli.Cache.WriteConfig(); err != nil {
+				return fmt.Errorf("failed to clear credentials: %w", err)
+			}
+			fmt.Fprintln(os.Stdout, "Logged out. Credentials cleared.")
+			return nil
+		},
 	})
 }
 

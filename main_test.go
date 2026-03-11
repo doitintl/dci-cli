@@ -118,6 +118,8 @@ func TestLockToDCI(t *testing.T) {
 		&cobra.Command{Use: "dci", GroupID: "api"},
 		&cobra.Command{Use: "help"},
 		&cobra.Command{Use: "status"},
+		&cobra.Command{Use: "login"},
+		&cobra.Command{Use: "logout"},
 		&cobra.Command{Use: "api"},
 		&cobra.Command{Use: "completion"},
 		&cobra.Command{Use: "generic-cmd", GroupID: "generic"},
@@ -136,7 +138,7 @@ func TestLockToDCI(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	want := []string{"dci", "help", "status"}
+	want := []string{"dci", "help", "login", "logout", "status"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("remaining commands = %v, want %v", got, want)
 	}
