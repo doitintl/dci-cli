@@ -99,11 +99,59 @@ jobs:
           git commit -m "Update Homebrew formula and Scoop manifest for ${TAG}"
           git push
 
-      - name: Summarize WinGet handoff
+      - name: Submit WinGet manifests to winget-pkgs
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          WINGET_GH_PAT: ${{ secrets.WINGET_GH_PAT }}
         run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          if [ -z "${WINGET_GH_PAT}" ]; then
+            echo "::warning::WINGET_GH_PAT secret not set — skipping WinGet submission."
+            echo "### WinGet" >> "$GITHUB_STEP_SUMMARY"
+            echo "Skipped: \`WINGET_GH_PAT\` secret is not configured." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Clone the fork (created once via: gh repo fork microsoft/winget-pkgs)
+          WINGET_FORK="${WINGET_FORK:-apgiorgi/winget-pkgs}"
+          git clone --depth 1 \
+            "https://x-access-token:${WINGET_GH_PAT}@github.com/${WINGET_FORK}.git" \
+            /tmp/winget-pkgs
+
+          cd /tmp/winget-pkgs
+          git remote add upstream https://github.com/microsoft/winget-pkgs.git
+          git fetch upstream master --depth 1
+          git checkout -b "DoiT.dci-${version}" upstream/master
+
+          # Copy rendered manifests
+          manifest_dir="manifests/d/DoiT/dci/${version}"
+          mkdir -p "${manifest_dir}"
+          cp "${GITHUB_WORKSPACE}/dist/render/winget/"* "${manifest_dir}/"
+
+          git add "${manifest_dir}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "New version: DoiT.dci version ${version}"
+          git push -u origin "DoiT.dci-${version}"
+
+          # Create PR to microsoft/winget-pkgs
+          fork_owner="${WINGET_FORK%%/*}"
+          pr_url=$(GH_TOKEN="${WINGET_GH_PAT}" gh pr create \
+            --repo microsoft/winget-pkgs \
+            --head "${fork_owner}:DoiT.dci-${version}" \
+            --title "New version: DoiT.dci version ${version}" \
+            --body "## New version: DoiT.dci version ${version}
+
+          - **PackageIdentifier:** DoiT.dci
+          - **PackageVersion:** ${version}
+          - **InstallerUrl:** https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/dci_${version}_windows_amd64.zip
+
+          Auto-submitted by [dci-cli CI](https://github.com/${GITHUB_REPOSITORY}/actions).")
+
           {
             echo "### WinGet"
             echo
-            echo "Rendered WinGet manifests are attached as a workflow artifact."
-            echo "Submit the files in dist/render/winget to microsoft/winget-pkgs for this release."
+            echo "Submitted PR to microsoft/winget-pkgs: ${pr_url}"
           } >> "$GITHUB_STEP_SUMMARY"
