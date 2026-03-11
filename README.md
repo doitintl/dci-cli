@@ -23,9 +23,12 @@ Prebuilt binaries for all platforms are available on the [Releases](https://gith
 
 ## Getting Started
 
-On first run, `dci` automatically configures itself and opens a browser window for authentication via the DoiT Console.
+On first run, `dci` automatically configures itself and opens a browser window for authentication via the DoiT Console. You can also sign in explicitly:
 
 ```bash
+# Sign in to the DoiT Console
+dci login
+
 # Check your CLI configuration
 dci status
 
@@ -79,15 +82,26 @@ brew update && brew upgrade dci
 scoop update dci
 ```
 
+## Authentication
+
+By default, `dci` authenticates interactively via the DoiT Console (OAuth). For CI pipelines and non-interactive environments, set the `DCI_API_KEY` environment variable:
+
+```bash
+export DCI_API_KEY=<your-api-key>
+dci list-budgets --output json
+```
+
+When `DCI_API_KEY` is set, the CLI skips the browser-based login and authenticates using the API key directly. Run `dci status` to verify the active auth method.
+
 ## Configuration
 
 Configuration is stored in your OS user config directory:
 
-| OS      | Path                                                        |
-|---------|-------------------------------------------------------------|
-| macOS   | `~/Library/Application Support/dci/apis.json`               |
-| Linux   | `~/.config/dci/apis.json`                                   |
-| Windows | `%APPDATA%\dci\apis.json`                                   |
+| OS      | Path                                          |
+| ------- | --------------------------------------------- |
+| macOS   | `~/Library/Application Support/dci/apis.json` |
+| Linux   | `~/.config/dci/apis.json`                     |
+| Windows | `%APPDATA%\dci\apis.json`                     |
 
 The config file is created automatically on first run. Delete it to reset to defaults.
 

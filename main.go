@@ -158,6 +158,7 @@ func run() (exitCode int) {
 	viper.Set("rsh-profile", "default")
 
 	cli.Load("dci", cli.Root)
+	applyAPIKeyAuth()
 	brandRootCommand()
 	brandDCIRootCommand()
 	registerStatusCommands(configDir)
@@ -511,10 +512,15 @@ func registerStatusCommands(configDir string) {
 
 		fmt.Fprintln(os.Stdout, "DoiT Cloud Intelligence")
 		fmt.Fprintln(os.Stdout, "API Base: https://api.doit.com")
+		fmt.Fprintf(os.Stdout, "Auth: %s\n", authSource())
 		fmt.Fprintf(os.Stdout, "Default Output: %s\n", currentOutput())
 		fmt.Fprintf(os.Stdout, "Config Dir: %s\n", configDir)
 		if ctx != "" {
-			fmt.Fprintf(os.Stdout, "Internal customer context: %s\n", ctx)
+			if os.Getenv("DCI_CUSTOMER_CONTEXT") != "" {
+				fmt.Fprintf(os.Stdout, "Customer context: %s (DCI_CUSTOMER_CONTEXT)\n", ctx)
+			} else {
+				fmt.Fprintf(os.Stdout, "Customer context: %s\n", ctx)
+			}
 		}
 		return nil
 	}
@@ -527,6 +533,27 @@ func registerStatusCommands(configDir string) {
 	})
 }
 
+func applyAPIKeyAuth() {
+	apiKey := os.Getenv("DCI_API_KEY")
+	if apiKey == "" {
+		return
+	}
+
+	profile := viper.GetString("rsh-profile")
+	key := "dci:" + profile
+	cli.Cache.Set(key+".token", apiKey)
+	cli.Cache.Set(key+".type", "Bearer")
+	cli.Cache.Set(key+".expires", "9999-12-31T23:59:59Z")
+	cli.Cache.Set(key+".refresh", "")
+}
+
+func authSource() string {
+	if os.Getenv("DCI_API_KEY") != "" {
+		return "API key (DCI_API_KEY)"
+	}
+	return "OAuth (DoiT Console)"
+}
+
 func registerAuthCommands() {
 	cli.Root.AddCommand(&cobra.Command{
 		Use:     "login",
@@ -535,6 +562,9 @@ func registerAuthCommands() {
 		Long:    "Opens a browser window to sign in via the DoiT Console. Credentials are cached locally for subsequent commands.",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if os.Getenv("DCI_API_KEY") != "" {
+				return fmt.Errorf("login is not needed when DCI_API_KEY is set")
+			}
 			// Trigger the OAuth flow by calling a lightweight endpoint.
 			os.Args = []string{os.Args[0], "dci", "validate"}
 			if err := cli.Run(); err != nil {
@@ -551,6 +581,9 @@ func registerAuthCommands() {
 		Long:  "Removes cached OAuth tokens. You will need to sign in again on the next API call.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if os.Getenv("DCI_API_KEY") != "" {
+				return fmt.Errorf("logout has no effect when DCI_API_KEY is set; unset the environment variable instead")
+			}
 			profile := viper.GetString("rsh-profile")
 			key := "dci:" + profile
 			cli.Cache.Set(key+".token", "")
@@ -571,6 +604,9 @@ func customerContextPath(configDir string) string {
 }
 
 func readCustomerContext(configDir string) string {
+	if ctx := os.Getenv("DCI_CUSTOMER_CONTEXT"); ctx != "" {
+		return strings.TrimSpace(ctx)
+	}
 	data, err := os.ReadFile(customerContextPath(configDir))
 	if err != nil {
 		return ""

@@ -317,6 +317,50 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		assertPrivateFilePerms(t, configPath)
 	})
 
+	t.Run("status shows oauth by default", func(t *testing.T) {
+		home := t.TempDir()
+		res := runCLIWithHome(t, bin, home, "status")
+		if res.timedOut {
+			t.Fatalf("command timed out; output:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "Auth: OAuth (DoiT Console)") {
+			t.Fatalf("expected OAuth auth source in status:\n%s", res.output)
+		}
+	})
+
+	t.Run("status shows api key when DCI_API_KEY set", func(t *testing.T) {
+		home := t.TempDir()
+		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_KEY=test-key"}, "status")
+		if res.timedOut {
+			t.Fatalf("command timed out; output:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "Auth: API key (DCI_API_KEY)") {
+			t.Fatalf("expected API key auth source in status:\n%s", res.output)
+		}
+	})
+
+	t.Run("login rejected when DCI_API_KEY set", func(t *testing.T) {
+		home := t.TempDir()
+		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_KEY=test-key"}, "login")
+		if res.exitCode == 0 {
+			t.Fatalf("expected non-zero exit; output:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "login is not needed when DCI_API_KEY is set") {
+			t.Fatalf("expected login rejection message:\n%s", res.output)
+		}
+	})
+
+	t.Run("logout rejected when DCI_API_KEY set", func(t *testing.T) {
+		home := t.TempDir()
+		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_KEY=test-key"}, "logout")
+		if res.exitCode == 0 {
+			t.Fatalf("expected non-zero exit; output:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "unset the environment variable") {
+			t.Fatalf("expected logout rejection message:\n%s", res.output)
+		}
+	})
+
 	t.Run("profile short flag rejected cleanly", func(t *testing.T) {
 		res := runCLI(t, bin, "-p", "other", "status")
 		if res.timedOut {
@@ -371,6 +415,35 @@ func buildBinary(t *testing.T) string {
 func runCLI(t *testing.T, bin string, args ...string) cliResult {
 	t.Helper()
 	return runCLIWithHome(t, bin, t.TempDir(), args...)
+}
+
+func runCLIWithEnv(t *testing.T, bin string, home string, extraEnv []string, args ...string) cliResult {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, args...)
+	xdg := filepath.Join(home, "xdg")
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		"XDG_CONFIG_HOME="+xdg,
+	)
+	cmd.Env = append(cmd.Env, extraEnv...)
+
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return cliResult{exitCode: -1, output: string(out), timedOut: true}
+	}
+	if err == nil {
+		return cliResult{exitCode: 0, output: string(out)}
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return cliResult{exitCode: exitErr.ExitCode(), output: string(out)}
+	}
+
+	t.Fatalf("command failed to start: %v", err)
+	return cliResult{}
 }
 
 func runCLIWithHome(t *testing.T, bin string, home string, args ...string) cliResult {
