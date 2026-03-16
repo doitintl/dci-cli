@@ -18,7 +18,7 @@ Commits without these prefixes appear in the GitHub Release changelog. Use prefi
 - GoReleaser v2 via `goreleaser-cross` Docker image
 - Tag `v*` triggers `release.yml` → `sync-manifests.yml` + `post-release-verify.yml`
 - Manifests (`Formula/dci.rb`, `bucket/dci.json`) are committed to main by CI
-- WinGet manifests generated but require manual PR to `microsoft/winget-pkgs`
+- WinGet manifests submitted automatically via PR to `microsoft/winget-pkgs`
 
 ## Key Files
 

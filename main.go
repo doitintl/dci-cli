@@ -84,9 +84,6 @@ func ensureConfig(configDir string) (bool, error) {
 	if err := os.WriteFile(configFile, data, 0o600); err != nil {
 		return false, err
 	}
-	if err := tightenFilePermissions(configFile, 0o600); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: unable to tighten config permissions for %s: %v\n", configFile, err)
-	}
 
 	return true, nil
 }
@@ -363,6 +360,15 @@ var apiExamples = []string{
 	"  dci query body.query:\"SELECT * FROM aws_cur_2_0 LIMIT 10\"",
 }
 
+func findDCICommand() *cobra.Command {
+	for _, cmd := range cli.Root.Commands() {
+		if cmd.Name() == "dci" {
+			return cmd
+		}
+	}
+	return nil
+}
+
 func customizeDCIUsage() {
 	cobra.AddTemplateFunc("hasVisibleCommandsInGroup", func(cmds []*cobra.Command, groupID string) bool {
 		for _, cmd := range cmds {
@@ -373,13 +379,7 @@ func customizeDCIUsage() {
 		return false
 	})
 
-	var dciCmd *cobra.Command
-	for _, cmd := range cli.Root.Commands() {
-		if cmd.Name() == "dci" {
-			dciCmd = cmd
-			break
-		}
-	}
+	dciCmd := findDCICommand()
 	if dciCmd == nil {
 		return
 	}
@@ -489,13 +489,7 @@ func registerCustomerContextCommands(configDir string) {
 }
 
 func brandDCIRootCommand() {
-	for _, cmd := range cli.Root.Commands() {
-		if cmd.Name() != "dci" {
-			continue
-		}
-		applyCommandBranding(cmd, "DoiT Cloud Intelligence API CLI", apiExamples)
-		return
-	}
+	applyCommandBranding(findDCICommand(), "DoiT Cloud Intelligence API CLI", apiExamples)
 }
 
 func registerStatusCommands(configDir string) {
@@ -631,13 +625,7 @@ func applyCustomerContext(configDir string) {
 }
 
 func addOutputFlag() {
-	var dciCmd *cobra.Command
-	for _, cmd := range cli.Root.Commands() {
-		if cmd.Name() == "dci" {
-			dciCmd = cmd
-			break
-		}
-	}
+	dciCmd := findDCICommand()
 	if dciCmd == nil {
 		return
 	}
@@ -660,21 +648,16 @@ func addOutputFlag() {
 		outFlag := cmd.Flags().Lookup("output")
 		if outFlag == nil || !outFlag.Changed {
 			viper.Set("rsh-output-format", "table")
-			if err := defaultToBodyOutput(); err != nil {
-				return err
-			}
 		} else {
 			out := strings.TrimSpace(outFlag.Value.String())
 			switch out {
 			case "table", "json", "yaml", "auto":
 				viper.Set("rsh-output-format", out)
-				if err := defaultToBodyOutput(); err != nil {
-					return err
-				}
 			default:
 				return fmt.Errorf("invalid --output %q (supported: table, json, yaml, auto)", out)
 			}
 		}
+		defaultToBodyOutput()
 
 		if flag := cmd.Flags().Lookup("table-mode"); flag != nil {
 			v := strings.TrimSpace(flag.Value.String())
@@ -687,37 +670,31 @@ func addOutputFlag() {
 			v := strings.TrimSpace(flag.Value.String())
 			viper.Set("table-columns", v)
 		}
-		if flag := cmd.Flags().Lookup("table-width"); flag != nil {
-			width, _ := strconv.Atoi(flag.Value.String())
-			if width < 0 {
-				width = 0
-			}
-			viper.Set("table-width", width)
-		}
-		if flag := cmd.Flags().Lookup("table-max-col-width"); flag != nil {
-			maxw, _ := strconv.Atoi(flag.Value.String())
-			if maxw < 0 {
-				maxw = 0
-			}
-			viper.Set("table-max-col-width", maxw)
-		}
+		bindNonNegativeIntFlag(cmd, "table-width")
+		bindNonNegativeIntFlag(cmd, "table-max-col-width")
 
 		return nil
 	}
 }
 
-func defaultToBodyOutput() error {
+func bindNonNegativeIntFlag(cmd *cobra.Command, name string) {
+	if flag := cmd.Flags().Lookup(name); flag != nil {
+		v, _ := strconv.Atoi(flag.Value.String())
+		if v < 0 {
+			v = 0
+		}
+		viper.Set(name, v)
+	}
+}
+
+func defaultToBodyOutput() {
 	// By default restish prints response status + headers for TTY output when no
 	// filter is specified. This CLI is primarily focused on the response body,
 	// so default to `body` unless the user explicitly requested raw output or a
 	// filter was already set.
-	if viper.GetBool("rsh-raw") {
-		return nil
-	}
-	if viper.GetString("rsh-filter") == "" {
+	if !viper.GetBool("rsh-raw") && viper.GetString("rsh-filter") == "" {
 		viper.Set("rsh-filter", "body")
 	}
-	return nil
 }
 
 type dciTableContentType struct{}
@@ -1000,8 +977,6 @@ func tableDisplayWidth(s string) int {
 	return max
 }
 
-var tableOverheadCache = map[int]int{}
-
 func computeColumnWidths(cols int, terminalWidth int, maxColWidth int) []int {
 	if cols <= 0 {
 		return nil
@@ -1039,29 +1014,8 @@ func tableOverhead(cols int) int {
 	if cols <= 0 {
 		return 0
 	}
-	if v, ok := tableOverheadCache[cols]; ok {
-		return v
-	}
-
-	keys := make([]string, cols)
-	rows := []map[string]interface{}{{}}
-	for i := 0; i < cols; i++ {
-		keys[i] = fmt.Sprintf("c%d", i)
-		rows[0][keys[i]] = "a"
-	}
-
-	widths := make([]int, cols)
-	for i := 0; i < cols; i++ {
-		widths[i] = 1
-	}
-
-	s, _ := buildTableString(rows, keys, widths, "fit", 0)
-	overhead := tableDisplayWidth(s) - cols
-	if overhead < 0 {
-		overhead = 0
-	}
-	tableOverheadCache[cols] = overhead
-	return overhead
+	// simpletable StyleUnicode: 2 outer borders + 1 left pad + 2 separator per column = 1 + 4*cols
+	return 1 + 4*cols
 }
 
 func buildTableString(rows []map[string]interface{}, keys []string, colWidths []int, mode string, targetWidth int) (string, error) {
@@ -1144,13 +1098,6 @@ func padCell(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-cur)
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func collectKeys(rows []map[string]interface{}, preferred []string) []string {

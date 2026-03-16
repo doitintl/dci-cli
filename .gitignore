@@ -1,4 +1,5 @@
 dci
+dci-cli
 dist/
 *.exe
 *.dll
