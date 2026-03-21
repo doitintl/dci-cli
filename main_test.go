@@ -60,6 +60,36 @@ func TestNormalizeArgs(t *testing.T) {
 			in:   []string{"dci", "--rsh-timeout", "5s", "list-budgets"},
 			out:  []string{"dci", "dci", "--rsh-timeout", "5s", "list-budgets"},
 		},
+		{
+			name: "completion stays local",
+			in:   []string{"dci", "completion", "zsh"},
+			out:  []string{"dci", "completion", "zsh"},
+		},
+		{
+			name: "__complete with empty arg stays at root",
+			in:   []string{"dci", "__complete", ""},
+			out:  []string{"dci", "__complete", ""},
+		},
+		{
+			name: "__complete with root command stays at root",
+			in:   []string{"dci", "__complete", "status", ""},
+			out:  []string{"dci", "__complete", "status", ""},
+		},
+		{
+			name: "__complete with api command gets dci prefix",
+			in:   []string{"dci", "__complete", "list-budgets", ""},
+			out:  []string{"dci", "__complete", "dci", "list-budgets", ""},
+		},
+		{
+			name: "__completeNoDesc with api command gets dci prefix",
+			in:   []string{"dci", "__completeNoDesc", "list-budgets", "--"},
+			out:  []string{"dci", "__completeNoDesc", "dci", "list-budgets", "--"},
+		},
+		{
+			name: "__completeNoDesc with root command stays at root",
+			in:   []string{"dci", "__completeNoDesc", "login", ""},
+			out:  []string{"dci", "__completeNoDesc", "login", ""},
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,16 +152,11 @@ func TestLockToDCI(t *testing.T) {
 		&cobra.Command{Use: "login"},
 		&cobra.Command{Use: "logout"},
 		&cobra.Command{Use: "api"},
-		&cobra.Command{Use: "completion"},
 		&cobra.Command{Use: "generic-cmd", GroupID: "generic"},
 		&cobra.Command{Use: "other-api", GroupID: "api"},
 	)
 
 	lockToDCI()
-
-	if !cli.Root.CompletionOptions.DisableDefaultCmd {
-		t.Fatalf("expected default completion command to be disabled")
-	}
 
 	got := make([]string, 0)
 	for _, cmd := range cli.Root.Commands() {
@@ -378,6 +403,40 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		}
 	})
 
+	t.Run("completion help stays offline", func(t *testing.T) {
+		res := runCLI(t, bin, "completion", "--help")
+		if res.timedOut {
+			t.Fatalf("command timed out; output:\n%s", res.output)
+		}
+		if res.exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
+		}
+		assertNoOAuthOrPanic(t, res.output)
+		for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+			if !strings.Contains(res.output, shell) {
+				t.Fatalf("completion help missing %s subcommand:\n%s", shell, res.output)
+			}
+		}
+	})
+
+	t.Run("completion generates valid script", func(t *testing.T) {
+		for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+			t.Run(shell, func(t *testing.T) {
+				res := runCLI(t, bin, "completion", shell)
+				if res.timedOut {
+					t.Fatalf("command timed out; output:\n%s", res.output)
+				}
+				if res.exitCode != 0 {
+					t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
+				}
+				assertNoOAuthOrPanic(t, res.output)
+				if len(res.output) < 100 {
+					t.Fatalf("completion script suspiciously short (%d bytes):\n%s", len(res.output), res.output)
+				}
+			})
+		}
+	})
+
 	t.Run("profile long flag rejected cleanly", func(t *testing.T) {
 		res := runCLI(t, bin, "--profile", "other", "status")
 		if res.timedOut {
@@ -489,9 +548,6 @@ func assertRootHelpBranded(t *testing.T, out string) {
 	t.Helper()
 	if strings.Contains(out, "A generic client for REST-ish APIs") {
 		t.Fatalf("unexpected stock restish root help:\n%s", out)
-	}
-	if strings.Contains(out, "\n  completion       ") {
-		t.Fatalf("unexpected completion command in root help:\n%s", out)
 	}
 	if !strings.Contains(out, "Command-line interface for the DoiT Cloud Intelligence API.") {
 		t.Fatalf("missing DCI root branding in help output:\n%s", out)

@@ -167,6 +167,7 @@ func run() (exitCode int) {
 	customizeDCIUsage()
 	applyCustomerContext(configDir)
 	lockToDCI()
+	setupCompletion()
 	os.Args = normalizeArgs(os.Args)
 
 	if err := cli.Run(); err != nil {
@@ -220,11 +221,57 @@ func normalizeArgs(args []string) []string {
 	}
 
 	cmd := firstCommandArg(args)
-	if cmd == "" || cmd == "help" || cmd == "version" || isRootCommand(cmd) {
+	if cmd == "" || cmd == "help" || cmd == "version" || cmd == "completion" || isRootCommand(cmd) {
 		return args
 	}
 
+	// __complete and __completeNoDesc are hidden cobra commands invoked by
+	// shell completion scripts. The args after them mirror user input and
+	// need the same "dci" prefix insertion so cobra resolves completions
+	// under the API subcommand.
+	if cmd == "__complete" || cmd == "__completeNoDesc" {
+		return normalizeCompletionArgs(args, cmd)
+	}
+
 	return append([]string{args[0], "dci"}, args[1:]...)
+}
+
+// normalizeCompletionArgs inserts "dci" after __complete/__completeNoDesc when
+// the completion target is an API command (not a root command). This mirrors
+// normalizeArgs so that tab-completion resolves under the API subcommand.
+func normalizeCompletionArgs(args []string, completionCmd string) []string {
+	// Find the position of __complete/__completeNoDesc.
+	idx := -1
+	for i, a := range args {
+		if a == completionCmd {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || idx+1 >= len(args) {
+		return args
+	}
+
+	// Check the first arg after the completion command — if it's a root
+	// command (or empty), let cobra handle it at root level.
+	tail := args[idx+1:]
+	first := ""
+	for _, a := range tail {
+		if !strings.HasPrefix(a, "-") {
+			first = a
+			break
+		}
+	}
+	if first == "" || first == "help" || isRootCommand(first) {
+		return args
+	}
+
+	// Insert "dci" after the completion command to route into the API subcommand.
+	result := make([]string, 0, len(args)+1)
+	result = append(result, args[:idx+1]...)
+	result = append(result, "dci")
+	result = append(result, tail...)
+	return result
 }
 
 func firstCommandArg(args []string) string {
@@ -410,15 +457,14 @@ func brandRootCommand() {
 }
 
 func lockToDCI() {
-	cli.Root.CompletionOptions.DisableDefaultCmd = true
-
 	// Remove API management commands, generic RESTish commands, and any
 	// additional API entrypoints so users can only call the DCI API.
 	allowed := map[string]bool{
-		"dci":    true,
-		"help":   true,
-		"login":  true,
-		"logout": true,
+		"completion": true,
+		"dci":        true,
+		"help":       true,
+		"login":      true,
+		"logout":     true,
 	}
 	toRemove := make([]*cobra.Command, 0)
 	for _, cmd := range cli.Root.Commands() {
@@ -426,13 +472,115 @@ func lockToDCI() {
 			continue
 		}
 
-		if cmd.Name() == "api" || cmd.Name() == "completion" || cmd.GroupID == "generic" || (cmd.GroupID == "api" && cmd.Name() != "dci") {
+		if cmd.Name() == "api" || cmd.GroupID == "generic" || (cmd.GroupID == "api" && cmd.Name() != "dci") {
 			toRemove = append(toRemove, cmd)
 		}
 	}
 	for _, cmd := range toRemove {
 		cli.Root.RemoveCommand(cmd)
 	}
+}
+
+// setupCompletion configures shell completion and root help so that API
+// commands appear at root level (alongside status, login, etc.).
+//
+// The "dci" API subcommand is hidden since users access its commands directly
+// via normalizeArgs. Its ValidArgsFunction (which returns URL paths from
+// restish) is cleared so completions show command names instead.
+//
+// Restish lazily loads API operations inside cli.Run() by inspecting os.Args
+// for the API name. For root-level completion and help, restish skips loading
+// because __complete and --help args are filtered out. We work around this by
+// triggering the load on demand.
+func setupCompletion() {
+	var dciCmd *cobra.Command
+	for _, cmd := range cli.Root.Commands() {
+		if cmd.Name() == "dci" {
+			dciCmd = cmd
+			break
+		}
+	}
+	if dciCmd == nil {
+		return
+	}
+
+	// Hide the "dci" namespace — users interact with API commands at root level.
+	dciCmd.Hidden = true
+
+	// Clear restish's ValidArgsFunction that returns URL paths.
+	dciCmd.ValidArgsFunction = nil
+
+	// loadAPI triggers lazy API loading into the dci subcommand. Restish's
+	// cli.Run() normally does this by parsing os.Args, but --help and
+	// __complete are filtered out so we must load explicitly.
+	//
+	// To avoid triggering OAuth when no auth is cached, we only call
+	// cli.Load when restish's API cache file exists. If it doesn't, the
+	// user hasn't authenticated yet and API commands won't be shown until
+	// they run "dci login".
+	var apiLoaded bool
+	loadAPI := func() {
+		if apiLoaded {
+			return
+		}
+		apiLoaded = true
+		cacheDir, _ := os.UserCacheDir()
+		cacheFile := filepath.Join(cacheDir, "dci", "dci.cbor")
+		if _, err := os.Stat(cacheFile); err != nil {
+			return
+		}
+		cli.Load("https://api.doit.com", dciCmd)
+	}
+
+	// Surface API subcommands in root-level completion so "dci <Tab>"
+	// shows list-budgets, list-reports, etc. alongside status, login, etc.
+	cli.Root.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		loadAPI()
+		var completions []string
+		for _, sub := range dciCmd.Commands() {
+			if sub.Hidden {
+				continue
+			}
+			if strings.HasPrefix(sub.Name(), toComplete) {
+				completions = append(completions, sub.Name()+"\t"+sub.Short)
+			}
+		}
+		return completions, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	// Override root help to include API commands. Load the API, move its
+	// commands to root so the standard usage template renders them, then
+	// show help normally.
+	defaultHelp := cli.Root.HelpFunc()
+	cli.Root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		hasAPICommands := false
+		if cmd == cli.Root {
+			loadAPI()
+			hasAPICommands = len(dciCmd.Commands()) > 0
+			// Copy command groups from the API subcommand to root so the
+			// usage template can render grouped commands.
+			for _, g := range dciCmd.Groups() {
+				if !cli.Root.ContainsGroup(g.ID) {
+					cli.Root.AddGroup(g)
+				}
+			}
+			// Collect first — iterating Commands() while removing mutates the slice.
+			subs := make([]*cobra.Command, len(dciCmd.Commands()))
+			copy(subs, dciCmd.Commands())
+			for _, sub := range subs {
+				dciCmd.RemoveCommand(sub)
+				cli.Root.AddCommand(sub)
+			}
+		}
+		defaultHelp(cmd, args)
+		if cmd == cli.Root && !hasAPICommands {
+			hint := "\n! To get started, authenticate with: dci login (or set DCI_API_KEY)\n\n"
+			if term.IsTerminal(int(os.Stdout.Fd())) {
+				hint = "\n\033[1;33m!\033[0m To get started, authenticate with: \033[1mdci login\033[0m (or set \033[1mDCI_API_KEY\033[0m)\n\n"
+			}
+			fmt.Fprint(os.Stdout, hint)
+		}
+	})
 }
 
 func registerCustomerContextCommands(configDir string) {
