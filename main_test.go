@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -533,10 +534,426 @@ func setupTestRoot(t *testing.T) {
 		&cobra.Command{Use: "dci"},
 		&cobra.Command{Use: "help"},
 		&cobra.Command{Use: "status"},
+		&cobra.Command{Use: "login"},
+		&cobra.Command{Use: "logout"},
 	)
 
 	cli.Root = root
 	t.Cleanup(func() {
 		cli.Root = oldRoot
 	})
+}
+
+// --- Table rendering test helpers ---
+
+// mockAlertRows returns rows resembling a DCI list-alerts response.
+// Includes a "config" column with map values that should be auto-hidden.
+func mockAlertRows() ([]map[string]interface{}, []string) {
+	rows := []map[string]interface{}{
+		{
+			"createTime":  1.709550521e+12,
+			"id":          "JkKD7J8jmgcL52Lgj4uy",
+			"lastAlerted": 1.710936037e+12,
+			"name":        "bookreviews staging test",
+			"owner":       "alice@example.com",
+			"updateTime":  1.709557415e+12,
+			"config":      map[string]interface{}{"threshold": 100, "period": "monthly"},
+		},
+		{
+			"createTime":  1.667139587394e+12,
+			"id":          "Ns8B2zIs07qJjDVByCIz",
+			"lastAlerted": 1.736672435e+12,
+			"name":        "Cloud analytics reports cost by user",
+			"owner":       "bob@example.com",
+			"updateTime":  1.728637824610e+12,
+			"config":      map[string]interface{}{"threshold": 50},
+		},
+	}
+	allKeys := []string{"config", "createTime", "id", "lastAlerted", "name", "owner", "updateTime"}
+	return rows, allKeys
+}
+
+// mockReportRows returns rows resembling a DCI list-reports response.
+// Includes a "labels" column with array-of-map values that should be auto-hidden.
+func mockReportRows() ([]map[string]interface{}, []string) {
+	rows := []map[string]interface{}{
+		{
+			"createTime": 1.774010451448e+12,
+			"id":         "ApLLbhKaGNVlXqNlFh1u",
+			"labels":     []interface{}{},
+			"owner":      "alice@example.com",
+			"reportName": "Monthly cost breakdown",
+			"type":       "custom",
+			"updateTime": 1.77401059984e+12,
+			"urlUI":      "https://console.example.com/customers/abc123/analytics/reports/ApLLbhKaGNVlXqNlFh1u",
+		},
+		{
+			"createTime": 1.709000000e+12,
+			"id":         "kyYAeFUM3hD8moWxyz12",
+			"labels":     []interface{}{map[string]interface{}{"id": "il6vOdNiBDGw", "name": "team-alpha"}},
+			"owner":      "bob@example.com",
+			"reportName": "Account overview Q1",
+			"type":       "custom",
+			"updateTime": 1.709100000e+12,
+			"urlUI":      "https://console.example.com/customers/abc123/analytics/reports/kyYAeFUM3hD8moWxyz12",
+		},
+	}
+	allKeys := []string{"createTime", "id", "labels", "owner", "reportName", "type", "updateTime", "urlUI"}
+	return rows, allKeys
+}
+
+// mockSimpleRows returns rows with no object columns (nothing to hide).
+func mockSimpleRows() ([]map[string]interface{}, []string) {
+	rows := []map[string]interface{}{
+		{"name": "budget-alpha", "amount": 1000.0, "currency": "USD"},
+		{"name": "budget-beta", "amount": 5000.0, "currency": "EUR"},
+	}
+	return rows, []string{"amount", "currency", "name"}
+}
+
+// --- formatValue tests ---
+
+func TestFormatValue(t *testing.T) {
+	tests := []struct {
+		name string
+		val  interface{}
+		want string
+	}{
+		{"string passthrough", "hello", "hello"},
+		{"int passthrough", 42, "42"},
+		{"small float", 3.14, "3.14"},
+		{"unix ms timestamp", 1.709550521e+12, time.UnixMilli(1709550521000).UTC().Format(time.RFC3339)},
+		{"unix ms timestamp 2", 1.774010451448e+12, time.UnixMilli(1774010451448).UTC().Format(time.RFC3339)},
+		{"below timestamp range", 9.99e+11, "9.99e+11"},
+		{"above timestamp range", 5e+12, "5e+12"},
+		{"nil value", nil, "<nil>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatValue(tt.val)
+			if got != tt.want {
+				t.Errorf("formatValue(%v) = %q, want %q", tt.val, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- containsObject tests ---
+
+func TestContainsObject(t *testing.T) {
+	tests := []struct {
+		name string
+		val  interface{}
+		want bool
+	}{
+		{"nil", nil, false},
+		{"string", "hello", false},
+		{"float", 3.14, false},
+		{"empty slice", []interface{}{}, false},
+		{"slice of strings", []interface{}{"a", "b"}, false},
+		{"direct map", map[string]interface{}{"k": "v"}, true},
+		{"slice containing map", []interface{}{map[string]interface{}{"k": "v"}}, true},
+		{"slice with mixed types including map", []interface{}{"a", map[string]interface{}{"k": "v"}}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := containsObject(tt.val)
+			if got != tt.want {
+				t.Errorf("containsObject(%v) = %v, want %v", tt.val, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- filterObjectColumns tests ---
+
+func TestFilterObjectColumns(t *testing.T) {
+	t.Run("alert rows hide config", func(t *testing.T) {
+		rows, keys := mockAlertRows()
+		visible, hidden := filterObjectColumns(rows, keys)
+		if !reflect.DeepEqual(hidden, []string{"config"}) {
+			t.Errorf("hidden = %v, want [config]", hidden)
+		}
+		for _, k := range visible {
+			if k == "config" {
+				t.Errorf("config should not be in visible columns")
+			}
+		}
+	})
+
+	t.Run("report rows hide labels", func(t *testing.T) {
+		rows, keys := mockReportRows()
+		visible, hidden := filterObjectColumns(rows, keys)
+		if !reflect.DeepEqual(hidden, []string{"labels"}) {
+			t.Errorf("hidden = %v, want [labels]", hidden)
+		}
+		for _, k := range visible {
+			if k == "labels" {
+				t.Errorf("labels should not be in visible columns")
+			}
+		}
+	})
+
+	t.Run("simple rows hide nothing", func(t *testing.T) {
+		rows, keys := mockSimpleRows()
+		visible, hidden := filterObjectColumns(rows, keys)
+		if len(hidden) != 0 {
+			t.Errorf("hidden = %v, want empty", hidden)
+		}
+		if !reflect.DeepEqual(visible, keys) {
+			t.Errorf("visible = %v, want %v", visible, keys)
+		}
+	})
+}
+
+// --- measureContentWidths tests ---
+
+func TestMeasureContentWidths(t *testing.T) {
+	rows, keys := mockSimpleRows()
+	widths := measureContentWidths(rows, keys)
+	if len(widths) != len(keys) {
+		t.Fatalf("widths length = %d, want %d", len(widths), len(keys))
+	}
+	// "amount" column: header=6, values "1000" (4) and "5000" (4) → max 6
+	if widths[0] < 4 {
+		t.Errorf("amount width = %d, want >= 4", widths[0])
+	}
+	// "currency" column: header=8, values "USD" (3) and "EUR" (3) → max 8
+	if widths[1] < 3 {
+		t.Errorf("currency width = %d, want >= 3", widths[1])
+	}
+	// "name" column: header=4, values "budget-alpha" (12) and "budget-beta" (11) → max 12
+	if widths[2] != 12 {
+		t.Errorf("name width = %d, want 12", widths[2])
+	}
+}
+
+func TestMeasureContentWidthsFormatsTimestamps(t *testing.T) {
+	rows, _ := mockAlertRows()
+	keys := []string{"createTime"}
+	widths := measureContentWidths(rows, keys)
+	// ISO 8601 timestamp "2024-03-04T12:28:41Z" is 20 chars
+	if widths[0] != 20 {
+		t.Errorf("timestamp width = %d, want 20", widths[0])
+	}
+}
+
+// --- computeColumnWidths tests ---
+
+func TestComputeColumnWidthsSumMatchesAvailable(t *testing.T) {
+	tests := []struct {
+		name          string
+		contentWidths []int
+		termWidth     int
+	}{
+		{"alert-like 6 cols at 214", []int{20, 20, 20, 51, 24, 20}, 214},
+		{"alert-like 6 cols at 120", []int{20, 20, 20, 51, 24, 20}, 120},
+		{"report-like 7 cols at 214", []int{20, 20, 24, 30, 6, 20, 100}, 214},
+		{"simple 3 cols at 80", []int{12, 8, 6}, 80},
+		{"all fit easily", []int{5, 5, 5}, 200},
+		{"all very wide", []int{200, 200, 200}, 120},
+		{"single column", []int{50}, 80},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			widths := computeColumnWidths(tt.contentWidths, tt.termWidth, 0)
+			cols := len(tt.contentWidths)
+			overhead := tableOverhead(cols)
+			available := tt.termWidth - overhead
+
+			sum := 0
+			for _, w := range widths {
+				sum += w
+				if w < 1 {
+					t.Errorf("column width %d < 1", w)
+				}
+			}
+			if sum != available {
+				t.Errorf("sum of widths = %d, want %d (termWidth=%d overhead=%d)", sum, available, tt.termWidth, overhead)
+			}
+		})
+	}
+}
+
+func TestComputeColumnWidthsNarrowColumnsGetContentWidth(t *testing.T) {
+	// When all columns fit, narrow ones should get at least their content width.
+	contentWidths := []int{5, 5, 5}
+	widths := computeColumnWidths(contentWidths, 200, 0)
+	for i, cw := range contentWidths {
+		if widths[i] < cw {
+			t.Errorf("col %d: width %d < content width %d", i, widths[i], cw)
+		}
+	}
+}
+
+func TestComputeColumnWidthsMaxColWidth(t *testing.T) {
+	contentWidths := []int{5, 5, 200}
+	widths := computeColumnWidths(contentWidths, 120, 30)
+	for i, w := range widths {
+		if w > 30 {
+			t.Errorf("col %d: width %d exceeds maxColWidth 30", i, w)
+		}
+	}
+}
+
+func TestComputeColumnWidthsWideColumnGetsMore(t *testing.T) {
+	// One wide column, several narrow — wide column should get the surplus.
+	contentWidths := []int{10, 10, 200}
+	widths := computeColumnWidths(contentWidths, 120, 0)
+	// The wide column should be wider than the narrow ones.
+	if widths[2] <= widths[0] {
+		t.Errorf("wide column (%d) should be wider than narrow column (%d)", widths[2], widths[0])
+	}
+}
+
+// --- buildTableString width tests ---
+
+func TestBuildTableStringExactWidth(t *testing.T) {
+	tests := []struct {
+		name      string
+		termWidth int
+	}{
+		{"width 80", 80},
+		{"width 120", 120},
+		{"width 214", 214},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, keys := mockSimpleRows()
+			contentW := measureContentWidths(rows, keys)
+			colWidths := computeColumnWidths(contentW, tt.termWidth, 0)
+			out, err := buildTableString(rows, keys, colWidths, "fit")
+			if err != nil {
+				t.Fatalf("buildTableString error: %v", err)
+			}
+			w := tableDisplayWidth(out)
+			if w != tt.termWidth {
+				t.Errorf("display width = %d, want %d", w, tt.termWidth)
+			}
+		})
+	}
+}
+
+func TestBuildTableStringAlertLikeExactWidth(t *testing.T) {
+	rows, allKeys := mockAlertRows()
+	visible, _ := filterObjectColumns(rows, allKeys)
+
+	for _, termWidth := range []int{80, 120, 214} {
+		t.Run(fmt.Sprintf("width_%d", termWidth), func(t *testing.T) {
+			contentW := measureContentWidths(rows, visible)
+			colWidths := computeColumnWidths(contentW, termWidth, 0)
+			out, err := buildTableString(rows, visible, colWidths, "fit")
+			if err != nil {
+				t.Fatalf("buildTableString error: %v", err)
+			}
+			w := tableDisplayWidth(out)
+			if w != termWidth {
+				t.Errorf("display width = %d, want %d", w, termWidth)
+			}
+		})
+	}
+}
+
+func TestBuildTableStringReportLikeExactWidth(t *testing.T) {
+	rows, allKeys := mockReportRows()
+	visible, _ := filterObjectColumns(rows, allKeys)
+
+	for _, termWidth := range []int{80, 120, 214} {
+		t.Run(fmt.Sprintf("width_%d", termWidth), func(t *testing.T) {
+			contentW := measureContentWidths(rows, visible)
+			colWidths := computeColumnWidths(contentW, termWidth, 0)
+			out, err := buildTableString(rows, visible, colWidths, "fit")
+			if err != nil {
+				t.Fatalf("buildTableString error: %v", err)
+			}
+			w := tableDisplayWidth(out)
+			if w != termWidth {
+				t.Errorf("display width = %d, want %d", w, termWidth)
+			}
+		})
+	}
+}
+
+func TestBuildTableStringWithHiddenColumnsIncluded(t *testing.T) {
+	// Simulate user passing -C to include all columns (including object ones).
+	rows, allKeys := mockAlertRows()
+
+	for _, termWidth := range []int{120, 214} {
+		t.Run(fmt.Sprintf("all_cols_width_%d", termWidth), func(t *testing.T) {
+			contentW := measureContentWidths(rows, allKeys)
+			colWidths := computeColumnWidths(contentW, termWidth, 0)
+			out, err := buildTableString(rows, allKeys, colWidths, "fit")
+			if err != nil {
+				t.Fatalf("buildTableString error: %v", err)
+			}
+			w := tableDisplayWidth(out)
+			if w != termWidth {
+				t.Errorf("display width = %d, want %d", w, termWidth)
+			}
+		})
+	}
+}
+
+func TestBuildTableStringNoU2800InOutput(t *testing.T) {
+	// Verify that U+2800 padding placeholder is replaced with spaces.
+	rows, keys := mockSimpleRows()
+	contentW := measureContentWidths(rows, keys)
+	colWidths := computeColumnWidths(contentW, 120, 0)
+	out, err := buildTableString(rows, keys, colWidths, "fit")
+	if err != nil {
+		t.Fatalf("buildTableString error: %v", err)
+	}
+	if strings.Contains(out, "\u2800") {
+		t.Errorf("output contains U+2800 placeholder; should be replaced with spaces")
+	}
+}
+
+func TestBuildTableStringRightAlignment(t *testing.T) {
+	// Body cells should be right-aligned (content pushed to the right with leading spaces).
+	rows := []map[string]interface{}{
+		{"col": "short"},
+	}
+	keys := []string{"col"}
+	// Give the column much more space than needed.
+	colWidths := []int{30}
+	out, err := buildTableString(rows, keys, colWidths, "fit")
+	if err != nil {
+		t.Fatalf("buildTableString error: %v", err)
+	}
+	// Find the body line (not header, not border).
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "short") && strings.Contains(line, "║") {
+			// Right-aligned means spaces before "short", not after.
+			inner := strings.TrimPrefix(line, "║")
+			inner = strings.TrimSuffix(inner, "║")
+			inner = strings.TrimSpace(inner)
+			if !strings.HasSuffix(strings.TrimSpace(inner), "short") {
+				t.Errorf("expected right-aligned 'short', got line: %q", line)
+			}
+			return
+		}
+	}
+	t.Errorf("could not find body line with 'short' in output:\n%s", out)
+}
+
+func TestTableOverheadFormula(t *testing.T) {
+	for cols := 1; cols <= 10; cols++ {
+		keys := make([]string, cols)
+		rows := []map[string]interface{}{{}}
+		for i := 0; i < cols; i++ {
+			keys[i] = fmt.Sprintf("c%d", i)
+			rows[0][keys[i]] = "a"
+		}
+		widths := make([]int, cols)
+		for i := 0; i < cols; i++ {
+			widths[i] = 1
+		}
+		s, _ := buildTableString(rows, keys, widths, "fit")
+		actual := tableDisplayWidth(s) - cols
+		formula := tableOverhead(cols)
+		t.Logf("cols=%d actual=%d formula=%d diff=%d", cols, actual, formula, actual-formula)
+		if actual != formula {
+			t.Errorf("cols=%d: overhead mismatch actual=%d formula=%d", cols, actual, formula)
+		}
+	}
 }

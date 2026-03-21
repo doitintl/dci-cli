@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alexeyco/simpletable"
 	"github.com/mattn/go-runewidth"
@@ -527,6 +528,11 @@ func registerStatusCommands(configDir string) {
 	})
 }
 
+// applyAPIKeyAuth injects DCI_API_KEY into restish's auth cache as a Bearer
+// token. Restish's OAuth TokenHandler checks the cache before triggering a
+// browser flow, so pre-populating it bypasses interactive login. We use
+// cli.Cache (an exported *viper.Viper) because restish does not export its
+// config internals (the configs map and apis viper instance are private).
 func applyAPIKeyAuth() {
 	apiKey := os.Getenv("DCI_API_KEY")
 	if apiKey == "" {
@@ -593,6 +599,12 @@ func registerAuthCommands() {
 	})
 }
 
+// customerContextPath returns the path to the custom file that stores the
+// default customer context. We use a dedicated file instead of restish's
+// apis.json profile query params because restish's config internals are
+// private — there is no exported API to read/write profile settings
+// programmatically, and writing apis.json directly risks conflicts with
+// restish's in-memory config state.
 func customerContextPath(configDir string) string {
 	return filepath.Join(configDir, "customer_context")
 }
@@ -898,16 +910,34 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 		return []byte("No results\n"), nil
 	}
 
+	// Auto-hide columns containing object values (map[...]) unless the user
+	// explicitly selected columns via -C.
+	var hidden []string
+	if len(opts.columns) == 0 {
+		keys, hidden = filterObjectColumns(rows, keys)
+	}
+
+	if len(keys) == 0 {
+		return []byte("No results\n"), nil
+	}
+
 	maxColWidth := opts.maxColWidth
 	if maxColWidth < 0 {
 		maxColWidth = 0
 	}
 
 	terminalWidth := detectTerminalWidth(opts.width)
-	colWidths := computeColumnWidths(len(keys), terminalWidth, maxColWidth)
-	out, err := buildTableString(rows, keys, colWidths, opts.mode, terminalWidth)
+	contentW := measureContentWidths(rows, keys)
+
+	colWidths := computeColumnWidths(contentW, terminalWidth, maxColWidth)
+	out, err := buildTableString(rows, keys, colWidths, opts.mode)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(hidden) > 0 {
+		out += fmt.Sprintf("\nHidden columns (object values): %s\n", strings.Join(hidden, ", "))
+		out += fmt.Sprintf("Use -C to include them, e.g.: -C %s\n", strings.Join(append(keys, hidden...), ","))
 	}
 	return []byte(out), nil
 }
@@ -977,7 +1007,38 @@ func tableDisplayWidth(s string) int {
 	return max
 }
 
-func computeColumnWidths(cols int, terminalWidth int, maxColWidth int) []int {
+// measureContentWidths returns the max display width of each column's content
+// across all rows (including the header key name).
+func measureContentWidths(rows []map[string]interface{}, keys []string) []int {
+	widths := make([]int, len(keys))
+	for i, k := range keys {
+		widths[i] = runewidth.StringWidth(k)
+	}
+	for _, row := range rows {
+		for i, k := range keys {
+			val := row[k]
+			if s, ok := val.([]interface{}); ok {
+				converted := make([]string, len(s))
+				for j := range s {
+					converted[j] = formatValue(s[j])
+				}
+				val = strings.Join(converted, ", ")
+			}
+			w := runewidth.StringWidth(formatValue(val))
+			if w > widths[i] {
+				widths[i] = w
+			}
+		}
+	}
+	return widths
+}
+
+// computeColumnWidths distributes terminal width across columns. Columns that
+// fit within an equal share get exactly their content width, freeing surplus
+// space for columns that need more. This repeats until stable, so narrow
+// columns (dates, IDs) stay compact while wider columns share the remainder.
+func computeColumnWidths(contentWidths []int, terminalWidth int, maxColWidth int) []int {
+	cols := len(contentWidths)
 	if cols <= 0 {
 		return nil
 	}
@@ -991,34 +1052,119 @@ func computeColumnWidths(cols int, terminalWidth int, maxColWidth int) []int {
 		available = cols
 	}
 
+	capped := cappedContentWidths(contentWidths, maxColWidth)
 	widths := make([]int, cols)
-	base := available / cols
-	rem := available % cols
-	for i := 0; i < cols; i++ {
-		w := base
-		if i < rem {
-			w++
-		}
-		if w < 1 {
-			w = 1
-		}
-		if maxColWidth > 0 && w > maxColWidth {
-			w = maxColWidth
-		}
-		widths[i] = w
+	settled := make([]bool, cols)
+	remaining, unsettled := settleNarrowColumns(widths, settled, capped, available, cols)
+	if unsettled > 0 {
+		distributeRemainder(widths, settled, remaining, unsettled, maxColWidth)
+	} else if remaining > 0 {
+		// All columns fit their content — distribute leftover evenly.
+		distributeEvenly(widths, remaining, maxColWidth)
 	}
 	return widths
+}
+
+// cappedContentWidths returns content widths capped by maxColWidth (if set).
+func cappedContentWidths(contentWidths []int, maxColWidth int) []int {
+	capped := make([]int, len(contentWidths))
+	for i, cw := range contentWidths {
+		if maxColWidth > 0 && cw > maxColWidth {
+			cw = maxColWidth
+		}
+		capped[i] = cw
+	}
+	return capped
+}
+
+// settleNarrowColumns assigns exact content width to columns that fit within
+// an equal share, iterating until no more columns can be settled.
+func settleNarrowColumns(widths []int, settled []bool, capped []int, available int, unsettled int) (remaining int, unsettledCount int) {
+	remaining = available
+	for unsettled > 0 {
+		share := remaining / unsettled
+		changed := false
+		for i, cw := range capped {
+			if settled[i] || cw > share {
+				continue
+			}
+			widths[i] = cw
+			remaining -= cw
+			settled[i] = true
+			unsettled--
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	return remaining, unsettled
+}
+
+// distributeRemainder divides leftover space evenly among unsettled columns.
+func distributeRemainder(widths []int, settled []bool, remaining int, unsettled int, maxColWidth int) {
+	if unsettled <= 0 {
+		return
+	}
+	share := remaining / unsettled
+	rem := remaining % unsettled
+	for i := range widths {
+		if settled[i] {
+			continue
+		}
+		widths[i] = share
+		if rem > 0 {
+			widths[i]++
+			rem--
+		}
+		if maxColWidth > 0 && widths[i] > maxColWidth {
+			widths[i] = maxColWidth
+		}
+		if widths[i] < 1 {
+			widths[i] = 1
+		}
+	}
+}
+
+// distributeEvenly spreads remaining space across all columns, respecting maxColWidth.
+func distributeEvenly(widths []int, remaining int, maxColWidth int) {
+	share := remaining / len(widths)
+	rem := remaining % len(widths)
+	for i := range widths {
+		add := share
+		if rem > 0 {
+			add++
+			rem--
+		}
+		widths[i] += add
+		if maxColWidth > 0 && widths[i] > maxColWidth {
+			widths[i] = maxColWidth
+		}
+	}
 }
 
 func tableOverhead(cols int) int {
 	if cols <= 0 {
 		return 0
 	}
-	// simpletable StyleUnicode: 2 outer borders + 1 left pad + 2 separator per column = 1 + 4*cols
-	return 1 + 4*cols
+	// simpletable StyleUnicode: 1 right border + (1 left pad + 2 separator) per column = 1 + 3*cols
+	return 1 + 3*cols
 }
 
-func buildTableString(rows []map[string]interface{}, keys []string, colWidths []int, mode string, targetWidth int) (string, error) {
+// formatValue converts a raw cell value to a display string. Large float64
+// values that look like Unix timestamps (milliseconds since epoch, roughly
+// 2001–2099) are formatted as ISO 8601 in UTC.
+func formatValue(val interface{}) string {
+	f, ok := val.(float64)
+	if ok && f >= 1e12 && f < 4.1e12 {
+		sec := int64(f) / 1000
+		ms := int64(f) % 1000
+		return time.Unix(sec, ms*1e6).UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("%v", val)
+}
+
+func buildTableString(rows []map[string]interface{}, keys []string, colWidths []int, mode string) (string, error) {
 	if len(keys) == 0 {
 		return "No results\n", nil
 	}
@@ -1028,6 +1174,11 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 
 	table := simpletable.New()
 
+	// Pad headers with U+2800 (Braille Pattern Blank) to enforce column widths.
+	// simpletable auto-sizes columns to the widest cell; since its newContent
+	// calls strings.TrimSpace (which strips regular spaces), we use U+2800 which
+	// is not considered whitespace by Go's unicode.IsSpace. Body cells are left
+	// unpadded so simpletable's AlignRight can position them within the column.
 	header := make([]*simpletable.Cell, 0, len(keys))
 	for i, k := range keys {
 		header = append(header, &simpletable.Cell{
@@ -1043,14 +1194,13 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 			val := row[k]
 			if s, ok := val.([]interface{}); ok {
 				converted := make([]string, len(s))
-				for i := 0; i < len(s); i++ {
-					converted[i] = fmt.Sprintf("%v", s[i])
+				for j := range s {
+					converted[j] = formatValue(s[j])
 				}
 				val = strings.Join(converted, ", ")
 			}
-			cellText := fmt.Sprintf("%v", val)
+			cellText := formatValue(val)
 			cellText = formatCell(cellText, colWidths[i], mode)
-			cellText = padMultilineCell(cellText, colWidths[i])
 			body = append(body, &simpletable.Cell{Align: simpletable.AlignRight, Text: cellText})
 		}
 		table.Body.Cells = append(table.Body.Cells, body)
@@ -1058,23 +1208,8 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 
 	table.SetStyle(simpletable.StyleUnicode)
 	out := table.String()
-	if targetWidth > 0 {
-		// Fine-tune: if the calculated overhead was slightly off, adjust the last
-		// column to avoid overflow or excess slack.
-		w := tableDisplayWidth(out)
-		if len(colWidths) > 0 {
-			if w > targetWidth {
-				delta := w - targetWidth
-				colWidths[len(colWidths)-1] = max(1, colWidths[len(colWidths)-1]-delta)
-				return buildTableString(rows, keys, colWidths, mode, 0)
-			}
-			if w < targetWidth {
-				delta := targetWidth - w
-				colWidths[len(colWidths)-1] = colWidths[len(colWidths)-1] + delta
-				return buildTableString(rows, keys, colWidths, mode, 0)
-			}
-		}
-	}
+	// Replace the U+2800 padding placeholder with real spaces.
+	out = strings.ReplaceAll(out, "\u2800", " ")
 	return out, nil
 }
 
@@ -1097,7 +1232,47 @@ func padCell(s string, width int) string {
 	if cur >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-cur)
+	// Use Braille Pattern Blank (U+2800) instead of spaces because simpletable's
+	// newContent calls strings.TrimSpace on cell text, which would strip regular
+	// space padding and cause columns to shrink to content width. U+2800 is not
+	// considered whitespace by Go's unicode.IsSpace, so it survives the trim.
+	// buildTableString replaces U+2800 back to spaces in the final output.
+	return s + strings.Repeat("\u2800", width-cur)
+}
+
+// filterObjectColumns splits keys into visible and hidden. A column is hidden
+// if any row contains a nested object (map) either directly or inside an array.
+func filterObjectColumns(rows []map[string]interface{}, keys []string) (visible, hidden []string) {
+	for _, k := range keys {
+		isObject := false
+		for _, row := range rows {
+			if containsObject(row[k]) {
+				isObject = true
+				break
+			}
+		}
+		if isObject {
+			hidden = append(hidden, k)
+		} else {
+			visible = append(visible, k)
+		}
+	}
+	return visible, hidden
+}
+
+// containsObject returns true if val is a map or an array containing a map.
+func containsObject(val interface{}) bool {
+	switch v := val.(type) {
+	case map[string]interface{}:
+		return true
+	case []interface{}:
+		for _, item := range v {
+			if _, ok := item.(map[string]interface{}); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func collectKeys(rows []map[string]interface{}, preferred []string) []string {
