@@ -881,7 +881,12 @@ func (t dciTableContentType) Marshal(value interface{}) ([]byte, error) {
 
 	rows, err := toTableRows(jsonSafe)
 	if err != nil {
-		return nil, err
+		// Response is not table-friendly; fall back to indented JSON.
+		b, jsonErr := json.MarshalIndent(jsonSafe, "", "  ")
+		if jsonErr != nil {
+			return nil, err // return original table error
+		}
+		return append(b, '\n'), nil
 	}
 	return renderTable(rows)
 }

@@ -1013,3 +1013,41 @@ func TestTableOverheadFormula(t *testing.T) {
 		}
 	}
 }
+
+func TestTableMarshalFallsBackToJSON(t *testing.T) {
+	ct := dciTableContentType{}
+
+	tests := []struct {
+		name  string
+		input interface{}
+	}{
+		{"plain string", "How are you?"},
+		{"number", 42},
+		{"bool", true},
+		{"array of strings", []interface{}{"hello", "world"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := ct.Marshal(tc.input)
+			if err != nil {
+				t.Fatalf("expected JSON fallback, got error: %v", err)
+			}
+			if len(out) == 0 {
+				t.Fatal("expected non-empty output")
+			}
+		})
+	}
+}
+
+func TestTableMarshalObjectStillWorks(t *testing.T) {
+	ct := dciTableContentType{}
+	input := map[string]interface{}{"name": "test", "value": 123}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected table output, got error: %v", err)
+	}
+	if len(out) == 0 {
+		t.Fatal("expected non-empty output")
+	}
+}
