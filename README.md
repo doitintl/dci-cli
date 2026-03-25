@@ -111,6 +111,24 @@ Configuration is stored in your OS user config directory:
 
 The config file is created automatically on first run. Delete it to reset to defaults.
 
+## Codex Skill
+
+This repo ships a Codex skill at `skills/dci-cli`.
+
+Use it when Codex needs to operate `dci`, troubleshoot auth or `customerContext`, compose `dci query` commands in either SQL shorthand or JSON form, or draft safe DCI workflows.
+
+Install it with the `skill-installer` helper:
+
+```bash
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo doitintl/dci-cli \
+  --path skills/dci-cli
+```
+
+Or install it manually for local auto-discovery by copying or linking `skills/dci-cli` into `${CODEX_HOME:-~/.codex}/skills/`.
+
+Restart Codex after installing the skill.
+
 ## License
 
 See [LICENSE](LICENSE) for details.
