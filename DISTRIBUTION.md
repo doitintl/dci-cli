@@ -86,6 +86,13 @@ To re-release: fix the issue, tag a new patch version, and push.
 | WinGet PR submission skipped | `WINGET_GH_PAT` secret is not configured — add a PAT with `public_repo` scope |
 | WinGet PR fails validation | Check [microsoft/winget-pkgs validation policies](https://github.com/microsoft/winget-pkgs/blob/master/doc/README.md) |
 
+## CI Secrets
+
+| Secret | Used by | Purpose |
+|--------|---------|---------|
+| `GITHUB_TOKEN` | `release.yml`, `sync-manifests.yml`, `post-release-verify.yml` | Auto-provided by GitHub Actions — used for creating releases, downloading assets, and triggering workflows. No setup required. |
+| `WINGET_GH_PAT` | `sync-manifests.yml` | A GitHub PAT with `public_repo` scope used to push a branch to a fork of `microsoft/winget-pkgs` and open a PR. Must be manually created and added as a repository secret. Rotate periodically. |
+
 ## Known Limitations
 
 - **Windows ARM64** is excluded due to a missing cross-compiler in `goreleaser-cross` ([goreleaser-cross#117](https://github.com/goreleaser/goreleaser-cross/issues/117)).

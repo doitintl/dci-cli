@@ -5,3 +5,16 @@ dist/
 *.dll
 *.so
 *.dylib
+
+# Secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+service-account*.json
+*-credentials.json
