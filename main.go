@@ -1,8 +1,10 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -23,6 +25,9 @@ import (
 )
 
 var version string = "dev"
+
+//go:embed skills/dci-cli
+var skillFS embed.FS
 
 func dciConfigDir() string {
 	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
@@ -166,6 +171,7 @@ func run() (exitCode int) {
 	registerStatusCommands(configDir)
 	registerAuthCommands()
 	registerCustomerContextCommands(configDir)
+	registerSkillCommands()
 	addOutputFlag()
 	hideGlobalFlags()
 	customizeDCIUsage()
@@ -637,6 +643,70 @@ func registerCustomerContextCommands(configDir string) {
 			return nil
 		},
 	})
+
+	cli.Root.AddCommand(cmd)
+}
+
+// installSkill copies embedded skill files into targetDir/skills/dci-cli/.
+func installSkill(targetDir string) error {
+	const srcRoot = "skills/dci-cli"
+	destRoot := filepath.Join(targetDir, "skills", "dci-cli")
+
+	return fs.WalkDir(skillFS, srcRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(srcRoot, path)
+		dest := filepath.Join(destRoot, rel)
+
+		if d.IsDir() {
+			return os.MkdirAll(dest, 0o755)
+		}
+		data, err := skillFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dest, data, 0o644)
+	})
+}
+
+func registerSkillCommands() {
+	agents := []struct {
+		name string
+		dir  string
+	}{
+		{"claude", ".claude"},
+		{"codex", ".codex"},
+		{"kiro", ".kiro"},
+		{"gemini", ".gemini"},
+	}
+
+	cmd := &cobra.Command{
+		Use:   "skill",
+		Short: "Install the dci skill for an AI agent",
+	}
+
+	for _, a := range agents {
+		agentName := a.name
+		agentDir := a.dir
+		cmd.AddCommand(&cobra.Command{
+			Use:   agentName,
+			Short: fmt.Sprintf("Install skill into ~/%s/skills/dci-cli/", agentDir),
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("cannot determine home directory: %w", err)
+				}
+				targetDir := filepath.Join(home, agentDir)
+				if err := installSkill(targetDir); err != nil {
+					return fmt.Errorf("failed to install skill: %w", err)
+				}
+				fmt.Fprintf(os.Stdout, "Skill installed to %s\n", filepath.Join(targetDir, "skills", "dci-cli"))
+				return nil
+			},
+		})
+	}
 
 	cli.Root.AddCommand(cmd)
 }
