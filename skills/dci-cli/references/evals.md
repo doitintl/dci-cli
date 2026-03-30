@@ -97,6 +97,19 @@ Expected behavior:
 - explain how to aggregate and rank top services
 - produce actionable recommendation categories rather than generic buckets
 
+## Eval 9: Ask Ava a Cost Question
+
+Prompt:
+
+`Ask Ava what my top cost drivers are this month.`
+
+Expected behavior:
+
+- use `ask-ava-sync` (not streaming)
+- set `ephemeral: true` for a one-shot question
+- use `--output json`
+- do not attempt `ava-feedback` after a sync call (no `answerId` available)
+
 ## Pass Criteria
 
 - The skill triggers on DCI CLI usage, auth/context problems, reports, queries, and cost analysis.

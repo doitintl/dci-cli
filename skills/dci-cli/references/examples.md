@@ -117,6 +117,47 @@ dci delete-budget <budget-id>
 dci invite-user email: user@example.com, organizationId: <org-id>, roleId: <role-id>
 ```
 
+## Ava (AI Assistant)
+
+Agents should prefer `ask-ava-sync` over `ask-ava-streaming`. The sync endpoint returns clean JSON; streaming returns raw SSE chunks mixed with internal lifecycle events.
+
+One-shot question (recommended for agents):
+
+```bash
+dci ask-ava-sync ephemeral: true, question: "What are my top 3 cost drivers this month?" --output json
+```
+
+Response shape:
+
+```json
+{
+  "answer": "Your top 3 services are ...",
+}
+```
+
+Multi-turn conversation (set `ephemeral: false` to get a `conversationId`):
+
+```bash
+dci ask-ava-sync ephemeral: false, question: "What are my top cost drivers?" --output json
+# response includes "conversationId": "<conversation-id>"
+
+dci ask-ava-sync ephemeral: false, conversationId: <conversation-id>, question: "Break down EC2 by region" --output json
+```
+
+Delete a conversation when done:
+
+```bash
+dci delete-ava-conversation --conversation-id <conversation-id>
+```
+
+Note: `delete-ava-conversation` uses a `--conversation-id` flag, not a positional argument.
+
+Feedback (requires `answerId` which only `ask-ava-streaming` returns):
+
+```bash
+dci ava-feedback answerId: <answer-id>, conversationId: <conversation-id>, feedback{positive: true, text: "Useful summary"}
+```
+
 ## Troubleshooting Pattern
 
 Use this order:
