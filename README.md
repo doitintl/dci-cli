@@ -111,23 +111,28 @@ Configuration is stored in your OS user config directory:
 
 The config file is created automatically on first run. Delete it to reset to defaults.
 
-## Codex Skill
+## AI Agent Skill
 
-This repo ships a Codex skill at `skills/dci-cli`.
+This repo ships a reusable agent skill at `skills/dci-cli` that teaches AI coding agents how to operate the `dci` CLI safely and effectively.
 
-Use it when Codex needs to operate `dci`, troubleshoot auth or `customerContext`, compose `dci query` commands in either SQL shorthand or JSON form, or draft safe DCI workflows.
+Install it with the built-in subcommand:
 
-Install it with the `skill-installer` helper:
+```bash
+dci skill claude   # installs to ~/.claude/skills/dci-cli/
+dci skill codex    # installs to ~/.codex/skills/dci-cli/
+dci skill kiro     # installs to ~/.kiro/skills/dci-cli/
+dci skill gemini   # installs to ~/.gemini/skills/dci-cli/
+```
+
+Run `dci skill --help` for the full list of supported agents.
+
+Alternatively, for Codex you can use the `skill-installer` helper:
 
 ```bash
 python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
   --repo doitintl/dci-cli \
   --path skills/dci-cli
 ```
-
-Or install it manually for local auto-discovery by copying or linking `skills/dci-cli` into `${CODEX_HOME:-~/.codex}/skills/`.
-
-Restart Codex after installing the skill.
 
 ## License
 

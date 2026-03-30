@@ -656,7 +656,10 @@ func installSkill(targetDir string) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(srcRoot, path)
+		rel, err := filepath.Rel(srcRoot, path)
+		if err != nil {
+			return err
+		}
 		dest := filepath.Join(destRoot, rel)
 
 		if d.IsDir() {

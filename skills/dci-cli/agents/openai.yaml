@@ -1,3 +1,6 @@
+# Codex-specific metadata. Claude, Kiro, and Gemini discover skills by
+# directory convention (SKILL.md is the entry point) and do not require
+# an agent config file.
 interface:
   display_name: "DCI CLI"
   short_description: "Operate the DoiT Cloud Intelligence CLI"
