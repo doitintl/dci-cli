@@ -77,6 +77,8 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
+      - "^Merge "
+      - "^Update Homebrew formula"
 
 release:
   github:

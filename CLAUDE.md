@@ -9,9 +9,11 @@
 GoReleaser changelog auto-generates from commits between tags. Filtered prefixes (excluded from changelog):
 - `docs:` — documentation-only changes (README, DISTRIBUTION.md, etc.)
 - `test:` — test-only changes
-- `chore:` — maintenance (manifest updates, CI config, dependency bumps)
+- `chore:` — maintenance (manifest updates, CI config, dependency bumps, PR review fixups, secrets/CI fixes)
 
-Commits without these prefixes appear in the GitHub Release changelog. Use prefixes deliberately.
+Goreleaser also filters merge commits (`Merge ...`) and auto-generated manifest commits (`Update Homebrew formula ...`) automatically.
+
+**Use `chore:` for anything not user-facing** — CI/CD fixes, gitleaks config, PR review nits, and internal tooling. Use `fix:` only for bugs that affect CLI users. Commits without a filtered prefix appear in the GitHub Release changelog.
 
 ## Release Pipeline
 
