@@ -1,5 +1,7 @@
 dci
 dci-cli
+!skills/dci-cli/
+!skills/dci-cli/**
 dist/
 *.exe
 *.dll

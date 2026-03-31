@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1049,5 +1050,148 @@ func TestTableMarshalObjectStillWorks(t *testing.T) {
 	}
 	if len(out) == 0 {
 		t.Fatal("expected non-empty output")
+	}
+}
+
+// expectedSkillFiles lists every file the embedded skill should produce.
+var expectedSkillFiles = []string{
+	"skills/dci-cli/SKILL.md",
+	"skills/dci-cli/agents/openai.yaml",
+	"skills/dci-cli/references/capabilities.md",
+	"skills/dci-cli/references/cost-optimization.md",
+	"skills/dci-cli/references/evals.md",
+	"skills/dci-cli/references/examples.md",
+	"skills/dci-cli/references/query-patterns.md",
+}
+
+func TestInstallSkill(t *testing.T) {
+	agents := []struct {
+		name string
+		dir  string
+	}{
+		{"claude", ".claude"},
+		{"codex", ".codex"},
+		{"kiro", ".kiro"},
+		{"gemini", ".gemini"},
+	}
+
+	for _, a := range agents {
+		t.Run(a.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			targetDir := filepath.Join(tmpDir, a.dir)
+
+			if err := installSkill(targetDir); err != nil {
+				t.Fatalf("installSkill(%s) failed: %v", a.name, err)
+			}
+
+			for _, relPath := range expectedSkillFiles {
+				fullPath := filepath.Join(targetDir, relPath)
+				info, err := os.Stat(fullPath)
+				if err != nil {
+					t.Errorf("expected file %s to exist: %v", relPath, err)
+					continue
+				}
+				if info.Size() == 0 {
+					t.Errorf("expected file %s to be non-empty", relPath)
+				}
+			}
+		})
+	}
+}
+
+func TestInstallSkillContentMatchesEmbed(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetDir := filepath.Join(tmpDir, ".claude")
+
+	if err := installSkill(targetDir); err != nil {
+		t.Fatalf("installSkill failed: %v", err)
+	}
+
+	for _, relPath := range expectedSkillFiles {
+		embedPath := relPath // embedded paths use forward slashes
+		embedded, err := skillFS.ReadFile(embedPath)
+		if err != nil {
+			t.Fatalf("failed to read embedded %s: %v", embedPath, err)
+		}
+
+		installed, err := os.ReadFile(filepath.Join(targetDir, relPath))
+		if err != nil {
+			t.Fatalf("failed to read installed %s: %v", relPath, err)
+		}
+
+		if string(embedded) != string(installed) {
+			t.Errorf("content mismatch for %s", relPath)
+		}
+	}
+}
+
+func TestInstallSkillIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetDir := filepath.Join(tmpDir, ".claude")
+
+	if err := installSkill(targetDir); err != nil {
+		t.Fatalf("first install failed: %v", err)
+	}
+	if err := installSkill(targetDir); err != nil {
+		t.Fatalf("second install failed: %v", err)
+	}
+
+	for _, relPath := range expectedSkillFiles {
+		if _, err := os.Stat(filepath.Join(targetDir, relPath)); err != nil {
+			t.Errorf("expected file %s after second install: %v", relPath, err)
+		}
+	}
+}
+
+func TestInstallSkillCreatesDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetDir := filepath.Join(tmpDir, "deep", "nested", "path")
+
+	if err := installSkill(targetDir); err != nil {
+		t.Fatalf("installSkill into nested path failed: %v", err)
+	}
+
+	expectedDirs := []string{
+		"skills/dci-cli",
+		"skills/dci-cli/agents",
+		"skills/dci-cli/references",
+	}
+	for _, dir := range expectedDirs {
+		info, err := os.Stat(filepath.Join(targetDir, dir))
+		if err != nil {
+			t.Errorf("expected directory %s to exist: %v", dir, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("expected %s to be a directory", dir)
+		}
+	}
+}
+
+func TestInstallSkillFileCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetDir := filepath.Join(tmpDir, ".claude")
+
+	if err := installSkill(targetDir); err != nil {
+		t.Fatalf("installSkill failed: %v", err)
+	}
+
+	var installedFiles []string
+	err := filepath.WalkDir(filepath.Join(targetDir, "skills", "dci-cli"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(targetDir, path)
+			installedFiles = append(installedFiles, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking installed dir: %v", err)
+	}
+
+	if len(installedFiles) != len(expectedSkillFiles) {
+		t.Errorf("expected %d files, got %d: %v", len(expectedSkillFiles), len(installedFiles), installedFiles)
 	}
 }

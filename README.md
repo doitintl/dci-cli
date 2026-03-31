@@ -111,6 +111,29 @@ Configuration is stored in your OS user config directory:
 
 The config file is created automatically on first run. Delete it to reset to defaults.
 
+## AI Agent Skill
+
+This repo ships a reusable agent skill at `skills/dci-cli` that teaches AI coding agents how to operate the `dci` CLI safely and effectively.
+
+Install it with the built-in subcommand:
+
+```bash
+dci skill claude   # installs to ~/.claude/skills/dci-cli/
+dci skill codex    # installs to ~/.codex/skills/dci-cli/
+dci skill kiro     # installs to ~/.kiro/skills/dci-cli/
+dci skill gemini   # installs to ~/.gemini/skills/dci-cli/
+```
+
+Run `dci skill --help` for the full list of supported agents.
+
+Alternatively, for Codex you can use the `skill-installer` helper:
+
+```bash
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo doitintl/dci-cli \
+  --path skills/dci-cli
+```
+
 ## License
 
 See [LICENSE](LICENSE) for details.
