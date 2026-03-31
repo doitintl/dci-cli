@@ -27,6 +27,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+          # Use a PAT so the push step can bypass the branch protection rule
+          # that blocks GITHUB_TOKEN from pushing directly to main.
+          token: ${{ secrets.WINGET_GH_PAT }}
 
       - name: Resolve release tag
         id: release
