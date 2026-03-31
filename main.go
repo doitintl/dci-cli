@@ -2,8 +2,10 @@ package main
 
 import (
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -169,9 +171,18 @@ func run() (exitCode int) {
 	brandRootCommand()
 	brandDCIRootCommand()
 	registerStatusCommands(configDir)
-	registerAuthCommands()
+	registerAuthCommands(configDir)
 	registerCustomerContextCommands(configDir)
 	registerSkillCommands()
+	// Unhide the customer-context command for DoiT employees so it appears in help.
+	if cachedTokenIsDoer() {
+		for _, c := range cli.Root.Commands() {
+			if c.Use == "customer-context" {
+				c.Hidden = false
+				break
+			}
+		}
+	}
 	addOutputFlag()
 	hideGlobalFlags()
 	customizeDCIUsage()
@@ -182,9 +193,12 @@ func run() (exitCode int) {
 
 	if err := cli.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
+		maybeHintDoerContext(1, configDir)
 		return 1
 	}
-	return cli.GetExitCode()
+	code := cli.GetExitCode()
+	maybeHintDoerContext(code, configDir)
+	return code
 }
 
 func rejectProfileFlags(args []string) error {
@@ -779,7 +793,86 @@ func authSource() string {
 	return "OAuth (DoiT Console)"
 }
 
-func registerAuthCommands() {
+// maybeHintDoerContext prints a targeted hint when a @doit.com user hits a 403
+// without a customer context set — covering both interactive and CI/CD usage.
+func maybeHintDoerContext(exitCode int, configDir string) {
+	status := cli.GetLastStatus()
+	if exitCode == 0 || (status != 401 && status != 403) {
+		return
+	}
+	if !cachedTokenIsDoer() {
+		return
+	}
+	if readCustomerContext(configDir) != "" {
+		return
+	}
+	if term.IsTerminal(int(os.Stderr.Fd())) {
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintf(os.Stderr, "\033[1;33m!\033[0m DoiT employees need a customer context for API calls.\n")
+		fmt.Fprintf(os.Stderr, "  Interactive:  \033[1mdci customer-context set doit.com\033[0m\n")
+		fmt.Fprintf(os.Stderr, "  CI/scripts:   \033[1mexport DCI_CUSTOMER_CONTEXT=doit.com\033[0m\n")
+		fmt.Fprintln(os.Stderr, "")
+	} else {
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "! DoiT employees need a customer context for API calls.")
+		fmt.Fprintln(os.Stderr, "  Interactive:  dci customer-context set doit.com")
+		fmt.Fprintln(os.Stderr, "  CI/scripts:   export DCI_CUSTOMER_CONTEXT=doit.com")
+		fmt.Fprintln(os.Stderr, "")
+	}
+}
+
+// applyDoerContext auto-configures the customer context to "doit.com" for
+// @doit.com accounts that haven't set one yet. The validate endpoint requires
+// customerContext for DoiT employees; calling this after the OAuth token is
+// cached fixes the chicken-and-egg problem on first login. Returns true if the
+// context was written so the caller can clear a 403 error from validate.
+func applyDoerContext(configDir string) bool {
+	if !cachedTokenIsDoer() {
+		return false
+	}
+	if readCustomerContext(configDir) != "" {
+		return false // already configured, don't overwrite
+	}
+	err := os.WriteFile(customerContextPath(configDir), []byte("doit.com\n"), 0o600)
+	if err != nil {
+		return false
+	}
+	fmt.Fprintln(os.Stderr, "Detected DoiT account. Set default customer context to 'doit.com'.")
+	fmt.Fprintln(os.Stderr, "To use a different context: dci customer-context set <CONTEXT>")
+	return true
+}
+
+// cachedTokenIsDoer reports whether the cached OAuth JWT contains
+// DoitEmployee: true. This is more reliable than email-domain matching because
+// it is an explicit claim set by the DoiT auth server and is domain-independent.
+// Returns false if the cache is empty, the token is absent, or the JWT is malformed.
+func cachedTokenIsDoer() bool {
+	if cli.Cache == nil {
+		return false
+	}
+	token := cli.Cache.GetString("dci:default.token")
+	if token == "" {
+		return false
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	// JWT payload is base64url-encoded without padding.
+	b, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	var claims struct {
+		DoitEmployee bool `json:"DoitEmployee"`
+	}
+	if err := json.Unmarshal(b, &claims); err != nil {
+		return false
+	}
+	return claims.DoitEmployee
+}
+
+func registerAuthCommands(configDir string) {
 	cli.Root.AddCommand(&cobra.Command{
 		Use:     "login",
 		Aliases: []string{"auth", "init"},
@@ -791,8 +884,26 @@ func registerAuthCommands() {
 				return fmt.Errorf("login is not needed when DCI_API_KEY is set")
 			}
 			// Trigger the OAuth flow by calling a lightweight endpoint.
+			// Suppress the validate response body — login only needs the OAuth
+			// side effect (token cached), not the API output.
 			os.Args = []string{os.Args[0], "dci", "validate"}
-			if err := cli.Run(); err != nil {
+			oldOut := cli.Stdout
+			cli.Stdout = io.Discard
+			err := cli.Run()
+			cli.Stdout = oldOut
+
+			// Auto-configure DoiT employees who have no customer context set.
+			// The validate endpoint requires customerContext for @doit.com accounts,
+			// causing a 403 on first login before any context is configured. The OAuth
+			// token exchange succeeds (token is cached) even when validate returns 403,
+			// so we can inspect the token here and fix the chicken-and-egg problem.
+			if applyDoerContext(configDir) {
+				err = nil // the 403 was due to missing context; auth itself succeeded
+				// Reset the HTTP status so GetExitCode() returns 0 for this process.
+				viper.Set("rsh-ignore-status-code", true)
+			}
+
+			if err != nil {
 				return err
 			}
 			fmt.Fprintln(os.Stderr, "Authenticated successfully.")

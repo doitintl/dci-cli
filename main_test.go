@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func TestNormalizeArgs(t *testing.T) {
@@ -1193,5 +1196,123 @@ func TestInstallSkillFileCount(t *testing.T) {
 
 	if len(installedFiles) != len(expectedSkillFiles) {
 		t.Errorf("expected %d files, got %d: %v", len(expectedSkillFiles), len(installedFiles), installedFiles)
+	}
+}
+
+const testTokenCacheKey = "dci:default.token"
+
+// makeTestJWT builds a minimal unsigned JWT (header.payload.) with the given claims.
+// claims is marshalled as-is so callers can pass any JSON-serialisable map.
+func makeTestJWT(claims map[string]interface{}) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload, _ := json.Marshal(claims)
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
+}
+
+// doerJWT returns a test JWT with DoitEmployee: true.
+func doerJWT() string {
+	return makeTestJWT(map[string]interface{}{"DoitEmployee": true, "sub": "jane@doit-intl.com"})
+}
+
+// nonDoerJWT returns a test JWT with DoitEmployee: false.
+func nonDoerJWT() string {
+	return makeTestJWT(map[string]interface{}{"DoitEmployee": false, "sub": "user@example.com"})
+}
+
+// writeContextFile writes ctx to the customer context file in dir, fataling on error.
+func writeContextFile(t *testing.T, dir, ctx string) {
+	t.Helper()
+	if err := os.WriteFile(customerContextPath(dir), []byte(ctx+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setupTestCache replaces cli.Cache with a fresh in-memory viper instance and
+// restores the original on test cleanup.
+func setupTestCache(t *testing.T) {
+	t.Helper()
+	old := cli.Cache
+	cli.Cache = viper.New()
+	t.Cleanup(func() { cli.Cache = old })
+}
+
+func TestCachedTokenIsDoer(t *testing.T) {
+	setupTestCache(t)
+
+	tests := []struct {
+		name  string
+		token string
+		want  bool
+	}{
+		{name: "DoitEmployee true", token: doerJWT(), want: true},
+		{name: "DoitEmployee false", token: nonDoerJWT(), want: false},
+		{name: "JWT without DoitEmployee claim", token: makeTestJWT(map[string]interface{}{"sub": "user@example.com"}), want: false},
+		{name: "empty token", token: "", want: false},
+		{name: "not a JWT", token: "not-a-jwt", want: false},
+		{name: "invalid base64 in payload", token: "header.!!invalid!!.sig", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cli.Cache.Set(testTokenCacheKey, tt.token)
+			if got := cachedTokenIsDoer(); got != tt.want {
+				t.Errorf("cachedTokenIsDoer() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyDoerContext(t *testing.T) {
+	setupTestCache(t)
+
+	tests := []struct {
+		name            string
+		token           string
+		existingContext string
+		wantResult      bool
+		wantContext     string
+	}{
+		{
+			name:        "sets doit.com for Doer with no context",
+			token:       doerJWT(),
+			wantResult:  true,
+			wantContext: "doit.com",
+		},
+		{
+			name:        "no-op for non-Doer account",
+			token:       nonDoerJWT(),
+			wantResult:  false,
+			wantContext: "",
+		},
+		{
+			name:            "no-op when context already set",
+			token:           doerJWT(),
+			existingContext: "other-customer",
+			wantResult:      false,
+			wantContext:     "other-customer",
+		},
+		{
+			name:        "no-op when no cached token",
+			token:       "",
+			wantResult:  false,
+			wantContext: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.existingContext != "" {
+				writeContextFile(t, dir, tt.existingContext)
+			}
+			cli.Cache.Set(testTokenCacheKey, tt.token)
+
+			if got := applyDoerContext(dir); got != tt.wantResult {
+				t.Errorf("applyDoerContext() = %v, want %v", got, tt.wantResult)
+			}
+			if ctx := readCustomerContext(dir); ctx != tt.wantContext {
+				t.Errorf("customerContext = %q, want %q", ctx, tt.wantContext)
+			}
+		})
 	}
 }
