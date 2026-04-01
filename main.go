@@ -28,6 +28,16 @@ import (
 
 var version string = "dev"
 
+const defaultAPIBase = "https://api.doit.com"
+
+// apiBase returns the API base URL, allowing override via DCI_API_BASE_URL.
+func apiBase() string {
+	if v := os.Getenv("DCI_API_BASE_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return defaultAPIBase
+}
+
 //go:embed skills/dci-cli
 var skillFS embed.FS
 
@@ -68,7 +78,7 @@ func ensureConfig(configDir string) (bool, error) {
 	config := map[string]interface{}{
 		"$schema": "https://rest.sh/schemas/apis.json",
 		"dci": map[string]interface{}{
-			"base": "https://api.doit.com",
+			"base": apiBase(),
 			"profiles": map[string]interface{}{
 				"default": map[string]interface{}{
 					"auth": map[string]interface{}{
@@ -553,7 +563,7 @@ func setupCompletion() {
 		if _, err := os.Stat(cacheFile); err != nil {
 			return
 		}
-		cli.Load("https://api.doit.com", dciCmd)
+		cli.Load(apiBase(), dciCmd)
 	}
 
 	// Surface API subcommands in root-level completion so "dci <Tab>"
@@ -745,7 +755,7 @@ func registerStatusCommands(configDir string) {
 		ctx := readCustomerContext(configDir)
 
 		fmt.Fprintln(os.Stdout, "DoiT Cloud Intelligence")
-		fmt.Fprintln(os.Stdout, "API Base: https://api.doit.com")
+		fmt.Fprintf(os.Stdout, "API Base: %s\n", apiBase())
 		fmt.Fprintf(os.Stdout, "Auth: %s\n", authSource())
 		fmt.Fprintf(os.Stdout, "Default Output: %s\n", currentOutput())
 		fmt.Fprintf(os.Stdout, "Config Dir: %s\n", configDir)
