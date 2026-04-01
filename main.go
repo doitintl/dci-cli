@@ -50,6 +50,10 @@ func apiBase() (string, error) {
 //go:embed skills/dci-cli
 var skillFS embed.FS
 
+// customerContextFlagValue holds the --customer-context / -D flag value when
+// set, used to suppress the Doer hint even when no persistent context file exists.
+var customerContextFlagValue string
+
 func dciConfigDir() string {
 	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
 		cfgDir := filepath.Join(dir, "dci")
@@ -872,7 +876,7 @@ func maybeHintDoerContext(exitCode int, configDir string) {
 	if !cachedTokenIsDoer() {
 		return
 	}
-	if readCustomerContext(configDir) != "" {
+	if readCustomerContext(configDir) != "" || customerContextFlagValue != "" {
 		return
 	}
 	if term.IsTerminal(int(os.Stderr.Fd())) {
@@ -1052,6 +1056,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
 	dciCmd.PersistentFlags().IntP("table-max-col-width", "X", 0, "Maximum width per column when fitting or wrapping (0 = auto)")
+	dciCmd.PersistentFlags().StringP("customer-context", "D", "", "Override the active customer context for this command (e.g. acme.com)")
 
 	// Bind table flags into viper so the renderer can pick them up.
 	prev := dciCmd.PersistentPreRunE
@@ -1089,6 +1094,24 @@ func addOutputFlag() {
 		}
 		bindNonNegativeIntFlag(cmd, "table-width")
 		bindNonNegativeIntFlag(cmd, "table-max-col-width")
+
+		// If --customer-context / -D was explicitly passed, override whatever
+		// applyCustomerContext() injected from the file or env var.
+		if flag := cmd.Flags().Lookup("customer-context"); flag != nil && flag.Changed {
+			val := strings.TrimSpace(flag.Value.String())
+			if val == "" {
+				return fmt.Errorf("--customer-context requires a non-empty domain name")
+			}
+			existing := viper.GetStringSlice("rsh-query")
+			filtered := existing[:0]
+			for _, q := range existing {
+				if !strings.HasPrefix(q, "customerContext=") {
+					filtered = append(filtered, q)
+				}
+			}
+			viper.Set("rsh-query", append(filtered, "customerContext="+val))
+			customerContextFlagValue = val
+		}
 
 		return nil
 	}
