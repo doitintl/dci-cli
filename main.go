@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -31,11 +32,19 @@ var version string = "dev"
 const defaultAPIBase = "https://api.doit.com"
 
 // apiBase returns the API base URL, allowing override via DCI_API_BASE_URL.
-func apiBase() string {
-	if v := os.Getenv("DCI_API_BASE_URL"); v != "" {
-		return strings.TrimRight(v, "/")
+func apiBase() (string, error) {
+	v := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL"))
+	if v == "" {
+		return defaultAPIBase, nil
 	}
-	return defaultAPIBase
+	u, err := url.Parse(v)
+	if err != nil {
+		return "", fmt.Errorf("invalid DCI_API_BASE_URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return "", fmt.Errorf("DCI_API_BASE_URL must use https:// scheme (got %q)", u.Scheme)
+	}
+	return strings.TrimRight(v, "/"), nil
 }
 
 //go:embed skills/dci-cli
@@ -62,9 +71,20 @@ func dciConfigDir() string {
 func ensureConfig(configDir string) (bool, error) {
 	configFile := filepath.Join(configDir, "apis.json")
 
+	base, err := apiBase()
+	if err != nil {
+		return false, err
+	}
+
 	if _, err := os.Stat(configFile); err == nil {
 		if err := tightenFilePermissions(configFile, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: unable to tighten config permissions for %s: %v\n", configFile, err)
+		}
+		// When DCI_API_BASE_URL is set, update the base URL in the existing config.
+		if os.Getenv("DCI_API_BASE_URL") != "" {
+			if err := updateConfigBase(configFile, base); err != nil {
+				return false, err
+			}
 		}
 		return false, nil
 	} else if !os.IsNotExist(err) {
@@ -78,7 +98,7 @@ func ensureConfig(configDir string) (bool, error) {
 	config := map[string]interface{}{
 		"$schema": "https://rest.sh/schemas/apis.json",
 		"dci": map[string]interface{}{
-			"base": apiBase(),
+			"base": base,
 			"profiles": map[string]interface{}{
 				"default": map[string]interface{}{
 					"auth": map[string]interface{}{
@@ -104,6 +124,31 @@ func ensureConfig(configDir string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// updateConfigBase reads apis.json, updates the dci.base field, and rewrites the file.
+func updateConfigBase(configFile, base string) error {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return err
+	}
+	dci, ok := config["dci"].(map[string]interface{})
+	if !ok {
+		return nil // unexpected structure, leave as-is
+	}
+	if dci["base"] == base {
+		return nil // already up to date
+	}
+	dci["base"] = base
+	out, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configFile, out, 0o600)
 }
 
 func tightenFilePermissions(path string, desired os.FileMode) error {
@@ -563,7 +608,12 @@ func setupCompletion() {
 		if _, err := os.Stat(cacheFile); err != nil {
 			return
 		}
-		cli.Load(apiBase(), dciCmd)
+		base, err := apiBase()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return
+		}
+		cli.Load(base, dciCmd)
 	}
 
 	// Surface API subcommands in root-level completion so "dci <Tab>"
@@ -754,8 +804,17 @@ func registerStatusCommands(configDir string) {
 	renderStatus := func(cmd *cobra.Command, args []string) error {
 		ctx := readCustomerContext(configDir)
 
+		base, err := apiBase()
+		if err != nil {
+			return err
+		}
+
 		fmt.Fprintln(os.Stdout, "DoiT Cloud Intelligence")
-		fmt.Fprintf(os.Stdout, "API Base: %s\n", apiBase())
+		if os.Getenv("DCI_API_BASE_URL") != "" {
+			fmt.Fprintf(os.Stdout, "API Base: %s (DCI_API_BASE_URL)\n", base)
+		} else {
+			fmt.Fprintf(os.Stdout, "API Base: %s\n", base)
+		}
 		fmt.Fprintf(os.Stdout, "Auth: %s\n", authSource())
 		fmt.Fprintf(os.Stdout, "Default Output: %s\n", currentOutput())
 		fmt.Fprintf(os.Stdout, "Config Dir: %s\n", configDir)
