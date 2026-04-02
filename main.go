@@ -763,6 +763,7 @@ func registerSkillCommands() {
 		{"codex", ".codex"},
 		{"kiro", ".kiro"},
 		{"gemini", ".gemini"},
+		{"opencode", ".config/opencode"},
 	}
 
 	cmd := &cobra.Command{
