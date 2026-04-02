@@ -137,7 +137,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -m "New version: DoiT.dci version ${version}"
-          git push -u origin "DoiT.dci-${version}"
+          git push -u origin "DoiT.dci-${version}" --force
 
           # Create PR to microsoft/winget-pkgs
           fork_owner="${WINGET_FORK%%/*}"
