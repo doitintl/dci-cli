@@ -265,6 +265,104 @@ func TestEnsureConfigPermissions(t *testing.T) {
 	assertPrivateFilePerms(t, configPath)
 }
 
+func TestApiBase(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    string
+		wantErr string
+	}{
+		{name: "no env var", env: "", want: defaultAPIBase},
+		{name: "valid override", env: "https://dev-app.doit.com", want: "https://dev-app.doit.com"},
+		{name: "trailing slash stripped", env: "https://dev-app.doit.com/", want: "https://dev-app.doit.com"},
+		{name: "multiple trailing slashes", env: "https://dev-app.doit.com///", want: "https://dev-app.doit.com"},
+		{name: "whitespace trimmed", env: "  https://dev-app.doit.com  ", want: "https://dev-app.doit.com"},
+		{name: "empty after trim is default", env: "   ", want: defaultAPIBase},
+		{name: "http rejected", env: "http://dev-app.doit.com", wantErr: "must use https://"},
+		{name: "no scheme rejected", env: "dev-app.doit.com", wantErr: "must use https://"},
+		{name: "ftp rejected", env: "ftp://dev-app.doit.com", wantErr: "must use https://"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DCI_API_BASE_URL", tt.env)
+			got, err := apiBase()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("apiBase() error = nil, want error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("apiBase() error = %q, want error containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("apiBase() unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("apiBase() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnsureConfigUpdatesBaseURL(t *testing.T) {
+	dir := t.TempDir()
+
+	// First run: create config with default base.
+	configured, err := ensureConfig(dir)
+	if err != nil {
+		t.Fatalf("ensureConfig(create) error: %v", err)
+	}
+	if !configured {
+		t.Fatalf("expected configured=true on first run")
+	}
+
+	// Verify default base is written.
+	configPath := filepath.Join(dir, "apis.json")
+	assertConfigBase(t, configPath, defaultAPIBase)
+
+	// Second run with DCI_API_BASE_URL set: should update base in existing config.
+	t.Setenv("DCI_API_BASE_URL", "https://dev-app.doit.com")
+	configured, err = ensureConfig(dir)
+	if err != nil {
+		t.Fatalf("ensureConfig(update) error: %v", err)
+	}
+	if configured {
+		t.Fatalf("expected configured=false on second run")
+	}
+	assertConfigBase(t, configPath, "https://dev-app.doit.com")
+
+	// Third run without env var: base should remain as previously written.
+	t.Setenv("DCI_API_BASE_URL", "")
+	configured, err = ensureConfig(dir)
+	if err != nil {
+		t.Fatalf("ensureConfig(no-op) error: %v", err)
+	}
+	if configured {
+		t.Fatalf("expected configured=false on third run")
+	}
+	assertConfigBase(t, configPath, "https://dev-app.doit.com")
+}
+
+func assertConfigBase(t *testing.T, configPath, wantBase string) {
+	t.Helper()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	dci, ok := config["dci"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("config missing dci key")
+	}
+	if got := dci["base"].(string); got != wantBase {
+		t.Errorf("config base = %q, want %q", got, wantBase)
+	}
+}
+
 func TestWrapTextDisplayWidth(t *testing.T) {
 	got := wrapText("你好a", 2)
 	want := "你\n好\na"
@@ -366,6 +464,17 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		}
 		if !strings.Contains(res.output, "Auth: API key (DCI_API_KEY)") {
 			t.Fatalf("expected API key auth source in status:\n%s", res.output)
+		}
+	})
+
+	t.Run("status shows DCI_API_BASE_URL annotation when set", func(t *testing.T) {
+		home := t.TempDir()
+		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_BASE_URL=https://dev-app.doit.com"}, "status")
+		if res.timedOut {
+			t.Fatalf("command timed out; output:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "API Base: https://dev-app.doit.com (DCI_API_BASE_URL)") {
+			t.Fatalf("expected DCI_API_BASE_URL annotation in status:\n%s", res.output)
 		}
 	})
 
