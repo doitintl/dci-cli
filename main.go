@@ -188,6 +188,9 @@ func main() {
 }
 
 func run() (exitCode int) {
+	// Reset per-invocation state so repeated calls (e.g. in tests) start clean.
+	customerContextFlagValue = ""
+
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "dci encountered an internal error: %v\n", r)
