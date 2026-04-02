@@ -255,11 +255,11 @@ func run() (exitCode int) {
 
 	if err := cli.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
-		maybeHintDoerContext(1, configDir)
+		maybeHintDoerContext(1, cli.GetLastStatus(), configDir)
 		return 1
 	}
 	code := cli.GetExitCode()
-	maybeHintDoerContext(code, configDir)
+	maybeHintDoerContext(code, cli.GetLastStatus(), configDir)
 	return code
 }
 
@@ -871,8 +871,8 @@ func authSource() string {
 
 // maybeHintDoerContext prints a targeted hint when a @doit.com user hits a 403
 // without a customer context set — covering both interactive and CI/CD usage.
-func maybeHintDoerContext(exitCode int, configDir string) {
-	status := cli.GetLastStatus()
+// status is the HTTP status code from the last request (pass cli.GetLastStatus()).
+func maybeHintDoerContext(exitCode int, status int, configDir string) {
 	if exitCode == 0 || (status != 401 && status != 403) {
 		return
 	}
