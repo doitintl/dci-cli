@@ -1,6 +1,6 @@
 ---
 name: dci-cli
-description: Operate the DoiT Cloud Intelligence CLI (`dci`) for DoiT Cloud Intelligence workflows. Use when Codex needs to install or verify the CLI, authenticate, troubleshoot auth or `customerContext`, inspect capabilities, run read-only list/get/report/query commands, compose `dci query` requests in either inline SQL shorthand or stdin JSON, analyze cost/report output, or draft safe create/update/delete commands and payloads.
+description: Operate the DoiT Cloud Intelligence CLI (`dci`) for DoiT Cloud Intelligence workflows. Use when the agent needs to install or verify the CLI, authenticate, troubleshoot auth or `customerContext`, inspect capabilities, run read-only list/get/report/query commands, compose `dci query` requests in either inline SQL shorthand or stdin JSON, analyze cost/report output, or draft safe create/update/delete commands and payloads.
 ---
 
 # DCI CLI
