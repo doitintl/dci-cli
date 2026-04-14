@@ -1425,3 +1425,64 @@ func TestApplyDoerContext(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomerContextFlag(t *testing.T) {
+	bin := buildBinary(t)
+
+	t.Run("empty --customer-context errors", func(t *testing.T) {
+		home := t.TempDir()
+		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_KEY=test-key"}, "list-budgets", "--customer-context", "")
+		if res.timedOut {
+			t.Fatalf("command timed out; output:\n%s", res.output)
+		}
+		if res.exitCode == 0 {
+			t.Fatalf("expected non-zero exit; output:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "--customer-context requires a non-empty domain name") {
+			t.Fatalf("expected error message in output:\n%s", res.output)
+		}
+	})
+
+	t.Run("-D short form appears in help", func(t *testing.T) {
+		home := t.TempDir()
+		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_KEY=test-key"}, "list-budgets", "--help")
+		if res.timedOut {
+			t.Fatalf("command timed out; output:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "-D, --customer-context") {
+			t.Fatalf("expected -D/--customer-context flag in help output:\n%s", res.output)
+		}
+	})
+
+	t.Run("Doer hint suppressed when customerContextFlagValue set", func(t *testing.T) {
+		setupTestCache(t)
+		cli.Cache.Set(testTokenCacheKey, doerJWT())
+
+		// Simulate --customer-context flag having been set for this invocation.
+		customerContextFlagValue = "acme.com"
+		t.Cleanup(func() { customerContextFlagValue = "" })
+
+		dir := t.TempDir()
+		// No persistent context file — conditions that would normally trigger the hint.
+
+		// Capture stderr.
+		r, w, _ := os.Pipe()
+		oldStderr := os.Stderr
+		os.Stderr = w
+
+		// Call with exitCode=1 and status=403 — would print the hint for a Doer
+		// with no persistent context, unless customerContextFlagValue suppresses it.
+		maybeHintDoerContext(1, 403, dir)
+
+		w.Close()
+		os.Stderr = oldStderr
+		buf := make([]byte, 4096)
+		n, _ := r.Read(buf)
+		output := string(buf[:n])
+		r.Close()
+
+		if strings.Contains(output, "DoiT employees need a customer context") {
+			t.Fatalf("expected hint to be suppressed, but got:\n%s", output)
+		}
+	})
+}
