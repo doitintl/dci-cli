@@ -1185,6 +1185,7 @@ func TestInstallSkill(t *testing.T) {
 		{"codex", ".codex"},
 		{"kiro", ".kiro"},
 		{"gemini", ".gemini"},
+		{"opencode", ".config/opencode"},
 	}
 
 	for _, a := range agents {

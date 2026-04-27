@@ -763,7 +763,7 @@ func registerSkillCommands() {
 		{"codex", ".codex"},
 		{"kiro", ".kiro"},
 		{"gemini", ".gemini"},
-		{"opencode", ".config/opencode"},
+		{"opencode", ".config/opencode"}, // OpenCode uses XDG config dir (~/.config), not a dotfile
 	}
 
 	cmd := &cobra.Command{
