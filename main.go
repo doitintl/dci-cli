@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -226,7 +227,8 @@ func run() (exitCode int) {
 
 	// Hardcode user-agent so the DCI API can identify CLI traffic.
 	// Restish picks this up via rsh-header and skips its own default.
-	viper.Set("rsh-header", []string{"user-agent:dci/" + version})
+	userAgent := fmt.Sprintf("dci-cli/%s (%s; %s/%s)", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	viper.Set("rsh-header", []string{"user-agent:" + userAgent})
 
 	cli.Load("dci", cli.Root)
 	applyAPIKeyAuth()
