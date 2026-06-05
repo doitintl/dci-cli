@@ -56,6 +56,18 @@ var skillFS embed.FS
 // set, used to suppress the Doer hint even when no persistent context file exists.
 var customerContextFlagValue string
 
+// agentMode reports whether dci is running in agent mode for the current
+// invocation (compact, deterministic output with no decoration). It is resolved
+// once at startup and read throughout the run.
+var agentMode bool
+
+// agentModeReason records why agentMode resolved the way it did, for diagnostics.
+var agentModeReason string
+
+// agentEnvDetected holds the name of the detected agent environment variable (if
+// any), used to surface the human-mode "an optimized agent mode exists" tip.
+var agentEnvDetected string
+
 func dciConfigDir() string {
 	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
 		cfgDir := filepath.Join(dir, "dci")
@@ -172,7 +184,8 @@ func tightenFilePermissions(path string, desired os.FileMode) error {
 }
 
 func printFirstRunOnboarding(configured bool) {
-	if !configured || !term.IsTerminal(int(os.Stderr.Fd())) {
+	// Onboarding is decorative chatter — skip it entirely in agent mode.
+	if !configured || agentMode || !term.IsTerminal(int(os.Stderr.Fd())) {
 		return
 	}
 
@@ -192,6 +205,18 @@ func main() {
 func run() (exitCode int) {
 	// Reset per-invocation state so repeated calls (e.g. in tests) start clean.
 	customerContextFlagValue = ""
+
+	// Resolve agent mode once up front. Downstream behavior — color, default
+	// output format, stderr routing, and the User-Agent tag — all key off this.
+	agentEnvDetected = detectedAgentEnv()
+	dec := resolveAgentMode(os.Getenv("DCI_AGENT_MODE"), os.Args, agentEnvDetected, stdoutIsTTY())
+	agentMode = dec.enabled
+	agentModeReason = dec.reason
+	if agentMode {
+		// Disable restish/aurora color before cli.Init configures the output
+		// writers; it reads this via viper's automatic env binding.
+		os.Setenv("NOCOLOR", "1")
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -213,7 +238,9 @@ func run() (exitCode int) {
 	cli.Init("dci", version)
 	cli.Defaults()
 	overrideTableOutput()
+	registerAgentFlags()
 	printFirstRunOnboarding(configured)
+	maybeHintAgentMode()
 
 	cli.AddLoader(openapi.New())
 	cli.AddAuth("oauth-authorization-code", &oauth.AuthorizationCodeHandler{})
@@ -226,10 +253,10 @@ func run() (exitCode int) {
 	os.Setenv("RSH_PROFILE", "default")
 	viper.Set("rsh-profile", "default")
 
-	// Hardcode user-agent so the DCI API can identify CLI traffic.
+	// Hardcode user-agent so the DCI API can identify CLI traffic. Agent-mode
+	// invocations carry "agent=1" so adoption can be measured server-side.
 	// Restish picks this up via rsh-header and skips its own default.
-	userAgent := fmt.Sprintf("dci-cli/%s (%s; %s/%s)", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
-	viper.Set("rsh-header", []string{"user-agent:" + userAgent})
+	viper.Set("rsh-header", []string{"user-agent:" + buildUserAgent(agentMode)})
 
 	cli.Load("dci", cli.Root)
 	applyAPIKeyAuth()
@@ -448,10 +475,155 @@ func isRootCommand(name string) bool {
 }
 
 func hideGlobalFlags() {
-	// Keep the flags functional but hide them from help output.
+	// Keep the flags functional but hide them from help output. The agent-mode
+	// flags stay visible so users can discover them.
 	cli.Root.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Name == "agent" || f.Name == "no-agent" {
+			return
+		}
 		f.Hidden = true
 	})
+}
+
+// --- Agent mode detection -------------------------------------------------
+
+// agentEnvVars lists environment variables set by known AI coding agents. When
+// any is present with a non-empty value, dci treats the session as agent-driven
+// unless an explicit override says otherwise. The list is intentionally
+// conservative and documented; PRs to extend it are welcome.
+var agentEnvVars = []string{
+	"CLAUDECODE",      // Claude Code
+	"CLAUDE_CODE",     // Claude Code (defensive alias)
+	"CURSOR_AGENT",    // Cursor agent
+	"KIRO_AGENT",      // Kiro
+	"AIDER_SESSION",   // Aider
+	"GEMINI_CLI",      // Gemini CLI
+	"REPLIT_AGENT",    // Replit Agent
+	"WINDSURF_AGENT",  // Windsurf
+	"OPENHANDS_AGENT", // OpenHands
+	"DEVIN_AGENT",     // Devin
+}
+
+type agentModeResult struct {
+	enabled bool
+	reason  string
+}
+
+// resolveAgentMode decides whether agent mode is active, following the
+// documented precedence:
+//  1. DCI_AGENT_MODE env var (explicit override, always wins)
+//  2. --agent / --no-agent flags (explicit, per-invocation)
+//  3. a known agent env var (heuristic)
+//  4. non-TTY stdout (soft signal: pipe/redirect)
+//
+// Inputs are passed explicitly so the logic stays easy to test.
+func resolveAgentMode(dciAgentMode string, args []string, agentEnv string, stdoutTTY bool) agentModeResult {
+	if v := strings.TrimSpace(dciAgentMode); v != "" {
+		if isFalsy(v) {
+			return agentModeResult{enabled: false, reason: "DCI_AGENT_MODE override"}
+		}
+		return agentModeResult{enabled: true, reason: "DCI_AGENT_MODE override"}
+	}
+	switch agentFlagOverride(args) {
+	case 1:
+		return agentModeResult{enabled: true, reason: "--agent flag"}
+	case -1:
+		return agentModeResult{enabled: false, reason: "--no-agent flag"}
+	}
+	if agentEnv != "" {
+		return agentModeResult{enabled: true, reason: "agent env var " + agentEnv}
+	}
+	if !stdoutTTY {
+		return agentModeResult{enabled: true, reason: "non-TTY stdout"}
+	}
+	return agentModeResult{enabled: false, reason: "interactive terminal"}
+}
+
+// detectedAgentEnv returns the name of the first agent env var found, or "".
+func detectedAgentEnv() string {
+	for _, name := range agentEnvVars {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+func stdoutIsTTY() bool {
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// agentFlagOverride scans args for explicit --agent / --no-agent flags. Returns
+// +1 for agent mode, -1 for human mode, 0 if neither is present. The last
+// occurrence wins. Scanning stops at the "--" operand terminator.
+func agentFlagOverride(args []string) int {
+	res := 0
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		switch a {
+		case "--agent", "--agent=true":
+			res = 1
+		case "--agent=false", "--no-agent", "--no-agent=true":
+			res = -1
+		case "--no-agent=false":
+			res = 1
+		}
+	}
+	return res
+}
+
+func isFalsy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "no", "off":
+		return true
+	}
+	return false
+}
+
+// buildUserAgent returns the User-Agent header value, tagging agent-mode traffic
+// with "agent=1" so adoption can be measured server-side.
+func buildUserAgent(agent bool) string {
+	suffix := ""
+	if agent {
+		suffix = "; agent=1"
+	}
+	return fmt.Sprintf("dci-cli/%s (%s; %s/%s%s)", version, runtime.Version(), runtime.GOOS, runtime.GOARCH, suffix)
+}
+
+// defaultOutputFormat is the output format used when --output is not given.
+// Humans get the table view; agents get TOON — compact, token-efficient, and
+// parse-friendly.
+func defaultOutputFormat() string {
+	if agentMode {
+		return "toon"
+	}
+	return "table"
+}
+
+// registerAgentFlags adds the global --agent / --no-agent flags so cobra accepts
+// them. The actual decision is made earlier in run() by scanning os.Args, since
+// it must be live before any HTTP call (User-Agent) and before cli.Init (color).
+func registerAgentFlags() {
+	pf := cli.Root.PersistentFlags()
+	if pf.Lookup("agent") == nil {
+		pf.Bool("agent", false, "Force agent mode: compact TOON, no color, chatter to stderr")
+	}
+	if pf.Lookup("no-agent") == nil {
+		pf.Bool("no-agent", false, "Force human mode even when an agent is auto-detected")
+	}
+}
+
+// maybeHintAgentMode nudges a misclassified agent toward the optimized path:
+// when an agent env var is present but agent mode is off (the caller opted out
+// via --no-agent or DCI_AGENT_MODE=0), emit a one-line tip on stderr so stdout
+// stays parseable.
+func maybeHintAgentMode() {
+	if agentMode || agentEnvDetected == "" {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "Tip: set DCI_AGENT_MODE=1 (or pass --agent) for compact, parse-friendly output.")
 }
 
 const dciUsageTemplate = `Usage:{{if .Runnable}}
@@ -669,10 +841,16 @@ func setupCompletion() {
 		defaultHelp(cmd, args)
 		if cmd == cli.Root && !hasAPICommands {
 			hint := "\n! To get started, authenticate with: dci login (or set DCI_API_KEY)\n\n"
-			if term.IsTerminal(int(os.Stdout.Fd())) {
-				hint = "\n\033[1;33m!\033[0m To get started, authenticate with: \033[1mdci login\033[0m (or set \033[1mDCI_API_KEY\033[0m)\n\n"
+			// In agent mode the hint is chatter — route it to stderr (plain, no
+			// color) so stdout stays parseable.
+			if agentMode {
+				fmt.Fprint(os.Stderr, hint)
+			} else {
+				if term.IsTerminal(int(os.Stdout.Fd())) {
+					hint = "\n\033[1;33m!\033[0m To get started, authenticate with: \033[1mdci login\033[0m (or set \033[1mDCI_API_KEY\033[0m)\n\n"
+				}
+				fmt.Fprint(os.Stdout, hint)
 			}
-			fmt.Fprint(os.Stdout, hint)
 		}
 	})
 }
@@ -807,7 +985,7 @@ func registerStatusCommands(configDir string) {
 	currentOutput := func() string {
 		output := strings.TrimSpace(viper.GetString("rsh-output-format"))
 		if output == "" || output == "auto" {
-			output = "table"
+			output = defaultOutputFormat()
 		}
 		return output
 	}
@@ -828,6 +1006,11 @@ func registerStatusCommands(configDir string) {
 		}
 		fmt.Fprintf(os.Stdout, "Auth: %s\n", authSource())
 		fmt.Fprintf(os.Stdout, "Default Output: %s\n", currentOutput())
+		if agentMode {
+			fmt.Fprintf(os.Stdout, "Agent Mode: on (%s)\n", agentModeReason)
+		} else {
+			fmt.Fprintf(os.Stdout, "Agent Mode: off (%s)\n", agentModeReason)
+		}
 		fmt.Fprintf(os.Stdout, "Config Dir: %s\n", configDir)
 		if ctx != "" {
 			if os.Getenv("DCI_CUSTOMER_CONTEXT") != "" {
@@ -1058,7 +1241,7 @@ func addOutputFlag() {
 		return
 	}
 
-	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, auto, toon (default: table). toon is compact and token-efficient — good for LLM agents.")
+	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, auto, toon (default: table, or toon in agent mode). toon is compact and token-efficient — good for LLM agents.")
 	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate) or wrap (multi-line)")
 	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
@@ -1076,7 +1259,7 @@ func addOutputFlag() {
 
 		outFlag := cmd.Flags().Lookup("output")
 		if outFlag == nil || !outFlag.Changed {
-			viper.Set("rsh-output-format", "table")
+			viper.Set("rsh-output-format", defaultOutputFormat())
 		} else {
 			out := strings.TrimSpace(outFlag.Value.String())
 			switch out {

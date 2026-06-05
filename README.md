@@ -82,6 +82,43 @@ dci list-budgets --table-mode wrap
 dci list-budgets --table-columns id,name,amount
 ```
 
+## Agent Mode
+
+`dci` adapts its output depending on whether a human or an AI agent is driving it.
+In **human mode** (the default in an interactive terminal) you get tables, color,
+and contextual hints. In **agent mode** the CLI emits clean, deterministic output
+that is cheap to parse and free of decoration:
+
+- Default `--output` becomes `toon` (compact, token-efficient) instead of `table`
+- No color, spinners, or other terminal decoration
+- Banners, tips, and status chatter go to **stderr**, leaving **stdout** for data only
+- The request `User-Agent` is tagged with `agent=1`
+
+### How agent mode is detected
+
+Detection runs in priority order — the first match wins:
+
+1. **`DCI_AGENT_MODE` environment variable** — `DCI_AGENT_MODE=1` forces agent mode,
+   `DCI_AGENT_MODE=0` forces human mode. Always wins.
+2. **`--agent` / `--no-agent` flags** — explicit, per-invocation override.
+3. **Known agent environment variables** — if any of these are set, agent mode is
+   assumed: `CLAUDECODE`, `CLAUDE_CODE`, `CURSOR_AGENT`, `KIRO_AGENT`,
+   `AIDER_SESSION`, `GEMINI_CLI`, `REPLIT_AGENT`, `WINDSURF_AGENT`,
+   `OPENHANDS_AGENT`, `DEVIN_AGENT`. (Open a PR to extend this list.)
+4. **Non-TTY stdout** — a soft signal: when output is piped or redirected and no
+   setting above applies, agent mode is assumed.
+
+```bash
+# Force agent mode
+DCI_AGENT_MODE=1 dci list-budgets
+dci --agent list-budgets
+
+# Force human mode (tables, color) even when piping or running under an agent
+dci --no-agent list-budgets | less -S
+```
+
+Run `dci status` to see whether agent mode is active and why.
+
 ## Updating
 
 ```bash

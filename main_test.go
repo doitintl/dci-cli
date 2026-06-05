@@ -387,6 +387,112 @@ func TestTruncateTextDisplayWidth(t *testing.T) {
 	}
 }
 
+func TestResolveAgentMode(t *testing.T) {
+	tests := []struct {
+		name      string
+		envMode   string
+		args      []string
+		agentEnv  string
+		stdoutTTY bool
+		want      bool
+	}{
+		// 1. DCI_AGENT_MODE always wins.
+		{name: "env mode 1 wins over tty", envMode: "1", args: nil, agentEnv: "", stdoutTTY: true, want: true},
+		{name: "env mode true", envMode: "true", stdoutTTY: true, want: true},
+		{name: "env mode 0 forces human", envMode: "0", agentEnv: "CLAUDECODE", stdoutTTY: false, want: false},
+		{name: "env mode false forces human", envMode: "false", stdoutTTY: false, want: false},
+		{name: "env mode wins over --agent", envMode: "0", args: []string{"--agent"}, stdoutTTY: false, want: false},
+
+		// 2. Flags override heuristics.
+		{name: "--agent forces agent", args: []string{"dci", "--agent", "status"}, stdoutTTY: true, want: true},
+		{name: "--no-agent forces human", args: []string{"dci", "--no-agent", "list"}, agentEnv: "CLAUDECODE", stdoutTTY: false, want: false},
+		{name: "--no-agent over tty", args: []string{"--no-agent"}, stdoutTTY: false, want: false},
+
+		// 3. Agent env var heuristic.
+		{name: "agent env enables", agentEnv: "CURSOR_AGENT", stdoutTTY: true, want: true},
+
+		// 4. Non-TTY soft signal.
+		{name: "non-tty enables", stdoutTTY: false, want: true},
+		{name: "interactive tty stays human", stdoutTTY: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveAgentMode(tt.envMode, tt.args, tt.agentEnv, tt.stdoutTTY)
+			if got.enabled != tt.want {
+				t.Fatalf("resolveAgentMode() = %v (reason %q), want %v", got.enabled, got.reason, tt.want)
+			}
+		})
+	}
+}
+
+func TestAgentFlagOverride(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{name: "none", args: []string{"dci", "status"}, want: 0},
+		{name: "agent", args: []string{"dci", "--agent", "status"}, want: 1},
+		{name: "agent equals true", args: []string{"--agent=true"}, want: 1},
+		{name: "agent equals false", args: []string{"--agent=false"}, want: -1},
+		{name: "no-agent", args: []string{"--no-agent"}, want: -1},
+		{name: "no-agent equals false", args: []string{"--no-agent=false"}, want: 1},
+		{name: "last wins", args: []string{"--agent", "--no-agent"}, want: -1},
+		{name: "stop at terminator", args: []string{"--", "--agent"}, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := agentFlagOverride(tt.args); got != tt.want {
+				t.Fatalf("agentFlagOverride(%v) = %d, want %d", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildUserAgent(t *testing.T) {
+	human := buildUserAgent(false)
+	if strings.Contains(human, "agent=1") {
+		t.Fatalf("human User-Agent should not carry agent=1: %q", human)
+	}
+	if !strings.HasPrefix(human, "dci-cli/") {
+		t.Fatalf("unexpected User-Agent prefix: %q", human)
+	}
+
+	agent := buildUserAgent(true)
+	if !strings.Contains(agent, "agent=1") {
+		t.Fatalf("agent User-Agent must carry agent=1: %q", agent)
+	}
+}
+
+func TestDefaultOutputFormat(t *testing.T) {
+	t.Cleanup(func() { agentMode = false })
+
+	agentMode = false
+	if got := defaultOutputFormat(); got != "table" {
+		t.Fatalf("human defaultOutputFormat() = %q, want table", got)
+	}
+	agentMode = true
+	if got := defaultOutputFormat(); got != "toon" {
+		t.Fatalf("agent defaultOutputFormat() = %q, want toon", got)
+	}
+}
+
+func TestDetectedAgentEnv(t *testing.T) {
+	for _, name := range agentEnvVars {
+		t.Setenv(name, "")
+	}
+	if got := detectedAgentEnv(); got != "" {
+		t.Fatalf("detectedAgentEnv() with no agent vars = %q, want empty", got)
+	}
+
+	t.Setenv("KIRO_AGENT", "1")
+	if got := detectedAgentEnv(); got != "KIRO_AGENT" {
+		t.Fatalf("detectedAgentEnv() = %q, want KIRO_AGENT", got)
+	}
+}
+
 func TestCLIIntegrationBehavior(t *testing.T) {
 	bin := buildBinary(t)
 
