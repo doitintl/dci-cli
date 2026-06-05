@@ -4,6 +4,10 @@
 
 `dci` is the CLI for the DoiT Cloud Intelligence (DCI) API. It wraps [restish](https://github.com/rest-sh/restish) with DCI-specific configuration — auto-configured API base, OAuth2 via the DoiT Console, table-first output, and a locked-down command surface that exposes only DCI API operations. The entire CLI is a single `main.go` file. It ships as a Go binary distributed via Homebrew, Scoop, WinGet, and `.deb`/`.rpm` packages.
 
+## Restish Version (don't upgrade to v2)
+
+Pinned to restish **v0.21.2** (already includes the CVE-2025-22868 patch). Restish **v2** is a ground-up redesign that **deletes the in-process library model `dci` is built on** — it makes restish the binary and pushes extensions to out-of-process plugins, so moving to v2 is a rewrite, not a dependency bump, with no security pressure and real UX regressions. **Don't upgrade without revisiting the full evaluation in [issue #20](https://github.com/doitintl/dci-cli/issues/20).**
+
 ## Commit Message Conventions
 
 GoReleaser changelog auto-generates from commits between tags. Filtered prefixes (excluded from changelog):
