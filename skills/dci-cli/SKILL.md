@@ -9,6 +9,8 @@ description: Operate the DoiT Cloud Intelligence CLI (`dci`) for DoiT Cloud Inte
 
 Use `dci` as the primary interface for DoiT Cloud Intelligence CLI tasks. Prefer read-only discovery first, prefer `--output json` for agent work, and use env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context>` when switching customer context temporarily.
 
+Set `DCI_AGENT_MODE=1` (or pass `--agent`) to run in agent mode: output defaults to compact JSON, terminal decoration is disabled, and banners/hints are routed to stderr so stdout stays parseable. `dci` also auto-detects common agent environments, so this is usually already on — run `dci status` to confirm.
+
 ## Quick Start
 
 1. Confirm the CLI exists and is runnable: `dci --version`
