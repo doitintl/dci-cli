@@ -209,6 +209,11 @@ func run() (exitCode int) {
 	// Resolve agent mode once up front. Downstream behavior — color, default
 	// output format, stderr routing, and the User-Agent tag — all key off this.
 	agentEnvDetected = detectedAgentEnv()
+	if v := strings.TrimSpace(os.Getenv("DCI_AGENT_MODE")); v != "" {
+		if _, ok := parseBoolish(v); !ok {
+			fmt.Fprintf(os.Stderr, "warning: ignoring unrecognized DCI_AGENT_MODE=%q (use 1 or 0)\n", v)
+		}
+	}
 	dec := resolveAgentMode(os.Getenv("DCI_AGENT_MODE"), os.Args, agentEnvDetected, stdoutIsTTY())
 	agentMode = dec.enabled
 	agentModeReason = dec.reason
@@ -519,16 +524,18 @@ type agentModeResult struct {
 // Inputs are passed explicitly so the logic stays easy to test.
 func resolveAgentMode(dciAgentMode string, args []string, agentEnv string, stdoutTTY bool) agentModeResult {
 	if v := strings.TrimSpace(dciAgentMode); v != "" {
-		if isFalsy(v) {
-			return agentModeResult{enabled: false, reason: "DCI_AGENT_MODE override"}
+		// Only recognized boolean tokens are decisive. An unrecognized value
+		// (e.g. DCI_AGENT_MODE=2) is ignored so a typo can't silently force a
+		// mode; run() warns about it separately.
+		if b, ok := parseBoolish(v); ok {
+			return agentModeResult{enabled: b, reason: "DCI_AGENT_MODE override"}
 		}
-		return agentModeResult{enabled: true, reason: "DCI_AGENT_MODE override"}
 	}
 	switch agentFlagOverride(args) {
 	case 1:
-		return agentModeResult{enabled: true, reason: "--agent flag"}
+		return agentModeResult{enabled: true, reason: "--agent/--no-agent flag"}
 	case -1:
-		return agentModeResult{enabled: false, reason: "--no-agent flag"}
+		return agentModeResult{enabled: false, reason: "--agent/--no-agent flag"}
 	}
 	if agentEnv != "" {
 		return agentModeResult{enabled: true, reason: "agent env var " + agentEnv}
@@ -555,31 +562,50 @@ func stdoutIsTTY() bool {
 
 // agentFlagOverride scans args for explicit --agent / --no-agent flags. Returns
 // +1 for agent mode, -1 for human mode, 0 if neither is present. The last
-// occurrence wins. Scanning stops at the "--" operand terminator.
+// occurrence wins. Scanning stops at the "--" operand terminator. Both the bare
+// flag and any boolean value form cobra/pflag accepts (=true/false, =1/0, etc.)
+// are honored so this early scan agrees with cobra's later parse.
 func agentFlagOverride(args []string) int {
 	res := 0
 	for _, a := range args {
 		if a == "--" {
 			break
 		}
-		switch a {
-		case "--agent", "--agent=true":
-			res = 1
-		case "--agent=false", "--no-agent", "--no-agent=true":
-			res = -1
-		case "--no-agent=false":
-			res = 1
+		name, val, hasVal := strings.Cut(a, "=")
+		var sign int
+		switch name {
+		case "--agent":
+			sign = 1
+		case "--no-agent":
+			sign = -1
+		default:
+			continue
 		}
+		if hasVal {
+			b, ok := parseBoolish(val)
+			if !ok {
+				continue // let cobra surface the parse error later
+			}
+			if !b {
+				sign = -sign // --agent=false / --no-agent=false
+			}
+		}
+		res = sign
 	}
 	return res
 }
 
-func isFalsy(v string) bool {
+// parseBoolish interprets the boolean tokens cobra/pflag accept (plus a few
+// common aliases), case-insensitively. Returns (value, true) for a recognized
+// token and (false, false) otherwise.
+func parseBoolish(v string) (bool, bool) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "0", "false", "no", "off":
-		return true
+	case "1", "t", "true", "yes", "y", "on":
+		return true, true
+	case "0", "f", "false", "no", "n", "off":
+		return false, true
 	}
-	return false
+	return false, false
 }
 
 // buildUserAgent returns the User-Agent header value, tagging agent-mode traffic

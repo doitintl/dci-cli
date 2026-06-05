@@ -402,6 +402,8 @@ func TestResolveAgentMode(t *testing.T) {
 		{name: "env mode 0 forces human", envMode: "0", agentEnv: "CLAUDECODE", stdoutTTY: false, want: false},
 		{name: "env mode false forces human", envMode: "false", stdoutTTY: false, want: false},
 		{name: "env mode wins over --agent", envMode: "0", args: []string{"--agent"}, stdoutTTY: false, want: false},
+		{name: "env mode garbage ignored, falls through to tty", envMode: "2", stdoutTTY: true, want: false},
+		{name: "env mode garbage ignored, falls through to env var", envMode: "banana", agentEnv: "KIRO_AGENT", stdoutTTY: true, want: true},
 
 		// 2. Flags override heuristics.
 		{name: "--agent forces agent", args: []string{"dci", "--agent", "status"}, stdoutTTY: true, want: true},
@@ -436,8 +438,14 @@ func TestAgentFlagOverride(t *testing.T) {
 		{name: "agent", args: []string{"dci", "--agent", "status"}, want: 1},
 		{name: "agent equals true", args: []string{"--agent=true"}, want: 1},
 		{name: "agent equals false", args: []string{"--agent=false"}, want: -1},
+		{name: "agent equals 1", args: []string{"--agent=1"}, want: 1},
+		{name: "agent equals 0", args: []string{"--agent=0"}, want: -1},
 		{name: "no-agent", args: []string{"--no-agent"}, want: -1},
 		{name: "no-agent equals false", args: []string{"--no-agent=false"}, want: 1},
+		{name: "no-agent equals 1", args: []string{"--no-agent=1"}, want: -1},
+		{name: "no-agent equals 0", args: []string{"--no-agent=0"}, want: 1},
+		{name: "agent uppercase TRUE", args: []string{"--agent=TRUE"}, want: 1},
+		{name: "agent unrecognized value ignored", args: []string{"--agent=maybe"}, want: 0},
 		{name: "last wins", args: []string{"--agent", "--no-agent"}, want: -1},
 		{name: "stop at terminator", args: []string{"--", "--agent"}, want: 0},
 	}
