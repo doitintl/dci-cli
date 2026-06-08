@@ -70,6 +70,7 @@ require (
 	github.com/subosito/gotenv v1.4.1 // indirect
 	github.com/tent/http-link-go v0.0.0-20130702225549-ac974c61c2f9 // indirect
 	github.com/thales-e-security/pool v0.0.2 // indirect
+	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.9-0.20240815153524-6ea36470d1bd // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yuin/goldmark v1.5.3 // indirect

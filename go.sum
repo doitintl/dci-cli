@@ -312,6 +312,8 @@ github.com/tent/http-link-go v0.0.0-20130702225549-ac974c61c2f9 h1:/Bsw4C+DEdqPj
 github.com/tent/http-link-go v0.0.0-20130702225549-ac974c61c2f9/go.mod h1:RHkNRtSLfOK7qBTHaeSX1D6BNpI3qw7NTxsmNr4RvN8=
 github.com/thales-e-security/pool v0.0.2 h1:RAPs4q2EbWsTit6tpzuvTFlgFRJ3S8Evf5gtvVDbmPg=
 github.com/thales-e-security/pool v0.0.2/go.mod h1:qtpMm2+thHtqhLzTwgDBj/OuNnMpupY8mv0Phz0gjhU=
+github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c h1:D8lDFovBMZywze1eh9iwMLcYor5f11mHBocLhO7cBe8=
+github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c/go.mod h1:j/BOnpF2ihnz4lELs99h9mwGJBx/zdleOUCnLLRPCsc=
 github.com/twpayne/httpcache v1.0.0 h1:Nm2b8ui5gBot+1sMrodBqUfKuphZ5GqW4tglz3sa2PU=
 github.com/twpayne/httpcache v1.0.0/go.mod h1:76t45GFyg2v+ymifs7XHpomYXG6nRde+K6eTWnAqwhY=
 github.com/wk8/go-ordered-map/v2 v2.1.9-0.20240815153524-6ea36470d1bd h1:dLuIF2kX9c+KknGJUdJi1Il1SDiTSK158/BB9kdgAew=
