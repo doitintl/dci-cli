@@ -1058,7 +1058,7 @@ func addOutputFlag() {
 		return
 	}
 
-	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, toon, auto (default: table). toon is compact and token-efficient — good for LLM agents.")
+	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, auto, toon (default: table). toon is compact and token-efficient — good for LLM agents.")
 	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate) or wrap (multi-line)")
 	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
