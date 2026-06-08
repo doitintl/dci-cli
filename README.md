@@ -65,7 +65,12 @@ The default output format is `table`. Override it with the `--output` flag:
 dci list-budgets --output json
 dci list-budgets --output yaml
 dci list-budgets --output table
+dci list-budgets --output toon
 ```
+
+`toon` emits [Token-Oriented Object Notation](https://toonformat.dev/) — a
+compact, lossless format that uses ~40% fewer tokens than JSON for list-shaped
+data. It is opt-in and most useful when driving the CLI from an LLM agent.
 
 ### Table Options
 
