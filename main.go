@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	toon "github.com/toon-format/toon-go"
 	"golang.org/x/term"
 )
 
@@ -1174,6 +1175,39 @@ func (t dciTableContentType) Marshal(value interface{}) ([]byte, error) {
 }
 
 func (t dciTableContentType) Unmarshal(data []byte, value interface{}) error {
+	return fmt.Errorf("unimplemented")
+}
+
+type dciToonContentType struct{}
+
+func (t dciToonContentType) Detect(contentType string) bool { return false }
+
+func (t dciToonContentType) Marshal(value interface{}) ([]byte, error) {
+	// TOON (Token-Oriented Object Notation) is a compact, lossless encoding that
+	// uses far fewer tokens than JSON for list-shaped data — useful when the CLI
+	// is driven by an LLM agent. Normalize types first so toon sees plain
+	// maps/slices, then fall back to indented JSON if encoding fails so the user
+	// still gets output (matches dciTableContentType's degrade-gracefully behavior).
+	jsonSafe, err := toJSONSafe(value)
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := toon.Marshal(jsonSafe)
+	if err != nil {
+		fallback, jsonErr := json.MarshalIndent(jsonSafe, "", "  ")
+		if jsonErr != nil {
+			return nil, err // return original toon error
+		}
+		return append(fallback, '\n'), nil
+	}
+	if len(b) == 0 || b[len(b)-1] != '\n' {
+		b = append(b, '\n')
+	}
+	return b, nil
+}
+
+func (t dciToonContentType) Unmarshal(data []byte, value interface{}) error {
 	return fmt.Errorf("unimplemented")
 }
 
