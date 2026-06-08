@@ -1165,6 +1165,66 @@ func TestTableMarshalObjectStillWorks(t *testing.T) {
 	}
 }
 
+func TestToonMarshalListProducesTabularOutput(t *testing.T) {
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"reports": []interface{}{
+			map[string]interface{}{"id": "r1", "name": "alpha"},
+			map[string]interface{}{"id": "r2", "name": "beta"},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if len(s) == 0 {
+		t.Fatal("expected non-empty output")
+	}
+	if !strings.Contains(s, "id") || !strings.Contains(s, "name") {
+		t.Fatalf("expected field names in TOON output, got:\n%s", s)
+	}
+	if !strings.Contains(s, "alpha") || !strings.Contains(s, "beta") {
+		t.Fatalf("expected row values in TOON output, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalObjectEncodesAsToon(t *testing.T) {
+	ct := dciToonContentType{}
+	input := map[string]interface{}{"name": "test", "value": 123}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := strings.TrimSpace(string(out))
+	if len(s) == 0 {
+		t.Fatal("expected non-empty output")
+	}
+	// TOON renders objects as `key: value` lines, not JSON. A leading `{` would
+	// mean we silently hit the indented-JSON fallback instead of encoding TOON.
+	if strings.HasPrefix(s, "{") {
+		t.Fatalf("expected TOON output, got JSON fallback:\n%s", s)
+	}
+	if !strings.Contains(s, "name") || !strings.Contains(s, "test") {
+		t.Fatalf("expected key/value in TOON output, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalScalarsEncode(t *testing.T) {
+	ct := dciToonContentType{}
+	// Scalars are valid TOON primitives; assert they encode without error and
+	// without panicking (they do not exercise the JSON fallback path).
+	for _, input := range []interface{}{"hello", 42, true} {
+		out, err := ct.Marshal(input)
+		if err != nil {
+			t.Fatalf("expected output for %v, got error: %v", input, err)
+		}
+		if len(out) == 0 {
+			t.Fatalf("expected non-empty output for %v", input)
+		}
+	}
+}
+
 // expectedSkillFiles lists every file the embedded skill should produce.
 var expectedSkillFiles = []string{
 	"skills/dci-cli/SKILL.md",
