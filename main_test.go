@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -1222,6 +1223,61 @@ func TestToonMarshalScalarsEncode(t *testing.T) {
 		if len(out) == 0 {
 			t.Fatalf("expected non-empty output for %v", input)
 		}
+	}
+}
+
+func TestOutputFlagValidation(t *testing.T) {
+	// Drive the real --output validation in addOutputFlag's PersistentPreRunE so
+	// the accepted set can't silently drift from this test. "toon" must be
+	// accepted (and set rsh-output-format); an unknown value must be rejected.
+	oldRoot := cli.Root
+	t.Cleanup(func() {
+		cli.Root = oldRoot
+		viper.Reset()
+	})
+
+	tests := []struct {
+		value   string
+		wantErr bool
+	}{
+		{"table", false},
+		{"json", false},
+		{"yaml", false},
+		{"auto", false},
+		{"toon", false},
+		{"bogus", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			viper.Reset()
+			// Build a fresh command per case: addOutputFlag wires the --output
+			// flag and its validating PersistentPreRunE onto the dci command, and
+			// Execute() is what merges persistent flags + runs that PreRunE.
+			root := &cobra.Command{Use: "dci"}
+			subCmd := &cobra.Command{Use: "dci", RunE: func(*cobra.Command, []string) error { return nil }}
+			root.AddCommand(subCmd)
+			cli.Root = root
+			addOutputFlag()
+			// Execution starts at the root, so set args there and route to the
+			// dci subcommand.
+			root.SetArgs([]string{"dci", "--output", tt.value})
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+
+			err := root.Execute()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("--output %q: expected error, got nil", tt.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("--output %q: unexpected error: %v", tt.value, err)
+			}
+			if got := viper.GetString("rsh-output-format"); got != tt.value {
+				t.Fatalf("--output %q: rsh-output-format = %q, want %q", tt.value, got, tt.value)
+			}
+		})
 	}
 }
 

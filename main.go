@@ -1058,7 +1058,7 @@ func addOutputFlag() {
 		return
 	}
 
-	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, auto (default: table)")
+	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, toon, auto (default: table). toon is compact and token-efficient — good for LLM agents.")
 	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate) or wrap (multi-line)")
 	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
@@ -1080,10 +1080,10 @@ func addOutputFlag() {
 		} else {
 			out := strings.TrimSpace(outFlag.Value.String())
 			switch out {
-			case "table", "json", "yaml", "auto":
+			case "table", "json", "yaml", "auto", "toon":
 				viper.Set("rsh-output-format", out)
 			default:
-				return fmt.Errorf("invalid --output %q (supported: table, json, yaml, auto)", out)
+				return fmt.Errorf("invalid --output %q (supported: table, json, yaml, auto, toon)", out)
 			}
 		}
 		defaultToBodyOutput()
@@ -1152,6 +1152,11 @@ func overrideTableOutput() {
 	// the array under a field (e.g. `budgets: [...]`). This keeps `--output table`
 	// ergonomic by extracting the most likely array or wrapping single objects.
 	cli.AddContentType("table", "", -1, &dciTableContentType{})
+	// TOON output is opt-in via --output toon; table stays the default. Args
+	// mirror the table registration: the name (2nd arg) only feeds the Accept
+	// header for content negotiation, which is skipped at q=-1, so it's left
+	// empty — restish resolves --output by the short name ("toon").
+	cli.AddContentType("toon", "", -1, &dciToonContentType{})
 }
 
 func (t dciTableContentType) Detect(contentType string) bool { return false }
