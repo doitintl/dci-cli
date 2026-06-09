@@ -460,14 +460,26 @@ func TestAgentFlagOverride(t *testing.T) {
 }
 
 func TestBuildUserAgent(t *testing.T) {
-	ua := buildUserAgent()
-	if !strings.HasPrefix(ua, "dci-cli/") {
-		t.Fatalf("unexpected User-Agent prefix: %q", ua)
+	human := buildUserAgent(false)
+	if !strings.HasPrefix(human, "dci-cli/") {
+		t.Fatalf("unexpected User-Agent prefix: %q", human)
 	}
-	// The User-Agent must be a stable client identifier — it must not vary with
-	// agent mode or the end user.
-	if strings.Contains(ua, "agent=1") {
-		t.Fatalf("User-Agent must not carry agent-mode tag: %q", ua)
+	// The mode token is always present and self-describing so analytics can
+	// segment by interface; human mode is explicitly mode=interactive.
+	if !strings.Contains(human, "mode=interactive") {
+		t.Fatalf("human User-Agent must carry mode=interactive: %q", human)
+	}
+	if strings.Contains(human, "mode=agent") {
+		t.Fatalf("human User-Agent must not carry mode=agent: %q", human)
+	}
+
+	agent := buildUserAgent(true)
+	if !strings.Contains(agent, "mode=agent") {
+		t.Fatalf("agent User-Agent must carry mode=agent: %q", agent)
+	}
+	// Guard against the legacy opaque tag regressing.
+	if strings.Contains(agent, "agent=1") {
+		t.Fatalf("User-Agent must use mode=agent, not the legacy agent=1 tag: %q", agent)
 	}
 }
 
