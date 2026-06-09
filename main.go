@@ -585,44 +585,67 @@ func stdoutIsTTY() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// agentFlagOverride scans args for explicit --agent / --no-agent flags. Returns
-// +1 for agent mode, -1 for human mode, 0 if neither is present. The last
-// occurrence wins. Scanning stops at the "--" operand terminator. Both the bare
-// flag and any boolean value form cobra/pflag accepts (=true/false, =1/0, etc.)
-// are honored so this early scan agrees with cobra's later parse.
+// agentFlagOverride scans args for the explicit --agent / --no-agent flags and
+// returns +1 for agent mode, -1 for human mode, or 0 for no override. These are
+// two independent pflag bool flags, so this scan mirrors pflag's own semantics:
+// each flag's last occurrence wins, a bare flag means true, and the value (when
+// present) is parsed with strconv.ParseBool exactly as pflag does. Crucially, an
+// explicit false (--agent=false / --no-agent=0) just leaves that flag unset
+// rather than forcing the opposite mode — only a flag set to true is an
+// override. If both end up true, the most recently enabled one wins. Scanning
+// stops at the "--" operand terminator. Keeping this in step with pflag matters
+// because the result drives side effects (color, default output, User-Agent)
+// before cobra parses the flags itself.
 func agentFlagOverride(args []string) int {
-	res := 0
+	agent, noAgent := false, false
+	last := 0 // +1 if --agent was most recently enabled, -1 if --no-agent was
 	for _, a := range args {
 		if a == "--" {
 			break
 		}
 		name, val, hasVal := strings.Cut(a, "=")
-		var sign int
-		switch name {
-		case "--agent":
-			sign = 1
-		case "--no-agent":
-			sign = -1
-		default:
+		if name != "--agent" && name != "--no-agent" {
 			continue
 		}
+		enabled := true
 		if hasVal {
-			b, ok := parseBoolish(val)
-			if !ok {
+			b, err := strconv.ParseBool(val)
+			if err != nil {
 				continue // let cobra surface the parse error later
 			}
-			if !b {
-				sign = -sign // --agent=false / --no-agent=false
+			enabled = b
+		}
+		switch name {
+		case "--agent":
+			agent = enabled
+		case "--no-agent":
+			noAgent = enabled
+		}
+		if enabled {
+			if name == "--agent" {
+				last = 1
+			} else {
+				last = -1
 			}
 		}
-		res = sign
 	}
-	return res
+	switch {
+	case agent && noAgent:
+		return last // conflicting flags: most recently enabled wins
+	case agent:
+		return 1
+	case noAgent:
+		return -1
+	default:
+		return 0
+	}
 }
 
-// parseBoolish interprets the boolean tokens cobra/pflag accept (plus a few
-// common aliases), case-insensitively. Returns (value, true) for a recognized
-// token and (false, false) otherwise.
+// parseBoolish interprets a boolean-ish env var value (DCI_AGENT_MODE),
+// case-insensitively and forgivingly: it accepts the strconv.ParseBool tokens
+// plus common aliases (yes/no, on/off, y/n). Returns (value, true) for a
+// recognized token and (false, false) otherwise. It is intentionally more
+// lenient than the flag parsing, which mirrors pflag exactly.
 func parseBoolish(v string) (bool, bool) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "t", "true", "yes", "y", "on":

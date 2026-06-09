@@ -442,16 +442,28 @@ func TestAgentFlagOverride(t *testing.T) {
 		{name: "none", args: []string{"dci", "status"}, want: 0},
 		{name: "agent", args: []string{"dci", "--agent", "status"}, want: 1},
 		{name: "agent equals true", args: []string{"--agent=true"}, want: 1},
-		{name: "agent equals false", args: []string{"--agent=false"}, want: -1},
 		{name: "agent equals 1", args: []string{"--agent=1"}, want: 1},
-		{name: "agent equals 0", args: []string{"--agent=0"}, want: -1},
 		{name: "no-agent", args: []string{"--no-agent"}, want: -1},
-		{name: "no-agent equals false", args: []string{"--no-agent=false"}, want: 1},
 		{name: "no-agent equals 1", args: []string{"--no-agent=1"}, want: -1},
-		{name: "no-agent equals 0", args: []string{"--no-agent=0"}, want: 1},
 		{name: "agent uppercase TRUE", args: []string{"--agent=TRUE"}, want: 1},
+
+		// Explicit false leaves the flag unset (matching two independent pflag
+		// bool flags), so it does NOT force the opposite mode — it clears to 0.
+		{name: "agent equals false clears", args: []string{"--agent=false"}, want: 0},
+		{name: "agent equals 0 clears", args: []string{"--agent=0"}, want: 0},
+		{name: "no-agent equals false clears", args: []string{"--no-agent=false"}, want: 0},
+		{name: "no-agent equals 0 clears", args: []string{"--no-agent=0"}, want: 0},
+		{name: "agent then agent false clears", args: []string{"--agent", "--agent=false"}, want: 0},
+		{name: "no-agent then no-agent false clears", args: []string{"--no-agent", "--no-agent=false"}, want: 0},
+
+		// pflag uses strconv.ParseBool, which rejects yes/on/etc. (parseBoolish
+		// accepts them, but that's only for the DCI_AGENT_MODE env var).
+		{name: "agent yes rejected (not pflag bool)", args: []string{"--agent=yes"}, want: 0},
 		{name: "agent unrecognized value ignored", args: []string{"--agent=maybe"}, want: 0},
-		{name: "last wins", args: []string{"--agent", "--no-agent"}, want: -1},
+
+		// Conflicting flags both true: most recently enabled wins.
+		{name: "conflict no-agent last wins", args: []string{"--agent", "--no-agent"}, want: -1},
+		{name: "conflict agent last wins", args: []string{"--no-agent", "--agent"}, want: 1},
 		{name: "stop at terminator", args: []string{"--", "--agent"}, want: 0},
 	}
 
