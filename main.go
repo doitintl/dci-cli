@@ -207,7 +207,7 @@ func run() (exitCode int) {
 	customerContextFlagValue = ""
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
-	// output format, stderr routing, and the User-Agent tag — all key off this.
+	// output format, and stderr routing — all key off this.
 	agentEnvDetected = detectedAgentEnv()
 	if v := strings.TrimSpace(os.Getenv("DCI_AGENT_MODE")); v != "" {
 		if _, ok := parseBoolish(v); !ok {
@@ -258,10 +258,10 @@ func run() (exitCode int) {
 	os.Setenv("RSH_PROFILE", "default")
 	viper.Set("rsh-profile", "default")
 
-	// Hardcode user-agent so the DCI API can identify CLI traffic. Agent-mode
-	// invocations carry "agent=1" so adoption can be measured server-side.
+	// Hardcode user-agent so the DCI API can identify CLI traffic. The value is
+	// stable across invocations, independent of agent mode or the end user.
 	// Restish picks this up via rsh-header and skips its own default.
-	viper.Set("rsh-header", []string{"user-agent:" + buildUserAgent(agentMode)})
+	viper.Set("rsh-header", []string{"user-agent:" + buildUserAgent()})
 
 	cli.Load("dci", cli.Root)
 	applyAPIKeyAuth()
@@ -608,14 +608,11 @@ func parseBoolish(v string) (bool, bool) {
 	return false, false
 }
 
-// buildUserAgent returns the User-Agent header value, tagging agent-mode traffic
-// with "agent=1" so adoption can be measured server-side.
-func buildUserAgent(agent bool) string {
-	suffix := ""
-	if agent {
-		suffix = "; agent=1"
-	}
-	return fmt.Sprintf("dci-cli/%s (%s; %s/%s%s)", version, runtime.Version(), runtime.GOOS, runtime.GOARCH, suffix)
+// buildUserAgent returns the User-Agent header value identifying CLI traffic to
+// the DCI API. It is constant for a given build, independent of agent mode or
+// the end user, so the API always sees a stable client identifier.
+func buildUserAgent() string {
+	return fmt.Sprintf("dci-cli/%s (%s; %s/%s)", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 }
 
 // defaultOutputFormat is the output format used when --output is not given.
