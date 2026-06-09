@@ -1178,9 +1178,15 @@ func TestToonMarshalListProducesTabularOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected TOON output, got error: %v", err)
 	}
-	s := string(out)
+	s := strings.TrimSpace(string(out))
 	if len(s) == 0 {
 		t.Fatal("expected non-empty output")
+	}
+	// The field/value substrings below also appear in JSON, so guard that we
+	// actually emitted TOON and didn't silently hit the indented-JSON fallback
+	// (which would start with `{`).
+	if strings.HasPrefix(s, "{") {
+		t.Fatalf("expected TOON output, got JSON fallback:\n%s", s)
 	}
 	if !strings.Contains(s, "id") || !strings.Contains(s, "name") {
 		t.Fatalf("expected field names in TOON output, got:\n%s", s)
