@@ -207,7 +207,8 @@ func run() (exitCode int) {
 	customerContextFlagValue = ""
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
-	// output format, and stderr routing — all key off this.
+	// output format, stderr routing, and the User-Agent mode token — all key off
+	// this.
 	agentEnvDetected = detectedAgentEnv()
 	if v := strings.TrimSpace(os.Getenv("DCI_AGENT_MODE")); v != "" {
 		if _, ok := parseBoolish(v); !ok {
@@ -258,10 +259,11 @@ func run() (exitCode int) {
 	os.Setenv("RSH_PROFILE", "default")
 	viper.Set("rsh-profile", "default")
 
-	// Hardcode user-agent so the DCI API can identify CLI traffic. The value is
-	// stable across invocations, independent of agent mode or the end user.
-	// Restish picks this up via rsh-header and skips its own default.
-	viper.Set("rsh-header", []string{"user-agent:" + buildUserAgent()})
+	// Hardcode user-agent so the DCI API can identify CLI traffic. It carries a
+	// mode=agent|interactive token (never the end user) so traffic can be
+	// segmented by interface. Restish picks this up via rsh-header and skips its
+	// own default.
+	viper.Set("rsh-header", []string{"user-agent:" + buildUserAgent(agentMode)})
 
 	cli.Load("dci", cli.Root)
 	applyAPIKeyAuth()
@@ -609,10 +611,16 @@ func parseBoolish(v string) (bool, bool) {
 }
 
 // buildUserAgent returns the User-Agent header value identifying CLI traffic to
-// the DCI API. It is constant for a given build, independent of agent mode or
-// the end user, so the API always sees a stable client identifier.
-func buildUserAgent() string {
-	return fmt.Sprintf("dci-cli/%s (%s; %s/%s)", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+// the DCI API. It always carries a mode=agent|interactive token so API traffic
+// can be segmented by interface (agent- vs human-driven) in analytics. The
+// token reflects only the interface, never the end user, so the value stays a
+// stable client identifier.
+func buildUserAgent(agent bool) string {
+	mode := "interactive"
+	if agent {
+		mode = "agent"
+	}
+	return fmt.Sprintf("dci-cli/%s (%s; %s/%s; mode=%s)", version, runtime.Version(), runtime.GOOS, runtime.GOARCH, mode)
 }
 
 // defaultOutputFormat is the output format used when --output is not given.
