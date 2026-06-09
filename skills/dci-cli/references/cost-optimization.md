@@ -21,7 +21,7 @@ Do not assume the local saved context should be overwritten.
 Use SQL shorthand when the user wants a quick billing-table pass:
 
 ```bash
-dci query body.query:"SELECT service_description, SUM(cost) AS total_cost FROM <billing-table> GROUP BY 1 ORDER BY 2 DESC LIMIT 10" --output json
+dci query body.query:"SELECT service_description, SUM(cost) AS total_cost FROM <billing-table> GROUP BY 1 ORDER BY 2 DESC LIMIT 10" --output toon
 ```
 
 Use this to identify the largest service pools quickly.

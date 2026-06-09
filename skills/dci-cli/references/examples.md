@@ -26,11 +26,11 @@ dci customer-context set <customer-context>
 ## Discovery and Read-Only Navigation
 
 ```bash
-dci list-alerts --output json
-dci get-alert <alert-id> --output json
-dci list-dimensions --output json
-dci list-users --output json
-dci list-platforms --output json
+dci list-alerts --output toon
+dci get-alert <alert-id> --output toon
+dci list-dimensions --output toon
+dci list-users --output toon
+dci list-platforms --output toon
 ```
 
 ## Query Examples
@@ -38,13 +38,13 @@ dci list-platforms --output json
 Quick SQL shorthand:
 
 ```bash
-dci query body.query:"SELECT * FROM <billing-table> LIMIT 10" --output json
+dci query body.query:"SELECT * FROM <billing-table> LIMIT 10" --output toon
 ```
 
 Service aggregation with SQL shorthand:
 
 ```bash
-dci query body.query:"SELECT service_description, SUM(cost) AS total_cost FROM <billing-table> GROUP BY 1 ORDER BY 2 DESC LIMIT 10" --output json
+dci query body.query:"SELECT service_description, SUM(cost) AS total_cost FROM <billing-table> GROUP BY 1 ORDER BY 2 DESC LIMIT 10" --output toon
 ```
 
 Structured JSON query:
@@ -95,15 +95,15 @@ dci query < query.json
 ## Report Drill-Down
 
 ```bash
-dci list-reports --output json
-dci get-report <report-id> --output json
-dci get-report-config <report-id> --output json
+dci list-reports --output toon
+dci get-report <report-id> --output toon
+dci get-report-config <report-id> --output toon
 ```
 
 Override the time range when supported:
 
 ```bash
-dci get-report <report-id> --time-range P30D --output json
+dci get-report <report-id> --time-range P30D --output toon
 ```
 
 ## Safe Mutation Templates
@@ -124,7 +124,7 @@ Agents should prefer `ask-ava-sync` over `ask-ava-streaming`. The sync endpoint 
 One-shot question (recommended for agents):
 
 ```bash
-dci ask-ava-sync ephemeral: true, question: "What are my top 3 cost drivers this month?" --output json
+dci ask-ava-sync ephemeral: true, question: "What are my top 3 cost drivers this month?" --output toon
 ```
 
 Response shape:
@@ -138,10 +138,10 @@ Response shape:
 Multi-turn conversation (set `ephemeral: false` to get a `conversationId`):
 
 ```bash
-dci ask-ava-sync ephemeral: false, question: "What are my top cost drivers?" --output json
+dci ask-ava-sync ephemeral: false, question: "What are my top cost drivers?" --output toon
 # response includes "conversationId": "<conversation-id>"
 
-dci ask-ava-sync ephemeral: false, conversationId: <conversation-id>, question: "Break down EC2 by region" --output json
+dci ask-ava-sync ephemeral: false, conversationId: <conversation-id>, question: "Break down EC2 by region" --output toon
 ```
 
 Delete a conversation when done:

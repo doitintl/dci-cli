@@ -21,13 +21,13 @@ Use stdin JSON when:
 Quick inspection:
 
 ```bash
-dci query body.query:"SELECT * FROM <billing-table> LIMIT 10" --output json
+dci query body.query:"SELECT * FROM <billing-table> LIMIT 10" --output toon
 ```
 
 Top services by spend:
 
 ```bash
-dci query body.query:"SELECT service_description, SUM(cost) AS total_cost FROM <billing-table> GROUP BY 1 ORDER BY 2 DESC LIMIT 10" --output json
+dci query body.query:"SELECT service_description, SUM(cost) AS total_cost FROM <billing-table> GROUP BY 1 ORDER BY 2 DESC LIMIT 10" --output toon
 ```
 
 Practical notes:
@@ -87,5 +87,5 @@ dci query < query.json
 
 - Offer SQL shorthand first only when the user asks for SQL or wants a very quick billing-table check.
 - Offer JSON first for reusable cost reports, dashboards, or 30-day optimization workflows.
-- Prefer `--output json`.
+- Prefer `--output toon` (compact, token-efficient; the agent-mode default). Use `--output json` when you need standard JSON, e.g. to pipe into `jq`.
 - Use env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context>` if a customer switch is needed temporarily.

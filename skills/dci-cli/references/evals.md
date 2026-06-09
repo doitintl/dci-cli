@@ -60,7 +60,7 @@ Expected behavior:
 
 - choose stdin JSON as the primary query mode
 - provide a valid JSON payload example for `dci query < query.json`
-- prefer `--output json`
+- prefer `--output toon` (or `--output json` for standard JSON)
 
 ## Eval 6: Temporary Customer Switch
 
@@ -107,7 +107,7 @@ Expected behavior:
 
 - use `ask-ava-sync` (not streaming)
 - set `ephemeral: true` for a one-shot question
-- use `--output json`
+- use `--output toon` (or `--output json` for standard JSON)
 - do not attempt `ava-feedback` after a sync call (no `answerId` available)
 
 ## Pass Criteria
