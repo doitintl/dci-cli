@@ -64,6 +64,22 @@ var agentMode bool
 // agentModeReason records why agentMode resolved the way it did, for diagnostics.
 var agentModeReason string
 
+// uaMode classifies how dci is being driven, for the User-Agent "mode=" token.
+// It is finer-grained than agentMode (a bool): agent mode reached via the
+// non-TTY soft signal (pipes, redirects, CI/CD) is reported as noninteractive
+// rather than agent, so analytics can tell genuine AI-agent traffic apart from
+// incidental non-interactive use.
+type uaMode string
+
+const (
+	uaModeInteractive    uaMode = "interactive"    // human at a TTY (or explicit human mode)
+	uaModeAgent          uaMode = "agent"          // explicit --agent/DCI_AGENT_MODE=1, or a known AI-agent env var
+	uaModeNonInteractive uaMode = "noninteractive" // non-TTY soft signal: pipe/redirect/CI
+)
+
+// agentUAMode records the interface classification for the User-Agent token.
+var agentUAMode uaMode
+
 // agentEnvDetected holds the name of the detected agent environment variable (if
 // any), used to surface the human-mode "an optimized agent mode exists" tip.
 var agentEnvDetected string
@@ -218,6 +234,7 @@ func run() (exitCode int) {
 	dec := resolveAgentMode(os.Getenv("DCI_AGENT_MODE"), os.Args, agentEnvDetected, stdoutIsTTY())
 	agentMode = dec.enabled
 	agentModeReason = dec.reason
+	agentUAMode = dec.mode
 	if agentMode {
 		// Disable restish/aurora color before cli.Init configures the output
 		// writers; it reads this via viper's automatic env binding.
@@ -260,10 +277,10 @@ func run() (exitCode int) {
 	viper.Set("rsh-profile", "default")
 
 	// Hardcode user-agent so the DCI API can identify CLI traffic. It carries a
-	// mode=agent|interactive token (never the end user) so traffic can be
-	// segmented by interface. Restish picks this up via rsh-header and skips its
-	// own default.
-	viper.Set("rsh-header", []string{"user-agent:" + buildUserAgent(agentMode)})
+	// mode=<interactive|agent|noninteractive> token (never the end user) so
+	// traffic can be segmented by interface. Restish picks this up via rsh-header
+	// and skips its own default.
+	viper.Set("rsh-header", []string{"user-agent:" + buildUserAgent(agentUAMode)})
 
 	cli.Load("dci", cli.Root)
 	applyAPIKeyAuth()
@@ -513,6 +530,7 @@ var agentEnvVars = []string{
 
 type agentModeResult struct {
 	enabled bool
+	mode    uaMode
 	reason  string
 }
 
@@ -530,22 +548,27 @@ func resolveAgentMode(dciAgentMode string, args []string, agentEnv string, stdou
 		// (e.g. DCI_AGENT_MODE=2) is ignored so a typo can't silently force a
 		// mode; run() warns about it separately.
 		if b, ok := parseBoolish(v); ok {
-			return agentModeResult{enabled: b, reason: "DCI_AGENT_MODE override"}
+			if b {
+				return agentModeResult{enabled: true, mode: uaModeAgent, reason: "DCI_AGENT_MODE override"}
+			}
+			return agentModeResult{enabled: false, mode: uaModeInteractive, reason: "DCI_AGENT_MODE override"}
 		}
 	}
 	switch agentFlagOverride(args) {
 	case 1:
-		return agentModeResult{enabled: true, reason: "--agent/--no-agent flag"}
+		return agentModeResult{enabled: true, mode: uaModeAgent, reason: "--agent/--no-agent flag"}
 	case -1:
-		return agentModeResult{enabled: false, reason: "--agent/--no-agent flag"}
+		return agentModeResult{enabled: false, mode: uaModeInteractive, reason: "--agent/--no-agent flag"}
 	}
 	if agentEnv != "" {
-		return agentModeResult{enabled: true, reason: "agent env var " + agentEnv}
+		return agentModeResult{enabled: true, mode: uaModeAgent, reason: "agent env var " + agentEnv}
 	}
 	if !stdoutTTY {
-		return agentModeResult{enabled: true, reason: "non-TTY stdout"}
+		// Non-TTY is a soft signal (pipe/redirect/CI), not a confirmed agent, so
+		// it gets its own UA classification even though behavior matches agent mode.
+		return agentModeResult{enabled: true, mode: uaModeNonInteractive, reason: "non-TTY stdout"}
 	}
-	return agentModeResult{enabled: false, reason: "interactive terminal"}
+	return agentModeResult{enabled: false, mode: uaModeInteractive, reason: "interactive terminal"}
 }
 
 // detectedAgentEnv returns the name of the first agent env var found, or "".
@@ -611,14 +634,13 @@ func parseBoolish(v string) (bool, bool) {
 }
 
 // buildUserAgent returns the User-Agent header value identifying CLI traffic to
-// the DCI API. It always carries a mode=agent|interactive token so API traffic
-// can be segmented by interface (agent- vs human-driven) in analytics. The
-// token reflects only the interface, never the end user, so the value stays a
+// the DCI API. It always carries a mode=<interactive|agent|noninteractive>
+// token so API traffic can be segmented by interface in analytics. The token
+// reflects only how dci was driven, never the end user, so the value stays a
 // stable client identifier.
-func buildUserAgent(agent bool) string {
-	mode := "interactive"
-	if agent {
-		mode = "agent"
+func buildUserAgent(mode uaMode) string {
+	if mode == "" {
+		mode = uaModeInteractive
 	}
 	return fmt.Sprintf("dci-cli/%s (%s; %s/%s; mode=%s)", version, runtime.Version(), runtime.GOOS, runtime.GOARCH, mode)
 }
