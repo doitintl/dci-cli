@@ -460,17 +460,14 @@ func TestAgentFlagOverride(t *testing.T) {
 }
 
 func TestBuildUserAgent(t *testing.T) {
-	human := buildUserAgent(false)
-	if strings.Contains(human, "agent=1") {
-		t.Fatalf("human User-Agent should not carry agent=1: %q", human)
+	ua := buildUserAgent()
+	if !strings.HasPrefix(ua, "dci-cli/") {
+		t.Fatalf("unexpected User-Agent prefix: %q", ua)
 	}
-	if !strings.HasPrefix(human, "dci-cli/") {
-		t.Fatalf("unexpected User-Agent prefix: %q", human)
-	}
-
-	agent := buildUserAgent(true)
-	if !strings.Contains(agent, "agent=1") {
-		t.Fatalf("agent User-Agent must carry agent=1: %q", agent)
+	// The User-Agent must be a stable client identifier — it must not vary with
+	// agent mode or the end user.
+	if strings.Contains(ua, "agent=1") {
+		t.Fatalf("User-Agent must not carry agent-mode tag: %q", ua)
 	}
 }
 
