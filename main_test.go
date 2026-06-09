@@ -395,34 +395,39 @@ func TestResolveAgentMode(t *testing.T) {
 		agentEnv  string
 		stdoutTTY bool
 		want      bool
+		wantMode  uaMode
 	}{
 		// 1. DCI_AGENT_MODE always wins.
-		{name: "env mode 1 wins over tty", envMode: "1", args: nil, agentEnv: "", stdoutTTY: true, want: true},
-		{name: "env mode true", envMode: "true", stdoutTTY: true, want: true},
-		{name: "env mode 0 forces human", envMode: "0", agentEnv: "CLAUDECODE", stdoutTTY: false, want: false},
-		{name: "env mode false forces human", envMode: "false", stdoutTTY: false, want: false},
-		{name: "env mode wins over --agent", envMode: "0", args: []string{"--agent"}, stdoutTTY: false, want: false},
-		{name: "env mode garbage ignored, falls through to tty", envMode: "2", stdoutTTY: true, want: false},
-		{name: "env mode garbage ignored, falls through to env var", envMode: "banana", agentEnv: "KIRO_AGENT", stdoutTTY: true, want: true},
+		{name: "env mode 1 wins over tty", envMode: "1", args: nil, agentEnv: "", stdoutTTY: true, want: true, wantMode: uaModeAgent},
+		{name: "env mode true", envMode: "true", stdoutTTY: true, want: true, wantMode: uaModeAgent},
+		{name: "env mode 0 forces human", envMode: "0", agentEnv: "CLAUDECODE", stdoutTTY: false, want: false, wantMode: uaModeInteractive},
+		{name: "env mode false forces human", envMode: "false", stdoutTTY: false, want: false, wantMode: uaModeInteractive},
+		{name: "env mode wins over --agent", envMode: "0", args: []string{"--agent"}, stdoutTTY: false, want: false, wantMode: uaModeInteractive},
+		{name: "env mode garbage ignored, falls through to tty", envMode: "2", stdoutTTY: true, want: false, wantMode: uaModeInteractive},
+		{name: "env mode garbage ignored, falls through to env var", envMode: "banana", agentEnv: "KIRO_AGENT", stdoutTTY: true, want: true, wantMode: uaModeAgent},
 
 		// 2. Flags override heuristics.
-		{name: "--agent forces agent", args: []string{"dci", "--agent", "status"}, stdoutTTY: true, want: true},
-		{name: "--no-agent forces human", args: []string{"dci", "--no-agent", "list"}, agentEnv: "CLAUDECODE", stdoutTTY: false, want: false},
-		{name: "--no-agent over tty", args: []string{"--no-agent"}, stdoutTTY: false, want: false},
+		{name: "--agent forces agent", args: []string{"dci", "--agent", "status"}, stdoutTTY: true, want: true, wantMode: uaModeAgent},
+		{name: "--no-agent forces human", args: []string{"dci", "--no-agent", "list"}, agentEnv: "CLAUDECODE", stdoutTTY: false, want: false, wantMode: uaModeInteractive},
+		{name: "--no-agent over tty", args: []string{"--no-agent"}, stdoutTTY: false, want: false, wantMode: uaModeInteractive},
 
 		// 3. Agent env var heuristic.
-		{name: "agent env enables", agentEnv: "CURSOR_AGENT", stdoutTTY: true, want: true},
+		{name: "agent env enables", agentEnv: "CURSOR_AGENT", stdoutTTY: true, want: true, wantMode: uaModeAgent},
 
-		// 4. Non-TTY soft signal.
-		{name: "non-tty enables", stdoutTTY: false, want: true},
-		{name: "interactive tty stays human", stdoutTTY: true, want: false},
+		// 4. Non-TTY soft signal — agent behavior, but classified noninteractive
+		// (covers CI/CD and piped/redirected use).
+		{name: "non-tty enables", stdoutTTY: false, want: true, wantMode: uaModeNonInteractive},
+		{name: "interactive tty stays human", stdoutTTY: true, want: false, wantMode: uaModeInteractive},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveAgentMode(tt.envMode, tt.args, tt.agentEnv, tt.stdoutTTY)
 			if got.enabled != tt.want {
-				t.Fatalf("resolveAgentMode() = %v (reason %q), want %v", got.enabled, got.reason, tt.want)
+				t.Fatalf("resolveAgentMode() enabled = %v (reason %q), want %v", got.enabled, got.reason, tt.want)
+			}
+			if got.mode != tt.wantMode {
+				t.Fatalf("resolveAgentMode() mode = %q (reason %q), want %q", got.mode, got.reason, tt.wantMode)
 			}
 		})
 	}
@@ -460,26 +465,33 @@ func TestAgentFlagOverride(t *testing.T) {
 }
 
 func TestBuildUserAgent(t *testing.T) {
-	human := buildUserAgent(false)
-	if !strings.HasPrefix(human, "dci-cli/") {
-		t.Fatalf("unexpected User-Agent prefix: %q", human)
-	}
 	// The mode token is always present and self-describing so analytics can
-	// segment by interface; human mode is explicitly mode=interactive.
-	if !strings.Contains(human, "mode=interactive") {
-		t.Fatalf("human User-Agent must carry mode=interactive: %q", human)
+	// segment by interface across all three classifications.
+	cases := []struct {
+		mode uaMode
+		want string
+	}{
+		{uaModeInteractive, "mode=interactive"},
+		{uaModeAgent, "mode=agent"},
+		{uaModeNonInteractive, "mode=noninteractive"},
 	}
-	if strings.Contains(human, "mode=agent") {
-		t.Fatalf("human User-Agent must not carry mode=agent: %q", human)
+	for _, c := range cases {
+		ua := buildUserAgent(c.mode)
+		if !strings.HasPrefix(ua, "dci-cli/") {
+			t.Fatalf("unexpected User-Agent prefix: %q", ua)
+		}
+		if !strings.Contains(ua, c.want) {
+			t.Fatalf("buildUserAgent(%q) = %q, want it to contain %q", c.mode, ua, c.want)
+		}
+		// Guard against the legacy opaque tag regressing.
+		if strings.Contains(ua, "agent=1") {
+			t.Fatalf("User-Agent must use mode=, not the legacy agent=1 tag: %q", ua)
+		}
 	}
 
-	agent := buildUserAgent(true)
-	if !strings.Contains(agent, "mode=agent") {
-		t.Fatalf("agent User-Agent must carry mode=agent: %q", agent)
-	}
-	// Guard against the legacy opaque tag regressing.
-	if strings.Contains(agent, "agent=1") {
-		t.Fatalf("User-Agent must use mode=agent, not the legacy agent=1 tag: %q", agent)
+	// An unset mode falls back to interactive rather than emitting "mode=".
+	if ua := buildUserAgent(""); !strings.Contains(ua, "mode=interactive") {
+		t.Fatalf("empty mode should default to interactive: %q", ua)
 	}
 }
 
