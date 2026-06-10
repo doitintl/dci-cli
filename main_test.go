@@ -1343,6 +1343,261 @@ func TestToonMarshalListProducesTabularOutput(t *testing.T) {
 	}
 }
 
+func TestToonMarshalFoldsRowsWithEmptyContainerFields(t *testing.T) {
+	// Real list responses carry info-free containers on every row (labels: [],
+	// or empty objects). Per the TOON spec those disqualify tabular folding, so
+	// they must be normalized away: empty objects pruned, empty arrays rendered
+	// as blank cells (matching the table, which joins arrays into cell strings).
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"pageToken": "tok123",
+		"reports": []interface{}{
+			map[string]interface{}{"id": "r1", "owner": "a@example.com", "labels": []interface{}{}, "meta": map[string]interface{}{}},
+			map[string]interface{}{"id": "r2", "owner": "b@example.com", "labels": []interface{}{}, "meta": map[string]interface{}{}},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "reports[2]{") {
+		t.Fatalf("expected tabular fold for uniform rows, got:\n%s", s)
+	}
+	if strings.Contains(s, "meta") {
+		t.Fatalf("expected empty objects pruned, got:\n%s", s)
+	}
+	if !strings.Contains(s, "pageToken: tok123") {
+		t.Fatalf("expected wrapper fields (pagination) preserved, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalJoinsPrimitiveArraysLikeTable(t *testing.T) {
+	// Arrays of primitives become ", "-joined cell strings (same as the table
+	// renderer), so rows mixing empty and non-empty arrays still fold tabular.
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"reports": []interface{}{
+			map[string]interface{}{"id": "r1", "labels": []interface{}{"prod", "eu"}},
+			map[string]interface{}{"id": "r2", "labels": []interface{}{}},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "reports[2]{") {
+		t.Fatalf("expected tabular fold with joined array cells, got:\n%s", s)
+	}
+	if !strings.Contains(s, "prod, eu") {
+		t.Fatalf("expected table-style joined array value, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalGetReportRowsFoldTabular(t *testing.T) {
+	// get-report returns result.rows as arrays of arrays; the table path maps
+	// them to schema-named objects via extractGetReportRows. TOON must see the
+	// same rows so both formats present the same information.
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"result": map[string]interface{}{
+			"schema": []interface{}{
+				map[string]interface{}{"name": "service", "type": "string"},
+				map[string]interface{}{"name": "cost", "type": "float"},
+			},
+			"rows": []interface{}{
+				[]interface{}{"BigQuery", 12.5},
+				[]interface{}{"GCS", 3.25},
+			},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "rows[2]{") {
+		t.Fatalf("expected report rows folded tabular with schema columns, got:\n%s", s)
+	}
+	if !strings.Contains(s, "BigQuery") || !strings.Contains(s, "GCS") {
+		t.Fatalf("expected report row values, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalDropsObjectColumnsLikeTable(t *testing.T) {
+	// A row field holding objects (directly or inside an array) blocks the
+	// tabular fold for the whole list, so drop the column from every row —
+	// the same rule the table uses to hide object-valued columns.
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"reports": []interface{}{
+			map[string]interface{}{"id": "r1", "labels": []interface{}{map[string]interface{}{"name": "Cached"}}},
+			map[string]interface{}{"id": "r2", "labels": []interface{}{}},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "reports[2]{") {
+		t.Fatalf("expected tabular fold with object column dropped, got:\n%s", s)
+	}
+	if strings.Contains(s, "labels") || strings.Contains(s, "Cached") {
+		t.Fatalf("expected object-valued column dropped from all rows, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalFillsMissingRowKeysLikeTable(t *testing.T) {
+	// Rows with differing key sets (e.g. budgets mixing scope/scopes) can't
+	// fold per the TOON spec; the table renders the union of columns with
+	// blank cells, so missing keys become "" here too.
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"budgets": []interface{}{
+			map[string]interface{}{"id": "b1", "scope": []interface{}{"projA"}},
+			map[string]interface{}{"id": "b2", "scopes": []interface{}{"projB"}},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "budgets[2]{") {
+		t.Fatalf("expected tabular fold with union of row keys, got:\n%s", s)
+	}
+	if !strings.Contains(s, "projA") || !strings.Contains(s, "projB") {
+		t.Fatalf("expected values from both key variants, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalColumnSelectionOverridesObjectDrop(t *testing.T) {
+	// -C is the explicit opt-in: selected columns are never dropped, and
+	// object-valued cells encode as compact JSON strings so the fold survives.
+	// Unselected columns are excluded, matching the table's -C contract.
+	viper.Set("table-columns", "id,labels")
+	t.Cleanup(viper.Reset)
+
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"reports": []interface{}{
+			map[string]interface{}{"id": "r1", "owner": "a@example.com", "labels": []interface{}{map[string]interface{}{"name": "Cached"}}},
+			map[string]interface{}{"id": "r2", "owner": "b@example.com", "labels": []interface{}{}},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "reports[2]{") {
+		t.Fatalf("expected tabular fold with selected columns, got:\n%s", s)
+	}
+	if !strings.Contains(s, "labels") || !strings.Contains(s, "Cached") {
+		t.Fatalf("expected requested object column kept as JSON cell, got:\n%s", s)
+	}
+	if strings.Contains(s, "owner") {
+		t.Fatalf("expected unselected columns excluded, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalCustomFilterKeepsObjectColumns(t *testing.T) {
+	// A custom -f filter means the agent already hand-picked the fields;
+	// dropping any of them would silently discard requested data. Object cells
+	// encode as JSON strings to preserve the fold.
+	viper.Set("rsh-filter", "body.reports[].{id: id, labels: labels}")
+	t.Cleanup(viper.Reset)
+
+	ct := dciToonContentType{}
+	input := []interface{}{
+		map[string]interface{}{"id": "r1", "labels": []interface{}{map[string]interface{}{"name": "Cached"}}},
+		map[string]interface{}{"id": "r2", "labels": []interface{}{}},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "[2]{") {
+		t.Fatalf("expected tabular fold with filtered fields kept, got:\n%s", s)
+	}
+	if !strings.Contains(s, "labels") || !strings.Contains(s, "Cached") {
+		t.Fatalf("expected filtered object column kept as JSON cell, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalColumnSelectionSkipsUnrelatedLists(t *testing.T) {
+	// -C applies to row lists that actually contain a selected column; other
+	// lists (e.g. a schema array) keep their own columns instead of being
+	// emptied by an unrelated selection.
+	viper.Set("table-columns", "id,labels")
+	t.Cleanup(viper.Reset)
+
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"reports": []interface{}{
+			map[string]interface{}{"id": "r1", "labels": []interface{}{}, "owner": "a@example.com"},
+		},
+		"schema": []interface{}{
+			map[string]interface{}{"name": "service", "type": "string"},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "reports[1]{id,labels}") {
+		t.Fatalf("expected selection applied to matching list, got:\n%s", s)
+	}
+	if !strings.Contains(s, "schema[1]{name,type}") {
+		t.Fatalf("expected unrelated list untouched by -C, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalSingleObjectKeepsNestedStructure(t *testing.T) {
+	// Detail responses (single object, not a row list) have no fold to win, so
+	// nested structure stays intact — and nested row lists inside them still
+	// fold tabular.
+	ct := dciToonContentType{}
+	input := map[string]interface{}{
+		"id":   "b1",
+		"meta": map[string]interface{}{"x": 1},
+		"alertThresholds": []interface{}{
+			map[string]interface{}{"amount": 55.5, "percentage": 50},
+			map[string]interface{}{"amount": 111, "percentage": 100},
+		},
+	}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "x: 1") {
+		t.Fatalf("expected nested object kept on single-object body, got:\n%s", s)
+	}
+	if !strings.Contains(s, "alertThresholds[2]{") {
+		t.Fatalf("expected nested row list folded tabular, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalKeepsEmptyListResponse(t *testing.T) {
+	// A top-level empty list is meaningful ("no results") — it must stay an
+	// array, not be flattened to a blank string like an empty row cell.
+	ct := dciToonContentType{}
+	input := map[string]interface{}{"reports": []interface{}{}}
+	out, err := ct.Marshal(input)
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "reports[0]") {
+		t.Fatalf("expected empty list kept as array, got:\n%s", s)
+	}
+}
+
 func TestToonMarshalObjectEncodesAsToon(t *testing.T) {
 	ct := dciToonContentType{}
 	input := map[string]interface{}{"name": "test", "value": 123}

@@ -1319,7 +1319,7 @@ func addOutputFlag() {
 
 	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, auto, toon (default: table, or toon in agent mode). toon is compact and token-efficient — good for LLM agents.")
 	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate) or wrap (multi-line)")
-	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include (default: all)")
+	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include in table/toon output (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
 	dciCmd.PersistentFlags().IntP("table-max-col-width", "X", 0, "Maximum width per column when fitting or wrapping (0 = auto)")
 	dciCmd.PersistentFlags().StringP("customer-context", "D", "", "Override the active customer context for this command (e.g. acme.com)")
@@ -1447,9 +1447,9 @@ type dciToonContentType struct{}
 func (t dciToonContentType) Detect(contentType string) bool { return false }
 
 func (t dciToonContentType) Marshal(value interface{}) ([]byte, error) {
-	// TOON (Token-Oriented Object Notation) is a compact, lossless encoding that
-	// uses far fewer tokens than JSON for list-shaped data — useful when the CLI
-	// is driven by an LLM agent. Normalize types first so toon sees plain
+	// TOON (Token-Oriented Object Notation) is a compact encoding that uses far
+	// fewer tokens than JSON for list-shaped data — useful when the CLI is
+	// driven by an LLM agent. Normalize types first so toon sees plain
 	// maps/slices, then fall back to indented JSON if encoding fails so the user
 	// still gets output (matches dciTableContentType's degrade-gracefully behavior).
 	jsonSafe, err := toJSONSafe(value)
@@ -1457,7 +1457,7 @@ func (t dciToonContentType) Marshal(value interface{}) ([]byte, error) {
 		return nil, err
 	}
 
-	b, err := toon.Marshal(jsonSafe)
+	b, err := toon.Marshal(toonPrepare(jsonSafe))
 	if err != nil {
 		fallback, jsonErr := json.MarshalIndent(jsonSafe, "", "  ")
 		if jsonErr != nil {
@@ -1473,6 +1473,208 @@ func (t dciToonContentType) Marshal(value interface{}) ([]byte, error) {
 
 func (t dciToonContentType) Unmarshal(data []byte, value interface{}) error {
 	return fmt.Errorf("unimplemented")
+}
+
+// toonPrepare normalizes a JSON-safe response body so list-shaped data folds
+// into TOON's compact tabular form (`items[N]{a,b}:` + CSV rows). The TOON
+// spec only folds arrays of uniform objects whose values are ALL primitives;
+// real DCI rows carry array/object fields (labels: [], nested configs) that
+// disqualify the fold. The transforms mirror the table renderer so both
+// formats present the same information — but unlike the table, wrapper
+// siblings (pageToken, totals, …) are kept: agents need them for pagination.
+func toonPrepare(v interface{}) interface{} {
+	if root, ok := v.(map[string]interface{}); ok {
+		// get-report rows arrive as arrays of arrays; map them to schema-named
+		// objects (same as the table path) so they can fold tabular.
+		if rows, handled, err := extractGetReportRows(root); handled && err == nil {
+			items := make([]interface{}, len(rows))
+			for i, r := range rows {
+				items[i] = r
+			}
+			// Replace rows in the same container extractGetReportRows read from:
+			// the first of result/results that is an object holding a rows key.
+			for _, key := range []string{"result", "results"} {
+				if c, ok := root[key].(map[string]interface{}); ok {
+					if _, ok := c["rows"]; ok {
+						c["rows"] = items
+						break
+					}
+				}
+			}
+		}
+	}
+	return toonNormalize(v, toonRowOptionsFromConfig())
+}
+
+// toonRowOptions carries the user's explicit field requests into row
+// normalization: explicitly requested fields are never dropped (see
+// toonNormalizeRows).
+type toonRowOptions struct {
+	// selected is the -C column selection (shared with the table renderer).
+	selected []string
+	// keepAll is set when a custom -f filter shaped the body: the agent
+	// already hand-picked the fields, so dropping any would discard requested
+	// data.
+	keepAll bool
+}
+
+func toonRowOptionsFromConfig() toonRowOptions {
+	filter := strings.TrimSpace(viper.GetString("rsh-filter"))
+	return toonRowOptions{
+		selected: getTableOptions().columns,
+		// "body" is the default filter injected by setDefaultFilter, not a
+		// user choice.
+		keepAll: filter != "" && filter != "body",
+	}
+}
+
+// toonNormalize recursively applies the fold-enabling transforms. Arrays of
+// objects are candidate tabular rows and get the table renderer's column
+// rules (see toonNormalizeRows); other objects are detail bodies with no fold
+// to win, so their nested structure is kept — only info-free empty objects
+// are pruned and primitive arrays joined like table cells. An empty array
+// outside a row is meaningful (`reports[0]:` = no results) and is kept as-is.
+func toonNormalize(v interface{}, opts toonRowOptions) interface{} {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(x))
+		for k, val := range x {
+			nv := toonNormalize(val, opts)
+			if m, ok := nv.(map[string]interface{}); ok && len(m) == 0 {
+				continue // empty objects carry no information
+			}
+			if arr, ok := nv.([]interface{}); ok && len(arr) > 0 && allPrimitives(arr) {
+				nv = joinPrimitives(arr)
+			}
+			out[k] = nv
+		}
+		return out
+	case []interface{}:
+		if len(x) > 0 && allObjects(x) {
+			return toonNormalizeRows(x, opts)
+		}
+		out := make([]interface{}, len(x))
+		for i, item := range x {
+			out[i] = toonNormalize(item, opts)
+		}
+		return out
+	default:
+		return x
+	}
+}
+
+// toonNormalizeRows mirrors the table renderer's column rules so every row
+// ends up with a uniform, all-primitive key set and TOON folds the list into
+// its tabular form: columns holding objects are dropped from all rows (the
+// table hides those columns), arrays become ", "-joined cell strings (empty
+// → blank cell), and keys missing from some rows are filled with blank cells
+// (the table renders the union of columns), exactly as table cells render.
+//
+// Explicitly requested fields are never dropped: a -C selection (applied to
+// lists that contain at least one selected column, so it doesn't empty
+// unrelated nested lists) or a custom -f filter exempts columns from the
+// object-column drop, and their object-valued cells encode as compact JSON
+// strings so the fold still survives.
+func toonNormalizeRows(items []interface{}, opts toonRowOptions) []interface{} {
+	dropped := map[string]bool{}
+	seen := map[string]bool{}
+	columns := []string{}
+	for _, item := range items {
+		row := item.(map[string]interface{})
+		for k, v := range row {
+			if !dropped[k] && containsObject(v) {
+				dropped[k] = true
+			}
+			if !seen[k] {
+				seen[k] = true
+				columns = append(columns, k)
+			}
+		}
+	}
+
+	if len(opts.selected) > 0 {
+		matches := false
+		for _, k := range opts.selected {
+			if seen[k] {
+				matches = true
+				break
+			}
+		}
+		if matches {
+			columns = opts.selected
+			dropped = map[string]bool{}
+		}
+	}
+	if opts.keepAll {
+		dropped = map[string]bool{}
+	}
+
+	out := make([]interface{}, len(items))
+	for i, item := range items {
+		row := item.(map[string]interface{})
+		nr := make(map[string]interface{}, len(columns))
+		for _, k := range columns {
+			if dropped[k] {
+				continue
+			}
+			v, ok := row[k]
+			if !ok {
+				nr[k] = ""
+				continue
+			}
+			if containsObject(v) {
+				// Explicitly requested object values: keep the data, keep the
+				// fold — encode the cell as a compact JSON string.
+				nr[k] = jsonCell(v)
+				continue
+			}
+			if arr, ok := v.([]interface{}); ok {
+				// Object-free array cells are formatted as the table would.
+				v = joinPrimitives(arr)
+			}
+			nr[k] = v
+		}
+		out[i] = nr
+	}
+	return out
+}
+
+func jsonCell(v interface{}) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		// Unreachable for JSON-roundtripped values; degrade readably.
+		return formatValue(v)
+	}
+	return string(b)
+}
+
+func allObjects(arr []interface{}) bool {
+	for _, v := range arr {
+		if _, ok := v.(map[string]interface{}); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func allPrimitives(arr []interface{}) bool {
+	for _, v := range arr {
+		switch v.(type) {
+		case map[string]interface{}, []interface{}:
+			return false
+		}
+	}
+	return true
+}
+
+func joinPrimitives(arr []interface{}) string {
+	// Same ", " join and value formatting the table renderer uses for array
+	// cells, so toon and table show identical cell content.
+	parts := make([]string, len(arr))
+	for i, v := range arr {
+		parts[i] = formatValue(v)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func toJSONSafe(value interface{}) (interface{}, error) {
