@@ -119,6 +119,16 @@ jobs:
 
           # Clone the fork (created once via: gh repo fork microsoft/winget-pkgs)
           WINGET_FORK="${WINGET_FORK:-apgiorgi/winget-pkgs}"
+
+          # Sync the fork with upstream before branching: the release branch is
+          # based on upstream/master, and pushing upstream's workflow-file
+          # changes to a stale fork is rejected when the PAT lacks the
+          # `workflow` scope. The merge-upstream API (what `gh repo sync`
+          # calls) is server-side and exempt from that scope check. --force
+          # keeps the fork's master a mirror; release branches are unaffected.
+          GH_TOKEN="${WINGET_GH_PAT}" gh repo sync "${WINGET_FORK}" \
+            --source microsoft/winget-pkgs --force
+
           git clone --depth 1 \
             "https://x-access-token:${WINGET_GH_PAT}@github.com/${WINGET_FORK}.git" \
             /tmp/winget-pkgs
