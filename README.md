@@ -7,7 +7,8 @@
 ## Installation
 
 ```bash
-# macOS (Homebrew)
+# macOS (Homebrew) — the `brew trust` step is required once on Homebrew 6+
+brew trust doitintl/dci-cli
 brew install doitintl/dci-cli/dci
 
 # Windows (WinGet)
