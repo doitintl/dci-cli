@@ -133,6 +133,8 @@ winget upgrade DoiT.dci
 scoop update dci
 ```
 
+> **Note (Homebrew 6+):** if `dci` stops appearing in `brew upgrade`, the tap is untrusted and Homebrew skips it silently. Run `brew trust doitintl/dci-cli` once to fix it.
+
 ## Authentication
 
 By default, `dci` authenticates interactively via the DoiT Console (OAuth). For CI pipelines and non-interactive environments, set the `DCI_API_KEY` environment variable:
