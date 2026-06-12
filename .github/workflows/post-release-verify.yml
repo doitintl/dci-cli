@@ -55,6 +55,11 @@ jobs:
             packaging/homebrew/dci.rb.tmpl dist/verify/dci.rb
 
       - name: Install via Homebrew formula
+        env:
+          # Homebrew 6+ refuses to load formulae from untrusted taps. The local
+          # tap-new tap can't be trusted per-formula (no canonical remote), and
+          # this job verifies the rendered formula, not the trust UX.
+          HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
         run: |
           brew tap-new verify/test
           cp dist/verify/dci.rb "$(brew --repository)/Library/Taps/verify/homebrew-test/Formula/dci.rb"
