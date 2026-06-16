@@ -132,6 +132,8 @@ winget upgrade DoiT.dci
 scoop update dci
 ```
 
+> **Note (Homebrew 6):** `brew install` auto-trusts the formula, so upgrades normally just work. But `brew upgrade`/`brew reinstall` never trust the tap on their own — if `dci` upgrades fail or are silently skipped with an untrusted-tap message, run `brew trust doitintl/dci-cli` once to restore it.
+
 ## Authentication
 
 By default, `dci` authenticates interactively via the DoiT Console (OAuth). For CI pipelines and non-interactive environments, set the `DCI_API_KEY` environment variable:
