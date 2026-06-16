@@ -7,8 +7,7 @@
 ## Installation
 
 ```bash
-# macOS (Homebrew) — the `brew trust` step is required once on Homebrew 6+
-brew trust doitintl/dci-cli
+# macOS (Homebrew)
 brew install doitintl/dci-cli/dci
 
 # Windows (WinGet)
@@ -132,8 +131,6 @@ winget upgrade DoiT.dci
 # Windows (Scoop)
 scoop update dci
 ```
-
-> **Note (Homebrew 6+):** if `dci` stops appearing in `brew upgrade`, the tap is untrusted and Homebrew skips it silently. Run `brew trust doitintl/dci-cli` once to fix it.
 
 ## Authentication
 

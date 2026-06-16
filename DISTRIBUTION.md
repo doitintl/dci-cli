@@ -7,7 +7,7 @@ This document covers how `dci` releases are built, published, and distributed ac
 | Channel          | Install command                                                                 |
 |------------------|---------------------------------------------------------------------------------|
 | GitHub Releases  | Download from [Releases](https://github.com/doitintl/dci-cli/releases/latest)  |
-| Homebrew (macOS) | `brew trust doitintl/dci-cli && brew install doitintl/dci-cli/dci`              |
+| Homebrew (macOS) | `brew install doitintl/dci-cli/dci`                                             |
 | Scoop (Windows)  | `scoop bucket add doitintl https://github.com/doitintl/dci-cli && scoop install dci` |
 | WinGet (Windows) | `winget install DoiT.dci`                                                       |
 | Linux (.deb)     | `sudo dpkg -i dci_*_linux_amd64.deb`                                           |
@@ -82,7 +82,7 @@ To re-release: fix the issue, tag a new patch version, and push.
 | Homebrew/Scoop commit fails with permission error | Ensure `permissions: contents: write` is set in the workflow |
 | Homebrew/Scoop commit blocked by branch protection | Add `github-actions[bot]` to the bypass list |
 | Post-release Homebrew install fails | Confirm release assets exist, then re-run `sync-manifests` |
-| `brew install` fails with an opaque `sandbox-exec ... build.rb exited with 1` backtrace | Homebrew 6+ refuses to load formulae from untrusted taps; the real warning scrolls past before the error. Run `brew trust doitintl/dci-cli` and retry. |
+| `brew install` fails with an opaque `sandbox-exec ... build.rb exited with 1` backtrace | A Homebrew 6.0.0–6.0.1 bug blocked installs from third-party taps. Run `brew update` to get 6.0.2+ (which auto-trusts fully-qualified installs) and retry. |
 | `release.yml` stuck queued | Another release for the same tag is in progress — wait or cancel it |
 | WinGet PR submission skipped | `WINGET_GH_PAT` secret is not configured — add a PAT with `public_repo` scope |
 | WinGet PR fails validation | Check [microsoft/winget-pkgs validation policies](https://github.com/microsoft/winget-pkgs/blob/master/doc/README.md) |
@@ -99,4 +99,3 @@ To re-release: fix the issue, tag a new patch version, and push.
 - **Windows ARM64** is excluded due to a missing cross-compiler in `goreleaser-cross` ([goreleaser-cross#117](https://github.com/goreleaser/goreleaser-cross/issues/117)).
 - **WinGet** submissions are automated via `sync-manifests.yml`, which opens a PR to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) on each release. This requires a `WINGET_GH_PAT` secret (a GitHub PAT with `public_repo` scope) and a fork of `winget-pkgs` (currently `apgiorgi/winget-pkgs`). Microsoft's automated validation runs on each PR — approval is typically within hours.
 - **Homebrew tap** relies on a GitHub redirect from `doitintl/homebrew-dci-cli` to this repo. Do not create a repo named `homebrew-dci-cli` in the org.
-- **Homebrew 6 tap trust**: because of the redirect above, Homebrew records the tap with a non-canonical remote (`github.com/doitintl/dci-cli` instead of the `homebrew-dci-cli` URL implied by the tap name). Homebrew treats such taps as "custom remote" and disables both per-formula trust and the auto-trust normally granted by fully-qualified installs — so `brew install doitintl/dci-cli/dci` alone fails on Homebrew 6+, and users must run `brew trust doitintl/dci-cli` (whole-tap trust) first. Creating a real `homebrew-dci-cli` tap repo would restore canonical-remote behavior, at the cost of maintaining a second repo.
