@@ -221,6 +221,7 @@ func main() {
 func run() (exitCode int) {
 	// Reset per-invocation state so repeated calls (e.g. in tests) start clean.
 	customerContextFlagValue = ""
+	nonJSONErrorResponse = false
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
 	// output format, stderr routing, and the User-Agent mode token — all key off
@@ -261,6 +262,7 @@ func run() (exitCode int) {
 	cli.Init("dci", version)
 	cli.Defaults()
 	overrideTableOutput()
+	installResponseGuard()
 	registerAgentFlags()
 	printFirstRunOnboarding(configured)
 	maybeHintAgentMode()
@@ -313,6 +315,11 @@ func run() (exitCode int) {
 		return 1
 	}
 	code := cli.GetExitCode()
+	// A non-JSON error page can arrive with a 2xx status, which restish would
+	// treat as success. Force a non-zero exit so callers detect the failure.
+	if code == 0 && nonJSONErrorResponse {
+		code = 1
+	}
 	maybeHintDoerContext(code, cli.GetLastStatus(), configDir)
 	return code
 }
@@ -1416,6 +1423,104 @@ func overrideTableOutput() {
 	// header for content negotiation, which is skipped at q=-1, so it's left
 	// empty — restish resolves --output by the short name ("toon").
 	cli.AddContentType("toon", "", -1, &dciToonContentType{})
+}
+
+// nonJSONErrorResponse records that the last API response was a non-JSON error
+// page (typically HTML) so run() can force a non-zero exit even when the HTTP
+// status was 2xx. Reset at the start of each run().
+var nonJSONErrorResponse bool
+
+// dciResponseGuard wraps restish's response formatter to catch non-JSON error
+// pages before they are printed. The DCI API is JSON-only, but an upstream
+// timeout or maintenance window can surface the Cloudflare edge's HTML error
+// page (e.g. a 524 rendered as the DoiT maintenance page). Restish would dump
+// that raw HTML to stdout, which is confusing and hard to script against, so we
+// replace it with a clear, actionable message and a non-zero exit code.
+type dciResponseGuard struct {
+	next cli.ResponseFormatter
+}
+
+func (g dciResponseGuard) Format(resp cli.Response) error {
+	if isHTMLErrorPage(resp) {
+		nonJSONErrorResponse = true
+		printNonJSONError(resp)
+		return nil
+	}
+	return g.next.Format(resp)
+}
+
+// installResponseGuard wraps the active restish formatter. It must run after
+// cli.Defaults() (which sets cli.Formatter) and overrideTableOutput().
+func installResponseGuard() {
+	if cli.Formatter == nil {
+		return
+	}
+	cli.Formatter = dciResponseGuard{next: cli.Formatter}
+}
+
+// isHTMLErrorPage reports whether a parsed response is an HTML page rather than
+// the JSON the DCI API is expected to return. It checks the Content-Type header
+// and, because edge error pages sometimes carry a misleading or absent type,
+// sniffs the body for an HTML prefix. Streaming (text/event-stream) and JSON
+// responses are intentionally left untouched.
+func isHTMLErrorPage(resp cli.Response) bool {
+	if strings.Contains(strings.ToLower(headerValue(resp.Headers, "Content-Type")), "text/html") {
+		return true
+	}
+	switch b := resp.Body.(type) {
+	case string:
+		return bodyLooksLikeHTML(b)
+	case []byte:
+		return bodyLooksLikeHTML(string(b))
+	}
+	return false
+}
+
+func bodyLooksLikeHTML(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.HasPrefix(s, "<!doctype html") ||
+		strings.HasPrefix(s, "<html") ||
+		strings.HasPrefix(s, "<head") ||
+		strings.HasPrefix(s, "<body")
+}
+
+func printNonJSONError(resp cli.Response) {
+	var b strings.Builder
+	b.WriteString("Error: the DoiT API returned a non-JSON (HTML) response.\n")
+	b.WriteString("This usually means an upstream timeout or maintenance window rather than a problem with your request.\n")
+	if resp.Status != 0 {
+		fmt.Fprintf(&b, "HTTP status: %d\n", resp.Status)
+	}
+	if trace := traceID(resp.Headers); trace != "" {
+		fmt.Fprintf(&b, "Trace: %s\n", trace)
+	}
+	b.WriteString("Please retry in a moment. If it persists, contact DoiT support with the trace above.\n")
+	fmt.Fprint(os.Stderr, b.String())
+}
+
+// traceID returns the first available upstream trace identifier so users can
+// reference it in a support request.
+func traceID(headers map[string]string) string {
+	for _, name := range []string{"Cf-Ray", "X-Doit-Trace", "X-Request-Id", "X-Cloud-Trace-Context", "Traceparent"} {
+		if v := strings.TrimSpace(headerValue(headers, name)); v != "" {
+			return name + "=" + v
+		}
+	}
+	return ""
+}
+
+// headerValue looks up a header case-insensitively. Restish canonicalizes
+// header keys, but sniffing defensively keeps this robust across sources.
+func headerValue(headers map[string]string, name string) string {
+	if v, ok := headers[name]; ok {
+		return v
+	}
+	for k, v := range headers {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
 }
 
 func (t dciTableContentType) Detect(contentType string) bool { return false }

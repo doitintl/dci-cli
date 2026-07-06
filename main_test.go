@@ -2011,3 +2011,163 @@ func TestCustomerContextFlag(t *testing.T) {
 		}
 	})
 }
+
+func TestIsHTMLErrorPage(t *testing.T) {
+	tests := []struct {
+		name string
+		resp cli.Response
+		want bool
+	}{
+		{
+			name: "text/html content type",
+			resp: cli.Response{Headers: map[string]string{"Content-Type": "text/html; charset=utf-8"}, Body: "anything"},
+			want: true,
+		},
+		{
+			name: "doctype body without content type",
+			resp: cli.Response{Body: "<!DOCTYPE html><html><head><title>DoiT Console - Maintenance</title></head></html>"},
+			want: true,
+		},
+		{
+			name: "html body with leading whitespace",
+			resp: cli.Response{Body: "\n  <html><body>oops</body></html>"},
+			want: true,
+		},
+		{
+			name: "html body as bytes",
+			resp: cli.Response{Body: []byte("<head>...</head>")},
+			want: true,
+		},
+		{
+			name: "json object body is not html",
+			resp: cli.Response{Headers: map[string]string{"Content-Type": "application/json"}, Body: map[string]interface{}{"answer": "hi"}},
+			want: false,
+		},
+		{
+			name: "json string body is not html",
+			resp: cli.Response{Body: `{"answer":"hi"}`},
+			want: false,
+		},
+		{
+			name: "streaming SSE body is not html",
+			resp: cli.Response{Headers: map[string]string{"Content-Type": "text/event-stream"}, Body: "data: {\"chunk\":1}"},
+			want: false,
+		},
+		{
+			name: "empty response is not html",
+			resp: cli.Response{},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isHTMLErrorPage(tt.resp); got != tt.want {
+				t.Errorf("isHTMLErrorPage() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTraceID(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    string
+	}{
+		{name: "cf-ray preferred", headers: map[string]string{"Cf-Ray": "a023e448ca101c99", "X-Request-Id": "abc"}, want: "Cf-Ray=a023e448ca101c99"},
+		{name: "case insensitive lookup", headers: map[string]string{"cf-ray": "deadbeef"}, want: "Cf-Ray=deadbeef"},
+		{name: "falls back to request id", headers: map[string]string{"X-Request-Id": "req-123"}, want: "X-Request-Id=req-123"},
+		{name: "none present", headers: map[string]string{"Content-Type": "text/html"}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := traceID(tt.headers); got != tt.want {
+				t.Errorf("traceID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// recordingFormatter is a test double capturing whether the wrapped formatter
+// was delegated to.
+type recordingFormatter struct {
+	called bool
+	got    cli.Response
+}
+
+func (r *recordingFormatter) Format(resp cli.Response) error {
+	r.called = true
+	r.got = resp
+	return nil
+}
+
+func TestResponseGuardFormat(t *testing.T) {
+	t.Run("html page prints message and sets flag without delegating", func(t *testing.T) {
+		nonJSONErrorResponse = false
+		t.Cleanup(func() { nonJSONErrorResponse = false })
+
+		next := &recordingFormatter{}
+		guard := dciResponseGuard{next: next}
+
+		r, w, _ := os.Pipe()
+		oldStderr := os.Stderr
+		os.Stderr = w
+
+		err := guard.Format(cli.Response{
+			Status:  524,
+			Headers: map[string]string{"Content-Type": "text/html", "Cf-Ray": "a023e448ca101c99"},
+			Body:    "<!DOCTYPE html><html><head><title>DoiT Console - Maintenance</title></head></html>",
+		})
+
+		w.Close()
+		os.Stderr = oldStderr
+		buf := make([]byte, 4096)
+		n, _ := r.Read(buf)
+		output := string(buf[:n])
+		r.Close()
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if next.called {
+			t.Fatal("expected guard not to delegate to the wrapped formatter for HTML")
+		}
+		if !nonJSONErrorResponse {
+			t.Fatal("expected nonJSONErrorResponse to be set")
+		}
+		if !strings.Contains(output, "non-JSON") {
+			t.Errorf("expected message to mention non-JSON, got:\n%s", output)
+		}
+		if !strings.Contains(output, "HTTP status: 524") {
+			t.Errorf("expected message to include HTTP status, got:\n%s", output)
+		}
+		if !strings.Contains(output, "Cf-Ray=a023e448ca101c99") {
+			t.Errorf("expected message to include trace, got:\n%s", output)
+		}
+	})
+
+	t.Run("json response delegates to wrapped formatter", func(t *testing.T) {
+		nonJSONErrorResponse = false
+		t.Cleanup(func() { nonJSONErrorResponse = false })
+
+		next := &recordingFormatter{}
+		guard := dciResponseGuard{next: next}
+
+		resp := cli.Response{
+			Status:  200,
+			Headers: map[string]string{"Content-Type": "application/json"},
+			Body:    map[string]interface{}{"answer": "hello"},
+		}
+		if err := guard.Format(resp); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !next.called {
+			t.Fatal("expected guard to delegate to the wrapped formatter for JSON")
+		}
+		if nonJSONErrorResponse {
+			t.Fatal("expected nonJSONErrorResponse to stay false for JSON")
+		}
+	})
+}
