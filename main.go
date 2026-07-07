@@ -1228,14 +1228,15 @@ func registerAuthCommands(configDir string) {
 			if os.Getenv("DCI_API_KEY") != "" {
 				return fmt.Errorf("login is not needed when DCI_API_KEY is set")
 			}
-			// Trigger the OAuth flow by calling a lightweight endpoint.
-			// Suppress the validate response body — login only needs the OAuth
-			// side effect (token cached), not the API output.
+			// Trigger the OAuth flow via validate. This call is internal (login
+			// only needs the cached token), so isolate all its observable effects
+			// — stdout, guard stderr, guard exit-code flag — from the login result.
 			os.Args = []string{os.Args[0], "dci", "validate"}
-			oldOut := cli.Stdout
-			cli.Stdout = io.Discard
+			oldOut, oldErr := cli.Stdout, cli.Stderr
+			cli.Stdout, cli.Stderr = io.Discard, io.Discard
 			err := cli.Run()
-			cli.Stdout = oldOut
+			cli.Stdout, cli.Stderr = oldOut, oldErr
+			nonJSONErrorResponse = false
 
 			// Auto-configure DoiT employees who have no customer context set.
 			// The validate endpoint requires customerContext for @doit.com accounts,
@@ -1443,12 +1444,12 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 		return nil
 	}
 	if msg, ok := jsonApplicationError(resp); ok {
-		// Print the structured error body as usual, then flag a non-zero exit.
 		nonJSONErrorResponse = true
 		if err := g.next.Format(resp); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "Error: the DoiT API returned an application error: %s\n", msg)
+		// cli.Stderr (not os.Stderr) so callers like login can suppress it; don't revert.
+		fmt.Fprintf(cli.Stderr, "Error: the DoiT API returned an application error: %s\n", msg)
 		return nil
 	}
 	return g.next.Format(resp)
@@ -1480,17 +1481,30 @@ func isHTMLErrorPage(resp cli.Response) bool {
 }
 
 func bodyLooksLikeHTML(s string) bool {
-	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimSpace(strings.TrimPrefix(s, "\ufeff")) // strip UTF-8 BOM some proxies prepend
+	if len(s) > 16 {
+		s = s[:16] // only the prefix matters; avoid lowercasing the whole body
+	}
+	s = strings.ToLower(s)
 	return strings.HasPrefix(s, "<!doctype html") ||
 		strings.HasPrefix(s, "<html") ||
 		strings.HasPrefix(s, "<head") ||
-		strings.HasPrefix(s, "<body")
+		strings.HasPrefix(s, "<body") ||
+		strings.HasPrefix(s, "<?xml") ||
+		strings.HasPrefix(s, "<!--")
 }
 
 // jsonApplicationError reports whether a 2xx response carries a non-empty
 // top-level JSON `error` field (e.g. an AVA askSync failure under a locked 2xx
 // status), returning a human-readable message. Such a body is not a valid DCI
 // success shape, so it is treated as a failure.
+//
+// The object-only, top-level-only scoping is load-bearing, verified against the
+// OpenAPI spec: the only other 2xx body carrying a top-level `error` is
+// POST /insights/v1/results, whose 200 is a top-level *array* of per-row error
+// items. The map assertion below lets that array pass through untouched. Do not
+// recurse into arrays or nested objects here, or it will false-positive on
+// legitimate partial-result responses.
 func jsonApplicationError(resp cli.Response) (string, bool) {
 	if resp.Status < 200 || resp.Status >= 300 {
 		return "", false
@@ -1506,6 +1520,7 @@ func jsonApplicationError(resp cli.Response) (string, bool) {
 		}
 		return v, true
 	case map[string]interface{}:
+		// Defensive only: no current DCI endpoint returns an object-typed error (AVA returns a string).
 		if len(v) == 0 {
 			return "", false
 		}
@@ -1528,7 +1543,8 @@ func printNonJSONError(resp cli.Response) {
 		fmt.Fprintf(&b, "Trace: %s\n", trace)
 	}
 	b.WriteString("Please retry in a moment. If it persists, contact DoiT support with the trace above.\n")
-	fmt.Fprint(os.Stderr, b.String())
+	// cli.Stderr (not os.Stderr) so internal callers like login can redirect it.
+	fmt.Fprint(cli.Stderr, b.String())
 }
 
 // traceID returns the first available upstream trace identifier so users can

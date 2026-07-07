@@ -2039,6 +2039,21 @@ func TestIsHTMLErrorPage(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "xml declaration edge page without content type",
+			resp: cli.Response{Body: "<?xml version=\"1.0\"?><error>upstream</error>"},
+			want: true,
+		},
+		{
+			name: "html comment edge page without content type",
+			resp: cli.Response{Body: "<!-- error --><html></html>"},
+			want: true,
+		},
+		{
+			name: "utf-8 bom before doctype",
+			resp: cli.Response{Body: "\ufeff<!DOCTYPE html><html></html>"},
+			want: true,
+		},
+		{
 			name: "json object body is not html",
 			resp: cli.Response{Headers: map[string]string{"Content-Type": "application/json"}, Body: map[string]interface{}{"answer": "hi"}},
 			want: false,
@@ -2112,8 +2127,8 @@ func TestResponseGuardFormat(t *testing.T) {
 		guard := dciResponseGuard{next: next}
 
 		r, w, _ := os.Pipe()
-		oldStderr := os.Stderr
-		os.Stderr = w
+		oldStderr := cli.Stderr
+		cli.Stderr = w
 
 		err := guard.Format(cli.Response{
 			Status:  524,
@@ -2122,7 +2137,7 @@ func TestResponseGuardFormat(t *testing.T) {
 		})
 
 		w.Close()
-		os.Stderr = oldStderr
+		cli.Stderr = oldStderr
 		buf := make([]byte, 4096)
 		n, _ := r.Read(buf)
 		output := string(buf[:n])
@@ -2179,8 +2194,8 @@ func TestResponseGuardFormat(t *testing.T) {
 		guard := dciResponseGuard{next: next}
 
 		r, w, _ := os.Pipe()
-		oldStderr := os.Stderr
-		os.Stderr = w
+		oldStderr := cli.Stderr
+		cli.Stderr = w
 
 		err := guard.Format(cli.Response{
 			Status:  200,
@@ -2189,7 +2204,7 @@ func TestResponseGuardFormat(t *testing.T) {
 		})
 
 		w.Close()
-		os.Stderr = oldStderr
+		cli.Stderr = oldStderr
 		buf := make([]byte, 4096)
 		n, _ := r.Read(buf)
 		output := string(buf[:n])
