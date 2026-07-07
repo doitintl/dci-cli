@@ -2170,4 +2170,107 @@ func TestResponseGuardFormat(t *testing.T) {
 			t.Fatal("expected nonJSONErrorResponse to stay false for JSON")
 		}
 	})
+
+	t.Run("2xx json error body prints body and flags non-zero exit", func(t *testing.T) {
+		nonJSONErrorResponse = false
+		t.Cleanup(func() { nonJSONErrorResponse = false })
+
+		next := &recordingFormatter{}
+		guard := dciResponseGuard{next: next}
+
+		r, w, _ := os.Pipe()
+		oldStderr := os.Stderr
+		os.Stderr = w
+
+		err := guard.Format(cli.Response{
+			Status:  200,
+			Headers: map[string]string{"Content-Type": "application/json"},
+			Body:    map[string]interface{}{"error": "generation failed midway"},
+		})
+
+		w.Close()
+		os.Stderr = oldStderr
+		buf := make([]byte, 4096)
+		n, _ := r.Read(buf)
+		output := string(buf[:n])
+		r.Close()
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !next.called {
+			t.Fatal("expected guard to still print the structured error body via the wrapped formatter")
+		}
+		if !nonJSONErrorResponse {
+			t.Fatal("expected nonJSONErrorResponse to be set for a 2xx JSON error body")
+		}
+		if !strings.Contains(output, "application error") || !strings.Contains(output, "generation failed midway") {
+			t.Errorf("expected stderr to frame the application error, got:\n%s", output)
+		}
+	})
+}
+
+func TestJSONApplicationError(t *testing.T) {
+	tests := []struct {
+		name    string
+		resp    cli.Response
+		wantMsg string
+		wantOK  bool
+	}{
+		{
+			name:    "2xx with string error",
+			resp:    cli.Response{Status: 200, Body: map[string]interface{}{"error": "boom"}},
+			wantMsg: "boom",
+			wantOK:  true,
+		},
+		{
+			name:    "2xx with object error and message",
+			resp:    cli.Response{Status: 200, Body: map[string]interface{}{"error": map[string]interface{}{"message": "nested boom"}}},
+			wantMsg: "nested boom",
+			wantOK:  true,
+		},
+		{
+			name:    "2xx with object error without message",
+			resp:    cli.Response{Status: 200, Body: map[string]interface{}{"error": map[string]interface{}{"code": 42}}},
+			wantMsg: "application error",
+			wantOK:  true,
+		},
+		{
+			name:   "2xx success body is ignored",
+			resp:   cli.Response{Status: 200, Body: map[string]interface{}{"answer": "hi"}},
+			wantOK: false,
+		},
+		{
+			name:   "2xx empty string error is ignored",
+			resp:   cli.Response{Status: 200, Body: map[string]interface{}{"error": ""}},
+			wantOK: false,
+		},
+		{
+			name:   "2xx null error is ignored",
+			resp:   cli.Response{Status: 200, Body: map[string]interface{}{"error": nil}},
+			wantOK: false,
+		},
+		{
+			name:   "non-2xx error is left to restish",
+			resp:   cli.Response{Status: 400, Body: map[string]interface{}{"error": "bad request"}},
+			wantOK: false,
+		},
+		{
+			name:   "non-object body is ignored",
+			resp:   cli.Response{Status: 200, Body: "just a string"},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, ok := jsonApplicationError(tt.resp)
+			if ok != tt.wantOK {
+				t.Fatalf("jsonApplicationError() ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && msg != tt.wantMsg {
+				t.Errorf("jsonApplicationError() msg = %q, want %q", msg, tt.wantMsg)
+			}
+		})
+	}
 }

@@ -315,8 +315,7 @@ func run() (exitCode int) {
 		return 1
 	}
 	code := cli.GetExitCode()
-	// A non-JSON error page can arrive with a 2xx status, which restish would
-	// treat as success. Force a non-zero exit so callers detect the failure.
+	// Force a non-zero exit when a 2xx response carried an error page/body.
 	if code == 0 && nonJSONErrorResponse {
 		code = 1
 	}
@@ -1425,17 +1424,14 @@ func overrideTableOutput() {
 	cli.AddContentType("toon", "", -1, &dciToonContentType{})
 }
 
-// nonJSONErrorResponse records that the last API response was a non-JSON error
-// page (typically HTML) so run() can force a non-zero exit even when the HTTP
-// status was 2xx. Reset at the start of each run().
+// nonJSONErrorResponse flags that the last API response was an error page/body
+// so run() can force a non-zero exit even on a 2xx status. Reset each run().
 var nonJSONErrorResponse bool
 
-// dciResponseGuard wraps restish's response formatter to catch non-JSON error
-// pages before they are printed. The DCI API is JSON-only, but an upstream
-// timeout or maintenance window can surface the Cloudflare edge's HTML error
-// page (e.g. a 524 rendered as the DoiT maintenance page). Restish would dump
-// that raw HTML to stdout, which is confusing and hard to script against, so we
-// replace it with a clear, actionable message and a non-zero exit code.
+// dciResponseGuard wraps restish's formatter to catch error responses the DCI
+// API can leak as non-JSON HTML (e.g. a Cloudflare 524 maintenance page) or as
+// a JSON error body under a locked 2xx status, replacing restish's success
+// handling with a clear message and a non-zero exit code.
 type dciResponseGuard struct {
 	next cli.ResponseFormatter
 }
@@ -1444,6 +1440,15 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 	if isHTMLErrorPage(resp) {
 		nonJSONErrorResponse = true
 		printNonJSONError(resp)
+		return nil
+	}
+	if msg, ok := jsonApplicationError(resp); ok {
+		// Print the structured error body as usual, then flag a non-zero exit.
+		nonJSONErrorResponse = true
+		if err := g.next.Format(resp); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Error: the DoiT API returned an application error: %s\n", msg)
 		return nil
 	}
 	return g.next.Format(resp)
@@ -1458,11 +1463,9 @@ func installResponseGuard() {
 	cli.Formatter = dciResponseGuard{next: cli.Formatter}
 }
 
-// isHTMLErrorPage reports whether a parsed response is an HTML page rather than
-// the JSON the DCI API is expected to return. It checks the Content-Type header
-// and, because edge error pages sometimes carry a misleading or absent type,
-// sniffs the body for an HTML prefix. Streaming (text/event-stream) and JSON
-// responses are intentionally left untouched.
+// isHTMLErrorPage reports whether a response is HTML rather than JSON, checking
+// the Content-Type and sniffing the body (edge error pages can carry a
+// misleading or absent type). JSON and SSE responses are left untouched.
 func isHTMLErrorPage(resp cli.Response) bool {
 	if strings.Contains(strings.ToLower(headerValue(resp.Headers, "Content-Type")), "text/html") {
 		return true
@@ -1482,6 +1485,36 @@ func bodyLooksLikeHTML(s string) bool {
 		strings.HasPrefix(s, "<html") ||
 		strings.HasPrefix(s, "<head") ||
 		strings.HasPrefix(s, "<body")
+}
+
+// jsonApplicationError reports whether a 2xx response carries a non-empty
+// top-level JSON `error` field (e.g. an AVA askSync failure under a locked 2xx
+// status), returning a human-readable message. Such a body is not a valid DCI
+// success shape, so it is treated as a failure.
+func jsonApplicationError(resp cli.Response) (string, bool) {
+	if resp.Status < 200 || resp.Status >= 300 {
+		return "", false
+	}
+	body, ok := resp.Body.(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	switch v := body["error"].(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return "", false
+		}
+		return v, true
+	case map[string]interface{}:
+		if len(v) == 0 {
+			return "", false
+		}
+		if m, ok := v["message"].(string); ok && strings.TrimSpace(m) != "" {
+			return m, true
+		}
+		return "application error", true
+	}
+	return "", false
 }
 
 func printNonJSONError(resp cli.Response) {
