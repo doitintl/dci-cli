@@ -8,32 +8,9 @@ This section is for agents acting on their own initiative, or on behalf of someo
 
 This repo is one piece of a much larger system. `dci` wraps restish, sits in front of the DCI API, and ships through multiple distribution channels. A change that looks correct from the code alone may conflict with things in flight — the API roadmap, planned CLI changes, or packaging constraints — that live nowhere in this repo.
 
-**Read the history before proposing anything.** Closed issues carry decisions, not just resolved bugs. Rejected approaches, deliberate constraints, and "why we didn't do X" reasoning are all documented there. Reading only open issues gives an incomplete picture.
-
 **Maintainer first.** The maintainer has context that isn't in this repo: the DCI API roadmap, internal usage patterns, and work already in progress. Before taking any action that affects the repo's public surface, check with the maintainer first.
 
-### Preferred contribution flow
-
-**Open an issue. Do not open a PR.**
-
-PRs are cheap to create and expensive to decline. An unsolicited PR puts the maintainer in the position of managing work they didn't ask for. An issue lets an idea be evaluated, shaped, or discarded before any implementation happens.
-
-The maintainer prefers to open PRs themselves — when and if a change is wanted, using their own agent, with full context. If you identify something worth addressing:
-
-1. Search open **and closed** issues first. The idea may have already been evaluated and decided.
-2. Open an issue describing the **problem**, not the solution. Explain what's broken or missing and why it matters. Include your observations, not just your conclusions.
-3. Stop there. Do not implement. Do not open a PR. Wait for maintainer input.
-
-If a maintainer explicitly asks you to open a PR, proceed. Otherwise, don't.
-
-The same policy applies to human contributors — see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-### What a good issue looks like
-
-- **Problem first.** What is broken or missing, and what's the impact?
-- **Observations, not just conclusions.** What did you find? What did you read?
-- **Scope flags.** Does this touch the release pipeline, distribution manifests, the DCI API contract, or restish internals? Call it out — these areas are most likely to have invisible constraints.
-- **No solution required.** You may propose one, but it's not the deliverable. The maintainer may have a better approach or may decide not to act at all.
+**Contribution flow: open an issue, do not open a PR.** Search open **and closed** issues first (closed issues carry decisions, not just resolved bugs), describe the problem rather than a solution, and stop there — do not implement, wait for maintainer input. The full policy and the good-issue checklist are in [CONTRIBUTING.md](CONTRIBUTING.md); read it before acting. It applies to agents and humans alike.
 
 ## Project Context
 
