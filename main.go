@@ -259,6 +259,11 @@ func run() (exitCode int) {
 		return 1
 	}
 
+	// Kick off the update check now so it runs in parallel with the command;
+	// the deferred notify covers every return path after command output.
+	updateDone := startUpdateCheck(configDir)
+	defer maybeNotifyUpdate(configDir, updateDone)
+
 	cli.Init("dci", version)
 	cli.Defaults()
 	overrideTableOutput()
@@ -291,6 +296,7 @@ func run() (exitCode int) {
 	registerStatusCommands(configDir)
 	registerAuthCommands(configDir)
 	registerCustomerContextCommands(configDir)
+	registerUpgradeCommand(configDir)
 	registerSkillCommands()
 	// Unhide the customer-context command for DoiT employees so it appears in help.
 	if cachedTokenIsDoer() {
