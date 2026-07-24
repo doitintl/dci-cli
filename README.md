@@ -121,6 +121,8 @@ Run `dci status` to see whether agent mode is active and why.
 
 ## Updating
 
+Run `dci upgrade` to check for a new version — it prints the upgrade command for your install method (it never installs anything itself). The CLI also checks for new releases in the background at most once every few hours and prints a short notice when one is available; set `DCI_NO_UPDATE_CHECK=1` to turn that off.
+
 ```bash
 # macOS (Homebrew)
 brew update && brew upgrade dci
