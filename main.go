@@ -1308,9 +1308,19 @@ func readCustomerContext(configDir string) string {
 	return strings.TrimSpace(string(data))
 }
 
-// tenantIDHeaderPrefix is the header (in restish's "name:value" rsh-header
-// format) that carries the customer context to the API.
-const tenantIDHeaderPrefix = "X-Tenant-Id:"
+// The customer context is sent on BOTH transports during the API migration:
+// the legacy customerContext query parameter (the only one api.doit.com reads
+// today — dropping it broke every context-scoped request in v1.5.0) and the
+// X-Tenant-Id header the API is moving to. Keep both until the API confirms
+// header support, then drop the query param.
+const (
+	// tenantIDHeaderPrefix is the header (in restish's "name:value"
+	// rsh-header format) that carries the customer context to the API.
+	tenantIDHeaderPrefix = "X-Tenant-Id:"
+	// customerContextQueryPrefix is the legacy rsh-query entry ("name=value")
+	// carrying the same context.
+	customerContextQueryPrefix = "customerContext="
+)
 
 // isTenantHeader reports whether the rsh-header entry h carries the tenant
 // header. HTTP header names are case-insensitive, and users can inject
@@ -1328,14 +1338,29 @@ func applyCustomerContext(configDir string) {
 		return
 	}
 
-	existing := viper.GetStringSlice("rsh-header")
-	for _, h := range existing {
+	headers := viper.GetStringSlice("rsh-header")
+	hasHeader := false
+	for _, h := range headers {
 		if isTenantHeader(h) {
-			return
+			hasHeader = true
+			break
 		}
 	}
+	if !hasHeader {
+		viper.Set("rsh-header", append(headers, tenantIDHeaderPrefix+ctx))
+	}
 
-	viper.Set("rsh-header", append(existing, tenantIDHeaderPrefix+ctx))
+	queries := viper.GetStringSlice("rsh-query")
+	hasQuery := false
+	for _, q := range queries {
+		if strings.HasPrefix(q, customerContextQueryPrefix) {
+			hasQuery = true
+			break
+		}
+	}
+	if !hasQuery {
+		viper.Set("rsh-query", append(queries, customerContextQueryPrefix+ctx))
+	}
 }
 
 func addOutputFlag() {
@@ -1395,14 +1420,23 @@ func addOutputFlag() {
 			if val == "" {
 				return fmt.Errorf("--customer-context requires a non-empty domain name")
 			}
-			existing := viper.GetStringSlice("rsh-header")
-			filtered := existing[:0]
-			for _, h := range existing {
+			headers := viper.GetStringSlice("rsh-header")
+			filteredHeaders := headers[:0]
+			for _, h := range headers {
 				if !isTenantHeader(h) {
-					filtered = append(filtered, h)
+					filteredHeaders = append(filteredHeaders, h)
 				}
 			}
-			viper.Set("rsh-header", append(filtered, tenantIDHeaderPrefix+val))
+			viper.Set("rsh-header", append(filteredHeaders, tenantIDHeaderPrefix+val))
+
+			queries := viper.GetStringSlice("rsh-query")
+			filteredQueries := queries[:0]
+			for _, q := range queries {
+				if !strings.HasPrefix(q, customerContextQueryPrefix) {
+					filteredQueries = append(filteredQueries, q)
+				}
+			}
+			viper.Set("rsh-query", append(filteredQueries, customerContextQueryPrefix+val))
 			customerContextFlagValue = val
 		}
 
