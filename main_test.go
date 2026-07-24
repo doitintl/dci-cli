@@ -1952,7 +1952,7 @@ func TestApplyDoerContext(t *testing.T) {
 }
 
 func TestApplyCustomerContext(t *testing.T) {
-	t.Run("adds X-Tenant-Id header preserving existing headers", func(t *testing.T) {
+	t.Run("adds header and query param preserving existing entries", func(t *testing.T) {
 		t.Cleanup(viper.Reset)
 		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
 		viper.Set("rsh-header", []string{"user-agent:test"})
@@ -1961,11 +1961,16 @@ func TestApplyCustomerContext(t *testing.T) {
 
 		applyCustomerContext(dir)
 
-		// The literal (not tenantIDHeaderPrefix) is deliberate: it pins the
-		// wire header name so the constant can't silently drift.
-		want := []string{"user-agent:test", "X-Tenant-Id:acme.com"}
-		if got := viper.GetStringSlice("rsh-header"); !reflect.DeepEqual(got, want) {
-			t.Errorf("rsh-header = %v, want %v", got, want)
+		// The literals (not tenantIDHeaderPrefix / customerContextQueryPrefix)
+		// are deliberate: they pin the wire names so the constants can't
+		// silently drift.
+		wantHeader := []string{"user-agent:test", "X-Tenant-Id:acme.com"}
+		if got := viper.GetStringSlice("rsh-header"); !reflect.DeepEqual(got, wantHeader) {
+			t.Errorf("rsh-header = %v, want %v", got, wantHeader)
+		}
+		wantQuery := []string{"customerContext=acme.com"}
+		if got := viper.GetStringSlice("rsh-query"); !reflect.DeepEqual(got, wantQuery) {
+			t.Errorf("rsh-query = %v, want %v", got, wantQuery)
 		}
 	})
 
@@ -1978,20 +1983,28 @@ func TestApplyCustomerContext(t *testing.T) {
 		if got := viper.GetStringSlice("rsh-header"); len(got) != 0 {
 			t.Errorf("rsh-header = %v, want empty", got)
 		}
+		if got := viper.GetStringSlice("rsh-query"); len(got) != 0 {
+			t.Errorf("rsh-query = %v, want empty", got)
+		}
 	})
 
-	t.Run("does not duplicate an existing X-Tenant-Id header", func(t *testing.T) {
+	t.Run("does not duplicate existing header or query param", func(t *testing.T) {
 		t.Cleanup(viper.Reset)
 		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
 		viper.Set("rsh-header", []string{tenantIDHeaderPrefix + "already.set"})
+		viper.Set("rsh-query", []string{customerContextQueryPrefix + "already.set"})
 		dir := t.TempDir()
 		writeContextFile(t, dir, "acme.com")
 
 		applyCustomerContext(dir)
 
-		want := []string{tenantIDHeaderPrefix + "already.set"}
-		if got := viper.GetStringSlice("rsh-header"); !reflect.DeepEqual(got, want) {
-			t.Errorf("rsh-header = %v, want %v", got, want)
+		wantHeader := []string{tenantIDHeaderPrefix + "already.set"}
+		if got := viper.GetStringSlice("rsh-header"); !reflect.DeepEqual(got, wantHeader) {
+			t.Errorf("rsh-header = %v, want %v", got, wantHeader)
+		}
+		wantQuery := []string{customerContextQueryPrefix + "already.set"}
+		if got := viper.GetStringSlice("rsh-query"); !reflect.DeepEqual(got, wantQuery) {
+			t.Errorf("rsh-query = %v, want %v", got, wantQuery)
 		}
 	})
 }
@@ -1999,7 +2012,7 @@ func TestApplyCustomerContext(t *testing.T) {
 func TestCustomerContextFlagOverride(t *testing.T) {
 	// Drives the real --customer-context override in addOutputFlag's
 	// PersistentPreRunE, mirroring TestOutputFlagValidation's setup.
-	run := func(t *testing.T, presetHeaders []string) []string {
+	run := func(t *testing.T, presetHeaders, presetQuery []string) ([]string, []string) {
 		t.Helper()
 		viper.Reset()
 		t.Cleanup(viper.Reset)
@@ -2014,20 +2027,27 @@ func TestCustomerContextFlagOverride(t *testing.T) {
 		addOutputFlag()
 
 		viper.Set("rsh-header", presetHeaders)
+		viper.Set("rsh-query", presetQuery)
 		root.SetArgs([]string{"dci", "--customer-context", "acme.com"})
 		root.SetOut(io.Discard)
 		root.SetErr(io.Discard)
 		if err := root.Execute(); err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
-		return viper.GetStringSlice("rsh-header")
+		return viper.GetStringSlice("rsh-header"), viper.GetStringSlice("rsh-query")
 	}
 
-	t.Run("replaces existing tenant header and preserves others", func(t *testing.T) {
-		got := run(t, []string{"user-agent:test", tenantIDHeaderPrefix + "old.example"})
-		want := []string{"user-agent:test", tenantIDHeaderPrefix + "acme.com"}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("rsh-header = %v, want %v", got, want)
+	t.Run("replaces existing tenant header and query param, preserves others", func(t *testing.T) {
+		gotHeader, gotQuery := run(t,
+			[]string{"user-agent:test", tenantIDHeaderPrefix + "old.example"},
+			[]string{"maxResults=5", customerContextQueryPrefix + "old.example"})
+		wantHeader := []string{"user-agent:test", tenantIDHeaderPrefix + "acme.com"}
+		if !reflect.DeepEqual(gotHeader, wantHeader) {
+			t.Errorf("rsh-header = %v, want %v", gotHeader, wantHeader)
+		}
+		wantQuery := []string{"maxResults=5", customerContextQueryPrefix + "acme.com"}
+		if !reflect.DeepEqual(gotQuery, wantQuery) {
+			t.Errorf("rsh-query = %v, want %v", gotQuery, wantQuery)
 		}
 	})
 
@@ -2035,10 +2055,14 @@ func TestCustomerContextFlagOverride(t *testing.T) {
 		// Users can inject headers via the hidden -H/--rsh-header flag, and
 		// HTTP header names are case-insensitive — a lowercase variant must
 		// still be replaced, not doubled.
-		got := run(t, []string{"x-tenant-id:evil.example"})
-		want := []string{tenantIDHeaderPrefix + "acme.com"}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("rsh-header = %v, want %v", got, want)
+		gotHeader, gotQuery := run(t, []string{"x-tenant-id:evil.example"}, nil)
+		wantHeader := []string{tenantIDHeaderPrefix + "acme.com"}
+		if !reflect.DeepEqual(gotHeader, wantHeader) {
+			t.Errorf("rsh-header = %v, want %v", gotHeader, wantHeader)
+		}
+		wantQuery := []string{customerContextQueryPrefix + "acme.com"}
+		if !reflect.DeepEqual(gotQuery, wantQuery) {
+			t.Errorf("rsh-query = %v, want %v", gotQuery, wantQuery)
 		}
 	})
 }
