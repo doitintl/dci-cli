@@ -1306,6 +1306,16 @@ func readCustomerContext(configDir string) string {
 // format) that carries the customer context to the API.
 const tenantIDHeaderPrefix = "X-Tenant-Id:"
 
+// isTenantHeader reports whether the rsh-header entry h carries the tenant
+// header. HTTP header names are case-insensitive, and users can inject
+// arbitrary headers via the hidden but functional -H/--rsh-header flag
+// (restish re-parses it inside cli.Run(), after our setup), so a lowercase
+// x-tenant-id entry must match or we'd send two tenant headers.
+func isTenantHeader(h string) bool {
+	return len(h) >= len(tenantIDHeaderPrefix) &&
+		strings.EqualFold(h[:len(tenantIDHeaderPrefix)], tenantIDHeaderPrefix)
+}
+
 func applyCustomerContext(configDir string) {
 	ctx := readCustomerContext(configDir)
 	if ctx == "" {
@@ -1314,7 +1324,7 @@ func applyCustomerContext(configDir string) {
 
 	existing := viper.GetStringSlice("rsh-header")
 	for _, h := range existing {
-		if strings.HasPrefix(h, tenantIDHeaderPrefix) {
+		if isTenantHeader(h) {
 			return
 		}
 	}
@@ -1382,7 +1392,7 @@ func addOutputFlag() {
 			existing := viper.GetStringSlice("rsh-header")
 			filtered := existing[:0]
 			for _, h := range existing {
-				if !strings.HasPrefix(h, tenantIDHeaderPrefix) {
+				if !isTenantHeader(h) {
 					filtered = append(filtered, h)
 				}
 			}
