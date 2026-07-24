@@ -1338,29 +1338,27 @@ func applyCustomerContext(configDir string) {
 		return
 	}
 
+	// All-or-nothing: if either transport already carries a context, leave
+	// both untouched. Filling only the missing one from the file/env could
+	// send two different tenants on the two transports. (Not reachable today
+	// — rsh-header is hard-set to just our user-agent right before this runs
+	// and nothing has set rsh-query — but the guard keeps injection safe
+	// against ordering changes.)
 	headers := viper.GetStringSlice("rsh-header")
-	hasHeader := false
 	for _, h := range headers {
 		if isTenantHeader(h) {
-			hasHeader = true
-			break
+			return
 		}
 	}
-	if !hasHeader {
-		viper.Set("rsh-header", append(headers, tenantIDHeaderPrefix+ctx))
-	}
-
 	queries := viper.GetStringSlice("rsh-query")
-	hasQuery := false
 	for _, q := range queries {
 		if strings.HasPrefix(q, customerContextQueryPrefix) {
-			hasQuery = true
-			break
+			return
 		}
 	}
-	if !hasQuery {
-		viper.Set("rsh-query", append(queries, customerContextQueryPrefix+ctx))
-	}
+
+	viper.Set("rsh-header", append(headers, tenantIDHeaderPrefix+ctx))
+	viper.Set("rsh-query", append(queries, customerContextQueryPrefix+ctx))
 }
 
 func addOutputFlag() {

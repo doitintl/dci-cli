@@ -2007,6 +2007,36 @@ func TestApplyCustomerContext(t *testing.T) {
 			t.Errorf("rsh-query = %v, want %v", got, wantQuery)
 		}
 	})
+
+	// If one transport already carries a context, neither may be filled from
+	// the file/env — a partial fill could send two different tenants.
+	t.Run("pre-existing header leaves query param untouched", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
+		viper.Set("rsh-header", []string{tenantIDHeaderPrefix + "already.set"})
+		dir := t.TempDir()
+		writeContextFile(t, dir, "acme.com")
+
+		applyCustomerContext(dir)
+
+		if got := viper.GetStringSlice("rsh-query"); len(got) != 0 {
+			t.Errorf("rsh-query = %v, want empty", got)
+		}
+	})
+
+	t.Run("pre-existing query param leaves header untouched", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
+		viper.Set("rsh-query", []string{customerContextQueryPrefix + "already.set"})
+		dir := t.TempDir()
+		writeContextFile(t, dir, "acme.com")
+
+		applyCustomerContext(dir)
+
+		if got := viper.GetStringSlice("rsh-header"); len(got) != 0 {
+			t.Errorf("rsh-header = %v, want empty", got)
+		}
+	})
 }
 
 func TestCustomerContextFlagOverride(t *testing.T) {
