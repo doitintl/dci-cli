@@ -1308,20 +1308,24 @@ func readCustomerContext(configDir string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// tenantIDHeaderPrefix is the header (in restish's "name:value" rsh-header
+// format) that carries the customer context to the API.
+const tenantIDHeaderPrefix = "X-Tenant-Id:"
+
 func applyCustomerContext(configDir string) {
 	ctx := readCustomerContext(configDir)
 	if ctx == "" {
 		return
 	}
 
-	existing := viper.GetStringSlice("rsh-query")
-	for _, q := range existing {
-		if strings.HasPrefix(q, "customerContext=") {
+	existing := viper.GetStringSlice("rsh-header")
+	for _, h := range existing {
+		if strings.HasPrefix(h, tenantIDHeaderPrefix) {
 			return
 		}
 	}
 
-	viper.Set("rsh-query", append(existing, "customerContext="+ctx))
+	viper.Set("rsh-header", append(existing, tenantIDHeaderPrefix+ctx))
 }
 
 func addOutputFlag() {
@@ -1381,14 +1385,14 @@ func addOutputFlag() {
 			if val == "" {
 				return fmt.Errorf("--customer-context requires a non-empty domain name")
 			}
-			existing := viper.GetStringSlice("rsh-query")
+			existing := viper.GetStringSlice("rsh-header")
 			filtered := existing[:0]
-			for _, q := range existing {
-				if !strings.HasPrefix(q, "customerContext=") {
-					filtered = append(filtered, q)
+			for _, h := range existing {
+				if !strings.HasPrefix(h, tenantIDHeaderPrefix) {
+					filtered = append(filtered, h)
 				}
 			}
-			viper.Set("rsh-query", append(filtered, "customerContext="+val))
+			viper.Set("rsh-header", append(filtered, tenantIDHeaderPrefix+val))
 			customerContextFlagValue = val
 		}
 
