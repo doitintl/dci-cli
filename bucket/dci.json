@@ -1,12 +1,12 @@
 {
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "DoiT Cloud Intelligence CLI",
   "homepage": "https://github.com/doitintl/dci-cli",
   "license": "SEE REPOSITORY",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/doitintl/dci-cli/releases/download/v1.4.2/dci_1.4.2_windows_amd64.zip",
-      "hash": "c41950bb9249bc6fc96124a4e6151fc753cdd485f7ea60a11ed33c78226400d6"
+      "url": "https://github.com/doitintl/dci-cli/releases/download/v1.5.0/dci_1.5.0_windows_amd64.zip",
+      "hash": "018fbf62765def5d94b543e4469d051713208249f17ea510c0d44a245ed6c885"
     }
   },
   "bin": "dci.exe",
