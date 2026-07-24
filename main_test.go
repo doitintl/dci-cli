@@ -1951,6 +1951,49 @@ func TestApplyDoerContext(t *testing.T) {
 	}
 }
 
+func TestApplyCustomerContext(t *testing.T) {
+	t.Run("adds X-Tenant-Id header preserving existing headers", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
+		viper.Set("rsh-header", []string{"user-agent:test"})
+		dir := t.TempDir()
+		writeContextFile(t, dir, "acme.com")
+
+		applyCustomerContext(dir)
+
+		want := []string{"user-agent:test", "X-Tenant-Id:acme.com"}
+		if got := viper.GetStringSlice("rsh-header"); !reflect.DeepEqual(got, want) {
+			t.Errorf("rsh-header = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("no-op without a context", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
+
+		applyCustomerContext(t.TempDir())
+
+		if got := viper.GetStringSlice("rsh-header"); len(got) != 0 {
+			t.Errorf("rsh-header = %v, want empty", got)
+		}
+	})
+
+	t.Run("does not duplicate an existing X-Tenant-Id header", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
+		viper.Set("rsh-header", []string{"X-Tenant-Id:already.set"})
+		dir := t.TempDir()
+		writeContextFile(t, dir, "acme.com")
+
+		applyCustomerContext(dir)
+
+		want := []string{"X-Tenant-Id:already.set"}
+		if got := viper.GetStringSlice("rsh-header"); !reflect.DeepEqual(got, want) {
+			t.Errorf("rsh-header = %v, want %v", got, want)
+		}
+	})
+}
+
 func TestCustomerContextFlag(t *testing.T) {
 	bin := buildBinary(t)
 
