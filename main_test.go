@@ -1961,6 +1961,8 @@ func TestApplyCustomerContext(t *testing.T) {
 
 		applyCustomerContext(dir)
 
+		// The literal (not tenantIDHeaderPrefix) is deliberate: it pins the
+		// wire header name so the constant can't silently drift.
 		want := []string{"user-agent:test", "X-Tenant-Id:acme.com"}
 		if got := viper.GetStringSlice("rsh-header"); !reflect.DeepEqual(got, want) {
 			t.Errorf("rsh-header = %v, want %v", got, want)
@@ -1981,14 +1983,61 @@ func TestApplyCustomerContext(t *testing.T) {
 	t.Run("does not duplicate an existing X-Tenant-Id header", func(t *testing.T) {
 		t.Cleanup(viper.Reset)
 		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
-		viper.Set("rsh-header", []string{"X-Tenant-Id:already.set"})
+		viper.Set("rsh-header", []string{tenantIDHeaderPrefix + "already.set"})
 		dir := t.TempDir()
 		writeContextFile(t, dir, "acme.com")
 
 		applyCustomerContext(dir)
 
-		want := []string{"X-Tenant-Id:already.set"}
+		want := []string{tenantIDHeaderPrefix + "already.set"}
 		if got := viper.GetStringSlice("rsh-header"); !reflect.DeepEqual(got, want) {
+			t.Errorf("rsh-header = %v, want %v", got, want)
+		}
+	})
+}
+
+func TestCustomerContextFlagOverride(t *testing.T) {
+	// Drives the real --customer-context override in addOutputFlag's
+	// PersistentPreRunE, mirroring TestOutputFlagValidation's setup.
+	run := func(t *testing.T, presetHeaders []string) []string {
+		t.Helper()
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+		t.Cleanup(func() { customerContextFlagValue = "" })
+
+		oldRoot := cli.Root
+		root := &cobra.Command{Use: "dci"}
+		subCmd := &cobra.Command{Use: "dci", RunE: func(*cobra.Command, []string) error { return nil }}
+		root.AddCommand(subCmd)
+		cli.Root = root
+		t.Cleanup(func() { cli.Root = oldRoot })
+		addOutputFlag()
+
+		viper.Set("rsh-header", presetHeaders)
+		root.SetArgs([]string{"dci", "--customer-context", "acme.com"})
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		return viper.GetStringSlice("rsh-header")
+	}
+
+	t.Run("replaces existing tenant header and preserves others", func(t *testing.T) {
+		got := run(t, []string{"user-agent:test", tenantIDHeaderPrefix + "old.example"})
+		want := []string{"user-agent:test", tenantIDHeaderPrefix + "acme.com"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("rsh-header = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("replaces tenant header regardless of name casing", func(t *testing.T) {
+		// Users can inject headers via the hidden -H/--rsh-header flag, and
+		// HTTP header names are case-insensitive — a lowercase variant must
+		// still be replaced, not doubled.
+		got := run(t, []string{"x-tenant-id:evil.example"})
+		want := []string{tenantIDHeaderPrefix + "acme.com"}
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("rsh-header = %v, want %v", got, want)
 		}
 	})
