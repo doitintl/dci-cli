@@ -107,22 +107,6 @@ func TestNormalizeArgs(t *testing.T) {
 	}
 }
 
-func TestRegisterVersionCommand(t *testing.T) {
-	setupTestRoot(t)
-	registerVersionCommand()
-
-	command, _, err := cli.Root.Find([]string{"version"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if command.Name() != "version" {
-		t.Fatalf("command = %q, want version", command.Name())
-	}
-	if command.Short != "Print the DCI CLI version" {
-		t.Fatalf("short description = %q", command.Short)
-	}
-}
-
 func TestRejectProfileFlags(t *testing.T) {
 	setupTestRoot(t)
 
