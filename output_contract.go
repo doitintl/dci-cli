@@ -61,29 +61,106 @@ func commaSeparatedValues(value string) []string {
 func projectResponseValue(value interface{}, fields []string) interface{} {
 	switch item := value.(type) {
 	case []interface{}:
-		result := make([]interface{}, len(item))
-		for index, row := range item {
-			result[index] = projectObject(row, fields)
-		}
-		return result
+		return projectRows(item, fields)
 	case map[string]interface{}:
-		hasList := false
-		result := make(map[string]interface{}, len(item))
-		for key, child := range item {
-			if rows, ok := child.([]interface{}); ok {
-				hasList = true
-				result[key] = projectResponseValue(rows, fields)
-			} else {
-				result[key] = child
-			}
+		if result, ok := projectNestedRows(item, fields); ok {
+			return result
 		}
-		if hasList {
+		if key, rows, ok := listWrapperRows(item); ok {
+			result := copyObject(item)
+			result[key] = projectRows(rows, fields)
 			return result
 		}
 		return projectObject(item, fields)
 	default:
 		return value
 	}
+}
+
+func projectRows(rows []interface{}, fields []string) []interface{} {
+	result := make([]interface{}, len(rows))
+	for index, row := range rows {
+		result[index] = projectObject(row, fields)
+	}
+	return result
+}
+
+func projectNestedRows(root map[string]interface{}, fields []string) (map[string]interface{}, bool) {
+	for _, key := range []string{"result", "results"} {
+		container, ok := root[key].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		rows, ok := container["rows"].([]interface{})
+		if !ok {
+			continue
+		}
+		result := copyObject(root)
+		projectedContainer := copyObject(container)
+		projectedContainer["rows"] = projectSchemaRows(rows, readReportSchemaColumnNames(container["schema"]), fields)
+		result[key] = projectedContainer
+		return result, true
+	}
+	return nil, false
+}
+
+func projectSchemaRows(rows []interface{}, schema []string, fields []string) []interface{} {
+	result := make([]interface{}, len(rows))
+	for index, row := range rows {
+		if cells, ok := row.([]interface{}); ok {
+			object := make(map[string]interface{}, len(cells))
+			for cellIndex, cell := range cells {
+				object[reportColumnName(schema, cellIndex)] = cell
+			}
+			result[index] = projectObject(object, fields)
+			continue
+		}
+		result[index] = projectObject(row, fields)
+	}
+	return result
+}
+
+func listWrapperRows(object map[string]interface{}) (string, []interface{}, bool) {
+	for _, key := range []string{"results", "items"} {
+		if rows, ok := object[key].([]interface{}); ok && isObjectArray(rows) {
+			return key, rows, true
+		}
+	}
+
+	type candidate struct {
+		key  string
+		rows []interface{}
+	}
+	candidates := make([]candidate, 0)
+	for key, value := range object {
+		if rows, ok := value.([]interface{}); ok && isObjectArray(rows) {
+			candidates = append(candidates, candidate{key: key, rows: rows})
+		}
+	}
+	if len(candidates) != 1 {
+		return "", nil, false
+	}
+	if len(object) == 1 || hasListMetadata(object) {
+		return candidates[0].key, candidates[0].rows, true
+	}
+	return "", nil, false
+}
+
+func hasListMetadata(object map[string]interface{}) bool {
+	for _, key := range []string{"count", "total", "totalCount", "pageToken", "nextPageToken", "cursor", "nextCursor", "hasMore"} {
+		if _, ok := object[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func copyObject(object map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{}, len(object))
+	for key, value := range object {
+		result[key] = value
+	}
+	return result
 }
 
 func projectObject(value interface{}, fields []string) interface{} {
