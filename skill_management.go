@@ -161,7 +161,15 @@ func inspectInstalledSkill(targetDir string) (skillDiff, error) {
 }
 
 func (diff skillDiff) HasLocalChanges() bool {
-	return len(diff.Changed) > 0
+	return len(diff.Changed) > 0 || len(diff.Missing) > 0 || len(diff.Extra) > 0
+}
+
+func (diff skillDiff) LocalChangePaths() []string {
+	paths := append([]string{}, diff.Changed...)
+	paths = append(paths, diff.Missing...)
+	paths = append(paths, diff.Extra...)
+	sort.Strings(paths)
+	return paths
 }
 
 func skillAgentByName(name string) (skillAgent, bool) {
@@ -314,7 +322,7 @@ func newSkillUpdateCommand() *cobra.Command {
 					return err
 				}
 				if diff.HasLocalChanges() && !force {
-					return fmt.Errorf("installed %s skill has local edits in %s; inspect them and re-run with --force to overwrite", target.Agent.Name, strings.Join(append(diff.Changed, diff.Extra...), ", "))
+					return fmt.Errorf("installed %s skill has local changes to %s; inspect them and re-run with --force to overwrite", target.Agent.Name, strings.Join(diff.LocalChangePaths(), ", "))
 				}
 				if err := installSkill(target.Path); err != nil {
 					return fmt.Errorf("update %s skill: %w", target.Agent.Name, err)
