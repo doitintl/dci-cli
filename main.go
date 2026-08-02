@@ -316,7 +316,7 @@ func run() (exitCode int) {
 	setupCompletion()
 	os.Args = normalizeArgs(os.Args)
 
-	if err := cli.Run(); err != nil {
+	if err := executeCLI(); err != nil {
 		status := cli.GetLastStatus()
 		code := exitCodeForExecutionError(err, status)
 		if code == exitSuccess && isSilentExecutionError(err) {

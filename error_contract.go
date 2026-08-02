@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -244,4 +245,29 @@ func firstHeaderValue(headers map[string]string, names ...string) string {
 func writeStructuredError(writer io.Writer, detail structuredError) {
 	agentErrorWritten = true
 	_ = json.NewEncoder(writer).Encode(structuredErrorEnvelope{Error: detail})
+}
+
+func executeCLI() error {
+	return executeCLIWith(cli.Run)
+}
+
+func executeCLIWith(run func() error) error {
+	if !agentMode {
+		return run()
+	}
+
+	cli.Root.SilenceErrors = true
+	cli.Root.SilenceUsage = true
+
+	originalStderr := cli.Stderr
+	var capturedStderr bytes.Buffer
+	cli.Stderr = &capturedStderr
+	err := run()
+	cli.Stderr = originalStderr
+
+	if err == nil || agentErrorWritten {
+		_, _ = io.Copy(originalStderr, &capturedStderr)
+	}
+
+	return err
 }

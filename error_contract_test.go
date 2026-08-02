@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"testing"
 
 	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/cobra"
 )
 
 func TestExitCodeForHTTPStatus(t *testing.T) {
@@ -87,5 +90,37 @@ func TestAgentResponseGuardWritesOneStructuredError(t *testing.T) {
 	}
 	if envelope.Error.Code != "PERMISSION_DENIED" || envelope.Error.RequestID != "request-403" {
 		t.Fatalf("unexpected envelope: %+v", envelope)
+	}
+}
+
+func TestExecuteCLISuppressesFrameworkErrorsInAgentMode(t *testing.T) {
+	oldAgentMode := agentMode
+	oldRoot := cli.Root
+	oldStderr := cli.Stderr
+	agentMode = true
+	agentErrorWritten = false
+	cli.Root = &cobra.Command{}
+	var stderr bytes.Buffer
+	cli.Stderr = &stderr
+	t.Cleanup(func() {
+		agentMode = oldAgentMode
+		cli.Root = oldRoot
+		cli.Stderr = oldStderr
+		agentErrorWritten = false
+	})
+
+	wantErr := errors.New("blocked")
+	err := executeCLIWith(func() error {
+		_, _ = io.WriteString(cli.Stderr, "framework noise")
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if !cli.Root.SilenceErrors || !cli.Root.SilenceUsage {
+		t.Fatal("cobra errors and usage remain enabled")
 	}
 }
