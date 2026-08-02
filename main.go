@@ -298,6 +298,7 @@ func run() (exitCode int) {
 	registerAuthCommands(configDir)
 	registerCustomerContextCommands(configDir)
 	registerUpgradeCommand(configDir)
+	registerVersionCommand()
 	registerSkillCommands()
 	// Unhide the customer-context command for DoiT employees so it appears in help.
 	if cachedTokenIsDoer() {
@@ -1130,6 +1131,17 @@ func registerStatusCommands(configDir string) {
 		Short: "Show DoiT CLI configuration and active context",
 		Args:  cobra.NoArgs,
 		RunE:  renderStatus,
+	})
+}
+
+func registerVersionCommand() {
+	cli.Root.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print the DCI CLI version",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintln(os.Stdout, version)
+		},
 	})
 }
 
