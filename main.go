@@ -222,6 +222,7 @@ func run() (exitCode int) {
 	// Reset per-invocation state so repeated calls (e.g. in tests) start clean.
 	customerContextFlagValue = ""
 	nonJSONErrorResponse = false
+	resetDestructiveContractState()
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
 	// output format, stderr routing, and the User-Agent mode token — all key off
@@ -268,6 +269,7 @@ func run() (exitCode int) {
 	cli.Defaults()
 	overrideTableOutput()
 	installResponseGuard()
+	installDestructiveActionSummaryGuard()
 	registerAgentFlags()
 	printFirstRunOnboarding(configured)
 	maybeHintAgentMode()
@@ -298,6 +300,7 @@ func run() (exitCode int) {
 	registerCustomerContextCommands(configDir)
 	registerUpgradeCommand(configDir)
 	registerSkillCommands()
+	registerCommandCatalog()
 	// Unhide the customer-context command for DoiT employees so it appears in help.
 	if cachedTokenIsDoer() {
 		for _, c := range cli.Root.Commands() {
@@ -1373,6 +1376,8 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
 	dciCmd.PersistentFlags().IntP("table-max-col-width", "X", 0, "Maximum width per column when fitting or wrapping (0 = auto)")
 	dciCmd.PersistentFlags().StringP("customer-context", "D", "", "Override the active customer context for this command (e.g. acme.com)")
+	dciCmd.PersistentFlags().Bool("yes", false, "Confirm a destructive operation")
+	dciCmd.PersistentFlags().Bool("dry-run", false, "Preview a destructive operation without executing it")
 
 	// Bind table flags into viper so the renderer can pick them up.
 	prev := dciCmd.PersistentPreRunE
@@ -1410,6 +1415,14 @@ func addOutputFlag() {
 		}
 		bindNonNegativeIntFlag(cmd, "table-width")
 		bindNonNegativeIntFlag(cmd, "table-max-col-width")
+		for flagName, configName := range map[string]string{
+			"yes":     "agent-confirm-destructive",
+			"dry-run": "agent-dry-run",
+		} {
+			if flag := cmd.Flags().Lookup(flagName); flag != nil {
+				viper.Set(configName, flag.Value.String())
+			}
+		}
 
 		// If --customer-context / -D was explicitly passed, override whatever
 		// applyCustomerContext() injected from the file or env var.
@@ -1438,7 +1451,7 @@ func addOutputFlag() {
 			customerContextFlagValue = val
 		}
 
-		return nil
+		return enforceDestructiveConfirmation(cmd, args)
 	}
 }
 
