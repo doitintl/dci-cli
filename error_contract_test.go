@@ -11,6 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type describedAgentError struct{}
+
+func (describedAgentError) Error() string             { return "described failure" }
+func (describedAgentError) AgentErrorCode() string    { return "DESCRIBED_FAILURE" }
+func (describedAgentError) AgentErrorHint() string    { return "review the operation" }
+func (describedAgentError) AgentErrorRetryable() bool { return false }
+
 func TestExitCodeForHTTPStatus(t *testing.T) {
 	tests := []struct {
 		status int
@@ -50,6 +57,16 @@ func TestStructuredErrorForResponse(t *testing.T) {
 	}
 	if detail.Message != "too many requests" {
 		t.Fatalf("message = %q", detail.Message)
+	}
+}
+
+func TestStructuredErrorForExecutionUsesPortableDescriptor(t *testing.T) {
+	detail := structuredErrorForExecution(describedAgentError{}, 0)
+	if detail.Code != "DESCRIBED_FAILURE" || detail.Message != "described failure" {
+		t.Fatalf("unexpected error detail: %+v", detail)
+	}
+	if detail.Hint != "review the operation" || detail.Retryable {
+		t.Fatalf("unexpected descriptor metadata: %+v", detail)
 	}
 }
 

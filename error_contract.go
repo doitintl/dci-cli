@@ -51,6 +51,12 @@ type structuredError struct {
 	RetryAfter string `json:"retry_after,omitempty"`
 }
 
+type agentErrorDescriptor interface {
+	AgentErrorCode() string
+	AgentErrorHint() string
+	AgentErrorRetryable() bool
+}
+
 func exitCodeForHTTPStatus(status int) int {
 	switch status {
 	case 0:
@@ -127,6 +133,15 @@ func structuredErrorForExecution(err error, status int) structuredError {
 	var errorProvider interface{ StructuredError() structuredError }
 	if errors.As(err, &errorProvider) {
 		return errorProvider.StructuredError()
+	}
+	var descriptor agentErrorDescriptor
+	if errors.As(err, &descriptor) {
+		return structuredError{
+			Code:      descriptor.AgentErrorCode(),
+			Message:   err.Error(),
+			Hint:      descriptor.AgentErrorHint(),
+			Retryable: descriptor.AgentErrorRetryable(),
+		}
 	}
 	if status >= 400 {
 		return structuredErrorForStatus(status, err.Error(), nil)
