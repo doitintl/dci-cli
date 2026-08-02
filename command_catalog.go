@@ -26,13 +26,24 @@ type commandCatalog struct {
 }
 
 type commandCatalogEntry struct {
-	Path          []string             `json:"path"`
-	Summary       string               `json:"summary,omitempty"`
-	Flags         []commandCatalogFlag `json:"flags,omitempty"`
-	OutputShape   string               `json:"output_shape"`
-	Destructive   bool                 `json:"destructive"`
-	RequiresAuth  bool                 `json:"requires_auth"`
-	AgentFriendly bool                 `json:"agent_friendly"`
+	Path          []string                 `json:"path"`
+	Summary       string                   `json:"summary,omitempty"`
+	Arguments     []commandCatalogArgument `json:"arguments,omitempty"`
+	Flags         []commandCatalogFlag     `json:"flags,omitempty"`
+	OutputShape   string                   `json:"output_shape"`
+	Destructive   bool                     `json:"destructive"`
+	RequiresAuth  bool                     `json:"requires_auth"`
+	AgentFriendly bool                     `json:"agent_friendly"`
+}
+
+type commandCatalogArgument struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Location    string      `json:"location"`
+	Required    bool        `json:"required"`
+	Description string      `json:"description,omitempty"`
+	Example     interface{} `json:"example,omitempty"`
+	MediaType   string      `json:"media_type,omitempty"`
 }
 
 type commandCatalogFlag struct {
@@ -116,9 +127,10 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 		entries = append(entries, commandCatalogEntry{
 			Path:          []string{operation.Name},
 			Summary:       operation.Short,
+			Arguments:     catalogArgumentsForOperation(operation),
 			Flags:         flags,
 			OutputShape:   "api_response",
-			Destructive:   strings.EqualFold(operation.Method, "DELETE"),
+			Destructive:   isDestructiveOperation(operation),
 			RequiresAuth:  true,
 			AgentFriendly: true,
 		})
@@ -145,6 +157,36 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 			},
 		},
 	}
+}
+
+func catalogArgumentsForOperation(operation cli.Operation) []commandCatalogArgument {
+	arguments := make([]commandCatalogArgument, 0, len(operation.PathParams)+1)
+	for _, parameter := range operation.PathParams {
+		arguments = append(arguments, commandCatalogArgument{
+			Name:        parameter.OptionName(),
+			Type:        parameter.Type,
+			Location:    "path",
+			Required:    true,
+			Description: parameter.Description,
+			Example:     parameter.Example,
+		})
+	}
+	if operation.BodyMediaType != "" {
+		var example interface{}
+		if len(operation.Examples) > 0 {
+			example = operation.Examples[0]
+		}
+		arguments = append(arguments, commandCatalogArgument{
+			Name:        "body",
+			Type:        "request_body",
+			Location:    "body",
+			Required:    true,
+			Description: "Request body as shorthand arguments or stdin",
+			Example:     example,
+			MediaType:   operation.BodyMediaType,
+		})
+	}
+	return arguments
 }
 
 func localCatalogEntries(command *cobra.Command, parent []string) []commandCatalogEntry {

@@ -6,11 +6,13 @@ import (
 	"os"
 	"testing"
 
+	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 func TestDestructiveConfirmation(t *testing.T) {
+	setDestructiveOperations([]cli.Operation{{Name: "delete-budget", Method: "DELETE"}})
 	command := &cobra.Command{Use: "delete-budget"}
 
 	t.Run("fails closed", func(t *testing.T) {
@@ -76,7 +78,14 @@ func TestDestructiveConfirmationErrorMetadata(t *testing.T) {
 }
 
 func TestDestructiveCommandClassification(t *testing.T) {
-	for _, name := range []string{"delete-budget", "archive-contract-template", "id-of-ticket-tags-remove"} {
+	setDestructiveOperations([]cli.Operation{
+		{Name: "delete-budget", Method: "DELETE"},
+		{Name: "archive-contract-template", Method: "DELETE"},
+		{Name: "id-of-ticket-tags-remove", Method: "DELETE"},
+		{Name: "delete-datahub-events-by-filter", Method: "POST"},
+		{Name: "list-budgets", Method: "GET"},
+	})
+	for _, name := range []string{"delete-budget", "archive-contract-template", "id-of-ticket-tags-remove", "delete-datahub-events-by-filter"} {
 		if !isDestructiveCommand(&cobra.Command{Use: name}) {
 			t.Errorf("%s was not classified as destructive", name)
 		}

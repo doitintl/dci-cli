@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,10 +12,22 @@ import (
 	"github.com/spf13/viper"
 )
 
-var destructiveActionName string
+var (
+	destructiveActionName string
+	destructiveCommandSet = map[string]bool{}
+)
+
+var explicitlyDestructiveOperations = map[string]bool{
+	"accept-budget-suggestion":        true,
+	"cancel-contract":                 true,
+	"cancel-invite":                   true,
+	"delete-datahub-events-by-filter": true,
+	"dismiss-budget-suggestion":       true,
+}
 
 func resetDestructiveContractState() {
 	destructiveActionName = ""
+	destructiveCommandSet = map[string]bool{}
 }
 
 type destructiveConfirmationError struct {
@@ -77,17 +90,44 @@ func installDestructiveActionSummaryGuard() {
 	}
 }
 
-func isDestructiveCommand(command *cobra.Command) bool {
-	name := command.Name()
-	for _, prefix := range []string{"archive-", "delete-", "remove-", "revoke-", "purge-"} {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
+func isDestructiveOperation(operation cli.Operation) bool {
+	return strings.EqualFold(operation.Method, "DELETE") || explicitlyDestructiveOperations[operation.Name]
+}
+
+func setDestructiveOperations(operations []cli.Operation) {
+	destructiveCommandSet = make(map[string]bool, len(operations))
+	for _, operation := range operations {
+		destructiveCommandSet[operation.Name] = isDestructiveOperation(operation)
 	}
-	return strings.HasSuffix(name, "-remove")
+}
+
+func ensureDestructiveOperations() error {
+	if len(destructiveCommandSet) > 0 {
+		return nil
+	}
+	base, err := apiBase()
+	if err != nil {
+		return err
+	}
+	api, err := cli.Load(base, &cobra.Command{})
+	if err != nil {
+		return err
+	}
+	if len(api.Operations) == 0 {
+		return errors.New("DCI operation metadata is unavailable")
+	}
+	setDestructiveOperations(api.Operations)
+	return nil
+}
+
+func isDestructiveCommand(command *cobra.Command) bool {
+	return destructiveCommandSet[command.Name()]
 }
 
 func enforceDestructiveConfirmation(command *cobra.Command, args []string) error {
+	if err := ensureDestructiveOperations(); err != nil {
+		return fmt.Errorf("load destructive operation metadata: %w", err)
+	}
 	if !isDestructiveCommand(command) {
 		return nil
 	}
