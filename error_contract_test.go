@@ -9,6 +9,7 @@ import (
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 type describedAgentError struct{}
@@ -67,6 +68,38 @@ func TestStructuredErrorForExecutionUsesPortableDescriptor(t *testing.T) {
 	}
 	if detail.Hint != "review the operation" || detail.Retryable {
 		t.Fatalf("unexpected descriptor metadata: %+v", detail)
+	}
+}
+
+func TestUnknownShorthandFlagIsUsageError(t *testing.T) {
+	err := errors.New("unknown shorthand flag: 'z' in -z")
+	if got := exitCodeForExecutionError(err, 0); got != exitUsage {
+		t.Fatalf("exit code = %d, want %d", got, exitUsage)
+	}
+	if detail := structuredErrorForExecution(err, 0); detail.Code != "USAGE_ERROR" {
+		t.Fatalf("error code = %q, want USAGE_ERROR", detail.Code)
+	}
+}
+
+func TestAcceptedDoerLoginClearsValidationFailure(t *testing.T) {
+	responseExitCode = exitAuthorization
+	agentErrorWritten = true
+	viper.Set("rsh-ignore-status-code", false)
+	t.Cleanup(func() {
+		resetErrorContractState()
+		viper.Set("rsh-ignore-status-code", false)
+	})
+
+	acceptDoerLoginValidation()
+
+	if responseExitCode != exitSuccess {
+		t.Fatalf("response exit code = %d, want %d", responseExitCode, exitSuccess)
+	}
+	if agentErrorWritten {
+		t.Fatal("agent error remains marked as written")
+	}
+	if got := exitCodeForProcessStatus(403); got != exitSuccess {
+		t.Fatalf("process exit code = %d, want %d", got, exitSuccess)
 	}
 }
 

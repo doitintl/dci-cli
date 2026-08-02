@@ -256,8 +256,7 @@ func run() (exitCode int) {
 	configDir := dciConfigDir()
 	configured, err := ensureConfig(configDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize config: %v\n", err)
-		return 1
+		return reportExecutionError(fmt.Errorf("failed to initialize config: %w", err), 0, configDir)
 	}
 
 	// Kick off the update check now so it runs in parallel with the command;
@@ -277,8 +276,7 @@ func run() (exitCode int) {
 	cli.AddAuth("oauth-authorization-code", &oauth.AuthorizationCodeHandler{})
 
 	if err := rejectProfileFlags(os.Args); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
+		return reportExecutionError(err, 0, configDir)
 	}
 	// Keep profile fixed until we support multi-profile UX.
 	os.Setenv("RSH_PROFILE", "default")
@@ -317,22 +315,9 @@ func run() (exitCode int) {
 	os.Args = normalizeArgs(os.Args)
 
 	if err := executeCLI(); err != nil {
-		status := cli.GetLastStatus()
-		code := exitCodeForExecutionError(err, status)
-		if code == exitSuccess && isSilentExecutionError(err) {
-			return exitSuccess
-		}
-		if agentMode {
-			if !agentErrorWritten {
-				writeStructuredError(os.Stderr, structuredErrorForExecution(err, status))
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-		}
-		maybeHintDoerContext(code, status, configDir)
-		return code
+		return reportExecutionError(err, cli.GetLastStatus(), configDir)
 	}
-	code := exitCodeForHTTPStatus(cli.GetLastStatus())
+	code := exitCodeForProcessStatus(cli.GetLastStatus())
 	if responseExitCode != 0 {
 		code = responseExitCode
 	}
@@ -344,6 +329,29 @@ func run() (exitCode int) {
 	return code
 }
 
+func reportExecutionError(err error, status int, configDir string) int {
+	code := exitCodeForExecutionError(err, status)
+	if code == exitSuccess && isSilentExecutionError(err) {
+		return exitSuccess
+	}
+	if agentMode {
+		if !agentErrorWritten {
+			writeStructuredError(os.Stderr, structuredErrorForExecution(err, status))
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+	}
+	maybeHintDoerContext(code, status, configDir)
+	return code
+}
+
+func exitCodeForProcessStatus(status int) int {
+	if viper.GetBool("rsh-ignore-status-code") {
+		return exitSuccess
+	}
+	return exitCodeForHTTPStatus(status)
+}
+
 func rejectProfileFlags(args []string) error {
 	flags := cli.Root.PersistentFlags()
 
@@ -353,7 +361,7 @@ func rejectProfileFlags(args []string) error {
 			return nil
 		}
 		if arg == "--profile" || arg == "--rsh-profile" || strings.HasPrefix(arg, "--profile=") || strings.HasPrefix(arg, "--rsh-profile=") {
-			return fmt.Errorf("profile selection is currently disabled")
+			return fmt.Errorf("invalid argument: profile selection is currently disabled")
 		}
 		if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") || arg == "-" {
 			continue
@@ -1265,9 +1273,8 @@ func registerAuthCommands(configDir string) {
 			// token exchange succeeds (token is cached) even when validate returns 403,
 			// so we can inspect the token here and fix the chicken-and-egg problem.
 			if applyDoerContext(configDir) {
-				err = nil // the 403 was due to missing context; auth itself succeeded
-				// Reset the HTTP status so GetExitCode() returns 0 for this process.
-				viper.Set("rsh-ignore-status-code", true)
+				err = nil
+				acceptDoerLoginValidation()
 			}
 
 			if err != nil {
@@ -1300,6 +1307,12 @@ func registerAuthCommands(configDir string) {
 			return nil
 		},
 	})
+}
+
+func acceptDoerLoginValidation() {
+	responseExitCode = 0
+	agentErrorWritten = false
+	viper.Set("rsh-ignore-status-code", true)
 }
 
 // customerContextPath returns the path to the custom file that stores the

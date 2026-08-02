@@ -115,6 +115,7 @@ func isUsageError(err error) bool {
 	for _, fragment := range []string{
 		"unknown command",
 		"unknown flag",
+		"unknown shorthand flag",
 		"invalid argument",
 		"invalid --output",
 		"required flag",
