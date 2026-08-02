@@ -60,6 +60,29 @@ func TestInspectInstalledSkillDetectsLocalChanges(t *testing.T) {
 	}
 }
 
+func TestInspectInstalledSkillTreatsMissingFileAsLocalChange(t *testing.T) {
+	target := t.TempDir()
+	if err := installSkill(target); err != nil {
+		t.Fatal(err)
+	}
+
+	missingPath := filepath.Join(target, "skills", "dci-cli", "SKILL.md")
+	if err := os.Remove(missingPath); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := inspectInstalledSkill(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diff.HasLocalChanges() {
+		t.Fatal("missing embedded file was not treated as a local change")
+	}
+	if !containsString(diff.Missing, "SKILL.md") || !containsString(diff.LocalChangePaths(), "SKILL.md") {
+		t.Fatalf("unexpected diff: %+v", diff)
+	}
+}
+
 func TestSkillUpdateTargetsSupportsCustomDirectory(t *testing.T) {
 	target := t.TempDir()
 	if err := installSkill(target); err != nil {
