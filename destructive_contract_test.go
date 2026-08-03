@@ -143,3 +143,25 @@ func TestDestructiveCommandClassification(t *testing.T) {
 		t.Fatal("read-only command was classified as destructive")
 	}
 }
+
+func TestDestructiveActionSummaryDoesNotMaskApplicationErrors(t *testing.T) {
+	destructiveActionName = "delete-budget"
+	t.Cleanup(func() { destructiveActionName = "" })
+
+	next := &recordingFormatter{}
+	guard := destructiveActionSummaryGuard{next: next}
+	err := guard.Format(cli.Response{
+		Status: 200,
+		Body:   map[string]interface{}{"error": "deletion failed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.called {
+		t.Fatal("formatter was not called")
+	}
+	body, ok := next.got.Body.(map[string]interface{})
+	if !ok || body["error"] != "deletion failed" {
+		t.Fatalf("response body = %#v", next.got.Body)
+	}
+}
