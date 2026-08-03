@@ -187,7 +187,7 @@ dci skill update codex
 dci skill update   # updates every detected installation
 ```
 
-Updates preserve locally edited managed files unless `--force` is passed. Unmanaged files in the skill directory are left in place and do not block an update.
+Installs and updates preserve locally edited managed files unless `--force` is passed. Forced overwrites save each edited file as `<file>.bak` first. Unmanaged files in the skill directory are left in place and do not block an update.
 
 Run `dci skill --help` for the full list of supported agents.
 

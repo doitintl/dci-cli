@@ -147,6 +147,55 @@ func TestInspectInstalledSkillDoesNotBlockOnExtraFiles(t *testing.T) {
 	}
 }
 
+func TestInstallSkillSafelyProtectsAndBacksUpLocalEdits(t *testing.T) {
+	target := t.TempDir()
+	if err := installSkill(target); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(target, "skills", "dci-cli", "SKILL.md")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := append(append([]byte{}, original...), []byte("\nLOCAL EDIT\n")...)
+	if err := os.WriteFile(path, edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := installSkillSafely(target, false); err == nil {
+		t.Fatal("expected local-edit protection")
+	}
+	protected, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(protected), "LOCAL EDIT") {
+		t.Fatal("local edit was overwritten without force")
+	}
+
+	backups, err := installSkillSafely(target, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 1 || backups[0] != path+".bak" {
+		t.Fatalf("backups = %v", backups)
+	}
+	backup, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(backup), "LOCAL EDIT") {
+		t.Fatal("backup does not contain the local edit")
+	}
+	installed, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(installed), "LOCAL EDIT") {
+		t.Fatal("forced update did not restore the embedded file")
+	}
+}
+
 func TestSkillUpdateTargetsSupportsCustomDirectory(t *testing.T) {
 	target := t.TempDir()
 	if err := installSkill(target); err != nil {
