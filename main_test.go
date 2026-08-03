@@ -680,6 +680,21 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		}
 	})
 
+	t.Run("agent profile rejection is structured", func(t *testing.T) {
+		res := runCLIWithEnv(t, bin, t.TempDir(), []string{"DCI_AGENT_MODE=1"}, "--profile", "other", "status")
+		assertStructuredCLIError(t, res, exitUsage, "USAGE_ERROR")
+	})
+
+	t.Run("agent config rejection is structured", func(t *testing.T) {
+		res := runCLIWithEnv(t, bin, t.TempDir(), []string{"DCI_AGENT_MODE=1", "DCI_API_BASE_URL=http://example.com"}, "status")
+		assertStructuredCLIError(t, res, exitGenericFailure, "CLI_ERROR")
+	})
+
+	t.Run("agent shorthand flag rejection is usage error", func(t *testing.T) {
+		res := runCLIWithEnv(t, bin, t.TempDir(), []string{"DCI_AGENT_MODE=1"}, "-z")
+		assertStructuredCLIError(t, res, exitUsage, "USAGE_ERROR")
+	})
+
 	t.Run("completion help stays offline", func(t *testing.T) {
 		res := runCLI(t, bin, "completion", "--help")
 		if res.timedOut {
@@ -818,6 +833,20 @@ func assertNoOAuthOrPanic(t *testing.T, out string) {
 	}
 	if strings.Contains(strings.ToLower(out), "panic") {
 		t.Fatalf("unexpected panic output:\n%s", out)
+	}
+}
+
+func assertStructuredCLIError(t *testing.T, result cliResult, expectedExit int, expectedCode string) {
+	t.Helper()
+	if result.exitCode != expectedExit {
+		t.Fatalf("exit code = %d, want %d; output:\n%s", result.exitCode, expectedExit, result.output)
+	}
+	var envelope structuredErrorEnvelope
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.output)), &envelope); err != nil {
+		t.Fatalf("output is not one JSON envelope: %v\n%s", err, result.output)
+	}
+	if envelope.Error.Code != expectedCode {
+		t.Fatalf("error code = %q, want %q", envelope.Error.Code, expectedCode)
 	}
 }
 

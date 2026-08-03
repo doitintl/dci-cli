@@ -11,6 +11,8 @@ Use `dci` as the primary interface for DoiT Cloud Intelligence CLI tasks. Prefer
 
 Set `DCI_AGENT_MODE=1` (or pass `--agent`) to run in agent mode: output defaults to compact TOON, terminal decoration is disabled, and banners/hints are routed to stderr so stdout stays parseable. `dci` also auto-detects common agent environments, so this is usually already on — run `dci status` to confirm.
 
+In explicit agent mode, failures are written to stderr as a JSON `error` envelope with a stable `code`, `message`, and `retryable` value. Inspect optional `hint`, `http_status`, `request_id`, and `retry_after` fields before deciding whether to correct the request or retry it.
+
 TOON list output folds rows into a compact table, and columns whose values are nested objects (e.g. `labels` on reports, `alertThresholds` on budgets) are omitted by default. To include one, request it explicitly: `-C id,labels` selects exactly those columns, or a custom `-f` filter keeps every field it projects. Explicitly requested object values arrive as compact JSON strings inside the cell. For the complete nested structure, use the item's `get-*` command or `--output json`.
 
 ## Quick Start
