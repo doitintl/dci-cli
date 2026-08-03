@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -14,7 +14,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const embeddedSkillRoot = "skills/dci-cli"
+const (
+	embeddedSkillRoot = "skills/dci-cli"
+	skillManifestName = ".dci-skill-manifest.json"
+)
 
 type skillAgent struct {
 	Name        string
@@ -41,9 +44,15 @@ type skillDiff struct {
 	Extra   []string
 }
 
+type skillManifest struct {
+	Version int               `json:"version"`
+	Files   map[string]string `json:"files"`
+}
+
 func installSkill(targetDir string) error {
 	destinationRoot := filepath.Join(targetDir, "skills", "dci-cli")
-	return fs.WalkDir(skillFS, embeddedSkillRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+	manifest := skillManifest{Version: 1, Files: map[string]string{}}
+	err := fs.WalkDir(skillFS, embeddedSkillRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -59,8 +68,44 @@ func installSkill(targetDir string) error {
 		if err != nil {
 			return err
 		}
+		manifest.Files[filepath.ToSlash(relativePath)] = skillFileDigest(data)
 		return os.WriteFile(destination, data, 0o644)
 	})
+	if err != nil {
+		return err
+	}
+	return writeSkillManifest(destinationRoot, manifest)
+}
+
+func skillFileDigest(data []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+func writeSkillManifest(root string, manifest skillManifest) error {
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(filepath.Join(root, skillManifestName), data, 0o644)
+}
+
+func readSkillManifest(root string) (skillManifest, bool, error) {
+	data, err := os.ReadFile(filepath.Join(root, skillManifestName))
+	if os.IsNotExist(err) {
+		return skillManifest{}, false, nil
+	}
+	if err != nil {
+		return skillManifest{}, false, err
+	}
+	var manifest skillManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return skillManifest{}, false, err
+	}
+	if manifest.Version != 1 || manifest.Files == nil {
+		return skillManifest{}, false, fmt.Errorf("unsupported skill manifest version %d", manifest.Version)
+	}
+	return manifest, true, nil
 }
 
 func embeddedSkillFiles() ([]skillFileInfo, error) {
@@ -109,15 +154,27 @@ func inspectInstalledSkill(targetDir string) (skillDiff, error) {
 		if err != nil {
 			return err
 		}
-		embedded[filepath.Clean(relativePath)] = data
+		embedded[filepath.ToSlash(filepath.Clean(relativePath))] = data
 		return nil
 	})
 	if err != nil {
 		return skillDiff{}, err
 	}
 
+	manifest, hasManifest, err := readSkillManifest(root)
+	if err != nil {
+		return skillDiff{}, err
+	}
+	baseline := manifest.Files
+	if !hasManifest {
+		baseline = make(map[string]string, len(embedded))
+		for relativePath, data := range embedded {
+			baseline[relativePath] = skillFileDigest(data)
+		}
+	}
+
 	result := skillDiff{}
-	for relativePath, expected := range embedded {
+	for relativePath, expectedDigest := range baseline {
 		actual, readErr := os.ReadFile(filepath.Join(root, relativePath))
 		if os.IsNotExist(readErr) {
 			result.Missing = append(result.Missing, filepath.ToSlash(relativePath))
@@ -126,7 +183,7 @@ func inspectInstalledSkill(targetDir string) (skillDiff, error) {
 		if readErr != nil {
 			return skillDiff{}, readErr
 		}
-		if !bytes.Equal(actual, expected) {
+		if skillFileDigest(actual) != expectedDigest {
 			result.Changed = append(result.Changed, filepath.ToSlash(relativePath))
 		}
 	}
@@ -143,8 +200,11 @@ func inspectInstalledSkill(targetDir string) (skillDiff, error) {
 			if err != nil {
 				return err
 			}
-			relativePath = filepath.Clean(relativePath)
-			if _, exists := embedded[relativePath]; !exists {
+			relativePath = filepath.ToSlash(filepath.Clean(relativePath))
+			if relativePath == skillManifestName {
+				return nil
+			}
+			if _, exists := baseline[relativePath]; !exists {
 				result.Extra = append(result.Extra, filepath.ToSlash(relativePath))
 			}
 			return nil
@@ -161,13 +221,12 @@ func inspectInstalledSkill(targetDir string) (skillDiff, error) {
 }
 
 func (diff skillDiff) HasLocalChanges() bool {
-	return len(diff.Changed) > 0 || len(diff.Missing) > 0 || len(diff.Extra) > 0
+	return len(diff.Changed) > 0 || len(diff.Missing) > 0
 }
 
 func (diff skillDiff) LocalChangePaths() []string {
 	paths := append([]string{}, diff.Changed...)
 	paths = append(paths, diff.Missing...)
-	paths = append(paths, diff.Extra...)
 	sort.Strings(paths)
 	return paths
 }

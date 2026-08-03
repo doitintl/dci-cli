@@ -1910,8 +1910,9 @@ func TestInstallSkillFileCount(t *testing.T) {
 		t.Fatalf("walking installed dir: %v", err)
 	}
 
-	if len(installedFiles) != len(expectedSkillFiles) {
-		t.Errorf("expected %d files, got %d: %v", len(expectedSkillFiles), len(installedFiles), installedFiles)
+	wantFileCount := len(expectedSkillFiles) + 1
+	if len(installedFiles) != wantFileCount {
+		t.Errorf("expected %d files, got %d: %v", wantFileCount, len(installedFiles), installedFiles)
 	}
 }
 

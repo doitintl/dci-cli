@@ -179,6 +179,16 @@ dci skill kiro     # installs to ~/.kiro/skills/dci-cli/
 dci skill gemini   # installs to ~/.gemini/skills/dci-cli/
 ```
 
+Inspect or refresh installed skill files with:
+
+```bash
+dci skill list
+dci skill update codex
+dci skill update   # updates every detected installation
+```
+
+Updates preserve locally edited managed files unless `--force` is passed. Unmanaged files in the skill directory are left in place and do not block an update.
+
 Run `dci skill --help` for the full list of supported agents.
 
 Alternatively, for Codex you can use the `skill-installer` helper:
