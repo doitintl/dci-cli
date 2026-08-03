@@ -1530,7 +1530,7 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 	if agentErrorContractEnabled() && resp.Status >= 400 {
 		responseExitCode = exitCodeForHTTPStatus(resp.Status)
 		writeStructuredError(cli.Stderr, structuredErrorForResponse(resp))
-		return nil
+		return g.next.Format(resp)
 	}
 	return g.next.Format(resp)
 }
