@@ -15,6 +15,8 @@ In explicit agent mode, failures are written to stderr as a JSON `error` envelop
 
 TOON list output folds rows into a compact table, and columns whose values are nested objects (e.g. `labels` on reports, `alertThresholds` on budgets) are omitted by default. To include one, request it explicitly: `-C id,labels` selects exactly those columns, or a custom `-f` filter keeps every field it projects. Explicitly requested object values arrive as compact JSON strings inside the cell. For the complete nested structure, use the item's `get-*` command or `--output json`.
 
+Use `--fields id,name` to project list or detail responses before output, and use `--exclude description` to remove fields. Agent mode truncates individual long strings by default; pass `--full` or `--no-truncate` only when the complete value is necessary.
+
 ## Quick Start
 
 1. Confirm the CLI exists and is runnable: `dci --version`

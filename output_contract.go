@@ -147,7 +147,7 @@ func listWrapperRows(object map[string]interface{}) (string, []interface{}, bool
 }
 
 func hasListMetadata(object map[string]interface{}) bool {
-	for _, key := range []string{"count", "total", "totalCount", "pageToken", "nextPageToken", "cursor", "nextCursor", "hasMore"} {
+	for _, key := range []string{"count", "rowCount", "total", "totalCount", "pageToken", "nextPageToken", "cursor", "nextCursor", "hasMore"} {
 		if _, ok := object[key]; ok {
 			return true
 		}

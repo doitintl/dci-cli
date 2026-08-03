@@ -88,6 +88,35 @@ func TestShapeResponseBodyProjectsDetailWithArrayFields(t *testing.T) {
 	}
 }
 
+func TestShapeResponseBodyProjectsRowCountListWrappers(t *testing.T) {
+	viper.Set("agent-fields", "id")
+	t.Cleanup(viper.Reset)
+
+	for _, resource := range []string{"budgets", "folders", "labels", "annotations", "anomalies"} {
+		t.Run(resource, func(t *testing.T) {
+			input := map[string]interface{}{
+				resource: []interface{}{
+					map[string]interface{}{"id": resource + "-1", "name": "Production"},
+				},
+				"rowCount": 1,
+			}
+
+			shaped := shapeResponseBody(input).(map[string]interface{})
+			if shaped["rowCount"] != 1 {
+				t.Fatalf("rowCount = %v", shaped["rowCount"])
+			}
+			rows, ok := shaped[resource].([]interface{})
+			if !ok || len(rows) != 1 {
+				t.Fatalf("%s = %#v", resource, shaped[resource])
+			}
+			want := map[string]interface{}{"id": resource + "-1"}
+			if !reflect.DeepEqual(rows[0], want) {
+				t.Fatalf("projected row = %#v, want %#v", rows[0], want)
+			}
+		})
+	}
+}
+
 func TestShapeResponseBodyProjectsNestedQueryRows(t *testing.T) {
 	viper.Set("agent-fields", "service")
 	t.Cleanup(viper.Reset)
