@@ -32,6 +32,14 @@ func TestDestructiveConfirmation(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts environment confirmation", func(t *testing.T) {
+		viper.Reset()
+		t.Setenv("DCI_CONFIRM_DESTRUCTIVE", "1")
+		if err := enforceDestructiveConfirmation(command, []string{"budget-1"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("dry run does not execute", func(t *testing.T) {
 		viper.Reset()
 		viper.Set("agent-dry-run", true)
@@ -123,7 +131,13 @@ func TestDestructiveCommandClassification(t *testing.T) {
 		{Name: "delete-datahub-events-by-filter", Method: "POST"},
 		{Name: "trigger-cloudflow-webhook", Method: "POST"},
 		{Name: "assign-objects-to-label", Method: "POST"},
+		{Name: "activate-contract", Method: "POST"},
+		{Name: "set-active-theme", Method: "PUT"},
 		{Name: "update-user", Method: "PATCH"},
+		{Name: "update-aws-feature", Method: "PUT"},
+		{Name: "update-contract", Method: "PATCH"},
+		{Name: "update-contract-template", Method: "PATCH"},
+		{Name: "update-resource-permission", Method: "PUT"},
 		{Name: "list-budgets", Method: "GET"},
 	})
 	for _, name := range []string{
@@ -133,7 +147,13 @@ func TestDestructiveCommandClassification(t *testing.T) {
 		"delete-datahub-events-by-filter",
 		"trigger-cloudflow-webhook",
 		"assign-objects-to-label",
+		"activate-contract",
+		"set-active-theme",
 		"update-user",
+		"update-aws-feature",
+		"update-contract",
+		"update-contract-template",
+		"update-resource-permission",
 	} {
 		if !isDestructiveCommand(&cobra.Command{Use: name}) {
 			t.Errorf("%s was not classified as destructive", name)
