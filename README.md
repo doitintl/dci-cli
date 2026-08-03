@@ -55,6 +55,9 @@ dci --help
 
 # Get help for a specific command
 dci list-budgets --help
+
+# Get the machine-readable command catalog
+dci commands --json
 ```
 
 ## Output Formats
@@ -118,6 +121,8 @@ dci --no-agent list-budgets | less -S
 ```
 
 Run `dci status` to see whether agent mode is active and why.
+
+Pass `--dry-run` to preview any API command without sending its request. Commands classified as destructive require `--yes` or `DCI_CONFIRM_DESTRUCTIVE=1` before execution.
 
 ## Updating
 
