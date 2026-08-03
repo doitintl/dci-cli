@@ -28,10 +28,17 @@ func TestBuildCommandCatalog(t *testing.T) {
 		},
 		{Name: "create-budget", Short: "Create a budget", Method: "POST", BodyMediaType: "application/json"},
 		{Name: "delete-datahub-events-by-filter", Method: "POST", BodyMediaType: "application/json"},
+		{
+			Name:   "cancel-invite",
+			Method: "POST",
+			QueryParams: []*cli.Param{
+				{Name: "dryRun", Type: "boolean", Description: "Use the API simulation"},
+			},
+		},
 		{Name: "list-budgets", Short: "List budgets", Method: "GET"},
 	}}
 	catalog := buildCommandCatalog(api)
-	if catalog.Version != catalogSchemaVersion || len(catalog.Commands) != 5 {
+	if catalog.Version != catalogSchemaVersion || len(catalog.Commands) != 6 {
 		t.Fatalf("unexpected catalog: %+v", catalog)
 	}
 	var deleteEntry commandCatalogEntry
@@ -64,6 +71,25 @@ func TestBuildCommandCatalog(t *testing.T) {
 	}
 	if len(createEntry.Arguments) != 1 || createEntry.Arguments[0].Location != "body" || createEntry.Arguments[0].MediaType != "application/json" {
 		t.Fatalf("create arguments = %+v", createEntry.Arguments)
+	}
+
+	var cancelInviteEntry commandCatalogEntry
+	for _, entry := range catalog.Commands {
+		if strings.Join(entry.Path, " ") == "cancel-invite" {
+			cancelInviteEntry = entry
+		}
+	}
+	dryRunFlags := 0
+	for _, flag := range cancelInviteEntry.Flags {
+		if flag.Name == "--dry-run" {
+			dryRunFlags++
+			if flag.Description != "Use the API simulation" {
+				t.Fatalf("dry-run description = %q", flag.Description)
+			}
+		}
+	}
+	if dryRunFlags != 1 {
+		t.Fatalf("dry-run flags = %d", dryRunFlags)
 	}
 }
 

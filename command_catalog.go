@@ -122,7 +122,7 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 				Example:     parameter.Example,
 			})
 		}
-		flags = append(flags, agentContractCatalogFlags()...)
+		flags = appendUniqueCatalogFlags(flags, agentContractCatalogFlags())
 		sort.Slice(flags, func(i, j int) bool { return flags[i].Name < flags[j].Name })
 		entries = append(entries, commandCatalogEntry{
 			Path:          []string{operation.Name},
@@ -157,6 +157,21 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 			},
 		},
 	}
+}
+
+func appendUniqueCatalogFlags(existing []commandCatalogFlag, additional []commandCatalogFlag) []commandCatalogFlag {
+	seen := make(map[string]bool, len(existing)+len(additional))
+	for _, flag := range existing {
+		seen[flag.Name] = true
+	}
+	for _, flag := range additional {
+		if seen[flag.Name] {
+			continue
+		}
+		seen[flag.Name] = true
+		existing = append(existing, flag)
+	}
+	return existing
 }
 
 func catalogArgumentsForOperation(operation cli.Operation) []commandCatalogArgument {

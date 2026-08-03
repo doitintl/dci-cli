@@ -140,6 +140,9 @@ func isDestructiveCommand(command *cobra.Command) bool {
 
 func enforceDestructiveConfirmation(command *cobra.Command, args []string) error {
 	if viper.GetBool("agent-dry-run") {
+		if command.LocalNonPersistentFlags().Lookup("dry-run") != nil {
+			return nil
+		}
 		result := dryRunResult{DryRun: true, Command: command.Name(), Arguments: args}
 		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 			return err

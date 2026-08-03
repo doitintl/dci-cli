@@ -113,6 +113,32 @@ func TestDryRunNeverExecutesNonDestructiveCommand(t *testing.T) {
 	}
 }
 
+func TestDryRunDefersToOperationOwnedFlag(t *testing.T) {
+	setDestructiveOperations([]cli.Operation{{Name: "cancel-invite", Method: "POST"}})
+	viper.Reset()
+	viper.Set("agent-dry-run", true)
+	t.Cleanup(viper.Reset)
+
+	executed := false
+	command := &cobra.Command{
+		Use: "cancel-invite",
+		RunE: func(command *cobra.Command, args []string) error {
+			executed = true
+			return nil
+		},
+	}
+	command.Flags().Bool("dry-run", false, "Use the API simulation")
+	if err := enforceDestructiveConfirmation(command, []string{"invite-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.RunE(command, []string{"invite-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if !executed {
+		t.Fatal("operation-owned dry run was replaced by the local preview")
+	}
+}
+
 func TestDestructiveConfirmationErrorMetadata(t *testing.T) {
 	err := destructiveConfirmationError{Command: "delete-budget"}
 	if err.ExitCode() != 30 || err.AgentErrorCode() != "DESTRUCTIVE_REQUIRES_CONFIRMATION" {
