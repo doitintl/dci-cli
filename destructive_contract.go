@@ -19,12 +19,18 @@ var (
 
 var explicitlyDestructiveOperations = map[string]bool{
 	"accept-budget-suggestion":        true,
+	"activate-contract":               true,
 	"assign-objects-to-label":         true,
 	"cancel-contract":                 true,
 	"cancel-invite":                   true,
 	"delete-datahub-events-by-filter": true,
 	"dismiss-budget-suggestion":       true,
+	"set-active-theme":                true,
 	"trigger-cloudflow-webhook":       true,
+	"update-aws-feature":              true,
+	"update-contract":                 true,
+	"update-contract-template":        true,
+	"update-resource-permission":      true,
 	"update-user":                     true,
 }
 
