@@ -1090,7 +1090,7 @@ func registerVersionCommand() {
 		Short: "Print the DCI CLI version",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Fprintln(os.Stdout, version)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s version %s\n", cmd.Root().Name(), version)
 		},
 	})
 }
