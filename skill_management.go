@@ -77,6 +77,47 @@ func installSkill(targetDir string) error {
 	return writeSkillManifest(destinationRoot, manifest)
 }
 
+func installSkillSafely(targetDir string, force bool) ([]string, error) {
+	root := filepath.Join(targetDir, "skills", "dci-cli")
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return nil, installSkill(targetDir)
+	} else if err != nil {
+		return nil, err
+	}
+	diff, err := inspectInstalledSkill(targetDir)
+	if err != nil {
+		return nil, err
+	}
+	if diff.HasLocalChanges() && !force {
+		return nil, fmt.Errorf("installed skill has local changes to %s; inspect them and re-run with --force to overwrite", strings.Join(diff.LocalChangePaths(), ", "))
+	}
+	backups := make([]string, 0, len(diff.Changed))
+	if force {
+		for _, relativePath := range diff.Changed {
+			path := filepath.Join(root, relativePath)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			backupPath := path + ".bak"
+			if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+				return nil, err
+			}
+			backups = append(backups, backupPath)
+		}
+	}
+	if err := installSkill(targetDir); err != nil {
+		return nil, err
+	}
+	return backups, nil
+}
+
+func printSkillBackups(backups []string) {
+	for _, path := range backups {
+		fmt.Fprintf(os.Stdout, "Local edits backed up to %s\n", path)
+	}
+}
+
 func skillFileDigest(data []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
@@ -284,6 +325,7 @@ func detectedSkillTargets(installedOnly bool) ([]struct {
 
 func registerSkillCommands() {
 	var installAll bool
+	var installForce bool
 	skillCommand := &cobra.Command{
 		Use:   "skill",
 		Short: "Manage the dci skill for AI agents",
@@ -300,19 +342,23 @@ func registerSkillCommands() {
 				return errorsForNoDetectedAgents()
 			}
 			for _, target := range targets {
-				if err := installSkill(target.Path); err != nil {
+				backups, err := installSkillSafely(target.Path, installForce)
+				if err != nil {
 					return fmt.Errorf("install %s skill: %w", target.Agent.Name, err)
 				}
+				printSkillBackups(backups)
 				fmt.Fprintf(os.Stdout, "Skill installed for %s at %s\n", target.Agent.Name, filepath.Join(target.Path, "skills", "dci-cli"))
 			}
 			return nil
 		},
 	}
 	skillCommand.Flags().BoolVar(&installAll, "all", false, "Install into every detected agent directory")
+	skillCommand.Flags().BoolVar(&installForce, "force", false, "Back up and overwrite locally edited skill files")
 
 	for _, configuredAgent := range skillAgents {
 		agent := configuredAgent
 		var targetOverride string
+		var force bool
 		agentCommand := &cobra.Command{
 			Use:   agent.Name,
 			Short: fmt.Sprintf("Install skill for %s", agent.Name),
@@ -322,14 +368,17 @@ func registerSkillCommands() {
 				if err != nil {
 					return err
 				}
-				if err := installSkill(target); err != nil {
+				backups, err := installSkillSafely(target, force)
+				if err != nil {
 					return fmt.Errorf("install %s skill: %w", agent.Name, err)
 				}
+				printSkillBackups(backups)
 				fmt.Fprintf(os.Stdout, "Skill installed to %s\n", filepath.Join(target, "skills", "dci-cli"))
 				return nil
 			},
 		}
 		agentCommand.Flags().StringVar(&targetOverride, "dir", "", "Override the agent configuration directory")
+		agentCommand.Flags().BoolVar(&force, "force", false, "Back up and overwrite locally edited skill files")
 		skillCommand.AddCommand(agentCommand)
 	}
 
@@ -376,16 +425,11 @@ func newSkillUpdateCommand() *cobra.Command {
 				return err
 			}
 			for _, target := range targets {
-				diff, err := inspectInstalledSkill(target.Path)
+				backups, err := installSkillSafely(target.Path, force)
 				if err != nil {
-					return err
-				}
-				if diff.HasLocalChanges() && !force {
-					return fmt.Errorf("installed %s skill has local changes to %s; inspect them and re-run with --force to overwrite", target.Agent.Name, strings.Join(diff.LocalChangePaths(), ", "))
-				}
-				if err := installSkill(target.Path); err != nil {
 					return fmt.Errorf("update %s skill: %w", target.Agent.Name, err)
 				}
+				printSkillBackups(backups)
 				fmt.Fprintf(os.Stdout, "Skill updated for %s at %s\n", target.Agent.Name, filepath.Join(target.Path, "skills", "dci-cli"))
 			}
 			return nil
