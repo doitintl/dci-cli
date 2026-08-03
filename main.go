@@ -223,6 +223,7 @@ func run() (exitCode int) {
 	customerContextFlagValue = ""
 	nonJSONErrorResponse = false
 	resetErrorContractState()
+	resetDestructiveContractState()
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
 	// output format, stderr routing, and the User-Agent mode token — all key off
@@ -269,6 +270,7 @@ func run() (exitCode int) {
 	overrideTableOutput()
 	installOutputGuard()
 	installResponseGuard()
+	installDestructiveActionSummaryGuard()
 	registerAgentFlags()
 	printFirstRunOnboarding(configured)
 	maybeHintAgentMode()
@@ -299,6 +301,7 @@ func run() (exitCode int) {
 	registerUpgradeCommand(configDir)
 	registerVersionCommand()
 	registerSkillCommands()
+	registerCommandCatalog()
 	// Unhide the customer-context command for DoiT employees so it appears in help.
 	if cachedTokenIsDoer() {
 		for _, c := range cli.Root.Commands() {
@@ -1425,6 +1428,8 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().String("exclude", "", "Comma-separated response fields to exclude")
 	dciCmd.PersistentFlags().Bool("full", false, "Return the full response without agent-oriented truncation")
 	dciCmd.PersistentFlags().Bool("no-truncate", false, "Disable long-value truncation")
+	dciCmd.PersistentFlags().Bool("yes", false, "Confirm a destructive operation")
+	dciCmd.PersistentFlags().Bool("dry-run", false, "Preview a destructive operation without executing it")
 
 	// Bind table flags into viper so the renderer can pick them up.
 	prev := dciCmd.PersistentPreRunE
@@ -1467,6 +1472,8 @@ func addOutputFlag() {
 			"exclude":     "agent-exclude",
 			"full":        "agent-full",
 			"no-truncate": "agent-no-truncate",
+			"yes":         "agent-confirm-destructive",
+			"dry-run":     "agent-dry-run",
 		} {
 			if flag := cmd.Flags().Lookup(flagName); flag != nil {
 				viper.Set(configName, flag.Value.String())
@@ -1505,7 +1512,7 @@ func addOutputFlag() {
 			customerContextFlagValue = val
 		}
 
-		return nil
+		return enforceDestructiveConfirmation(cmd, args)
 	}
 }
 
