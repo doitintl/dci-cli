@@ -263,12 +263,16 @@ func writeStructuredError(writer io.Writer, detail structuredError) {
 	_ = json.NewEncoder(writer).Encode(structuredErrorEnvelope{Error: detail})
 }
 
+func agentErrorContractEnabled() bool {
+	return agentMode && agentUAMode != uaModeNonInteractive
+}
+
 func executeCLI() error {
 	return executeCLIWith(cli.Run)
 }
 
 func executeCLIWith(run func() error) error {
-	if !agentMode {
+	if !agentErrorContractEnabled() {
 		return run()
 	}
 

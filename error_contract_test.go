@@ -105,12 +105,15 @@ func TestAcceptedDoerLoginClearsValidationFailure(t *testing.T) {
 
 func TestAgentResponseGuardWritesOneStructuredError(t *testing.T) {
 	oldAgentMode := agentMode
+	oldAgentUAMode := agentUAMode
 	oldStderr := cli.Stderr
 	agentMode = true
+	agentUAMode = uaModeAgent
 	agentErrorWritten = false
 	responseExitCode = 0
 	t.Cleanup(func() {
 		agentMode = oldAgentMode
+		agentUAMode = oldAgentUAMode
 		cli.Stderr = oldStderr
 		agentErrorWritten = false
 		responseExitCode = 0
@@ -145,15 +148,18 @@ func TestAgentResponseGuardWritesOneStructuredError(t *testing.T) {
 
 func TestExecuteCLISuppressesFrameworkErrorsInAgentMode(t *testing.T) {
 	oldAgentMode := agentMode
+	oldAgentUAMode := agentUAMode
 	oldRoot := cli.Root
 	oldStderr := cli.Stderr
 	agentMode = true
+	agentUAMode = uaModeAgent
 	agentErrorWritten = false
 	cli.Root = &cobra.Command{}
 	var stderr bytes.Buffer
 	cli.Stderr = &stderr
 	t.Cleanup(func() {
 		agentMode = oldAgentMode
+		agentUAMode = oldAgentUAMode
 		cli.Root = oldRoot
 		cli.Stderr = oldStderr
 		agentErrorWritten = false
@@ -172,5 +178,68 @@ func TestExecuteCLISuppressesFrameworkErrorsInAgentMode(t *testing.T) {
 	}
 	if !cli.Root.SilenceErrors || !cli.Root.SilenceUsage {
 		t.Fatal("cobra errors and usage remain enabled")
+	}
+}
+
+func TestNonInteractiveResponsePreservesFormatterOutput(t *testing.T) {
+	oldAgentMode := agentMode
+	oldAgentUAMode := agentUAMode
+	oldStderr := cli.Stderr
+	agentMode = true
+	agentUAMode = uaModeNonInteractive
+	agentErrorWritten = false
+	responseExitCode = 0
+	var stderr bytes.Buffer
+	cli.Stderr = &stderr
+	t.Cleanup(func() {
+		agentMode = oldAgentMode
+		agentUAMode = oldAgentUAMode
+		cli.Stderr = oldStderr
+		resetErrorContractState()
+	})
+
+	next := &recordingFormatter{}
+	guard := dciResponseGuard{next: next}
+	if err := guard.Format(cli.Response{
+		Status: 403,
+		Body:   map[string]interface{}{"message": "access denied"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !next.called {
+		t.Fatal("non-interactive response body was not sent to the formatter")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if responseExitCode != 0 || agentErrorWritten {
+		t.Fatal("agent error contract changed non-interactive response state")
+	}
+}
+
+func TestNonInteractiveExecutionKeepsFrameworkOutput(t *testing.T) {
+	oldAgentMode := agentMode
+	oldAgentUAMode := agentUAMode
+	oldStderr := cli.Stderr
+	agentMode = true
+	agentUAMode = uaModeNonInteractive
+	var stderr bytes.Buffer
+	cli.Stderr = &stderr
+	t.Cleanup(func() {
+		agentMode = oldAgentMode
+		agentUAMode = oldAgentUAMode
+		cli.Stderr = oldStderr
+	})
+
+	wantErr := errors.New("blocked")
+	err := executeCLIWith(func() error {
+		_, _ = io.WriteString(cli.Stderr, "framework error")
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+	if stderr.String() != "framework error" {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

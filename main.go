@@ -322,29 +322,36 @@ func run() (exitCode int) {
 	if err := executeCLI(); err != nil {
 		return reportExecutionError(err, cli.GetLastStatus(), configDir)
 	}
-	code := exitCodeForProcessStatus(cli.GetLastStatus())
-	if responseExitCode != 0 {
-		code = responseExitCode
+	code := cli.GetExitCode()
+	if agentErrorContractEnabled() {
+		code = exitCodeForProcessStatus(cli.GetLastStatus())
+		if responseExitCode != 0 {
+			code = responseExitCode
+		}
 	}
-	// Force a non-zero exit when a 2xx response carried an error page/body.
 	if code == 0 && nonJSONErrorResponse {
-		code = exitServer
+		if agentErrorContractEnabled() {
+			code = exitServer
+		} else {
+			code = 1
+		}
 	}
 	maybeHintDoerContext(code, cli.GetLastStatus(), configDir)
 	return code
 }
 
 func reportExecutionError(err error, status int, configDir string) int {
+	if !agentErrorContractEnabled() {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		maybeHintDoerContext(1, status, configDir)
+		return 1
+	}
 	code := exitCodeForExecutionError(err, status)
 	if code == exitSuccess && isSilentExecutionError(err) {
 		return exitSuccess
 	}
-	if agentMode {
-		if !agentErrorWritten {
-			writeStructuredError(os.Stderr, structuredErrorForExecution(err, status))
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
+	if !agentErrorWritten {
+		writeStructuredError(os.Stderr, structuredErrorForExecution(err, status))
 	}
 	maybeHintDoerContext(code, status, configDir)
 	return code
@@ -1115,7 +1122,7 @@ func authSource() string {
 // without a customer context set — covering both interactive and CI/CD usage.
 // status is the HTTP status code from the last request (pass cli.GetLastStatus()).
 func maybeHintDoerContext(exitCode int, status int, configDir string) {
-	if agentMode || exitCode == 0 || (status != 401 && status != 403) {
+	if agentErrorContractEnabled() || exitCode == 0 || (status != 401 && status != 403) {
 		return
 	}
 	if !cachedTokenIsDoer() {
@@ -1487,8 +1494,8 @@ type dciResponseGuard struct {
 func (g dciResponseGuard) Format(resp cli.Response) error {
 	if isHTMLErrorPage(resp) {
 		nonJSONErrorResponse = true
-		responseExitCode = exitServer
-		if agentMode {
+		if agentErrorContractEnabled() {
+			responseExitCode = exitServer
 			detail := structuredErrorForResponse(resp)
 			detail.Code = "UPSTREAM_NON_JSON_RESPONSE"
 			detail.Message = "The DoiT API returned a non-JSON response"
@@ -1502,8 +1509,8 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 	}
 	if msg, ok := jsonApplicationError(resp); ok {
 		nonJSONErrorResponse = true
-		responseExitCode = exitServer
-		if agentMode {
+		if agentErrorContractEnabled() {
+			responseExitCode = exitServer
 			detail := structuredErrorForResponse(resp)
 			detail.Code = "APPLICATION_ERROR"
 			detail.Message = msg
@@ -1517,7 +1524,7 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 		fmt.Fprintf(cli.Stderr, "Error: the DoiT API returned an application error: %s\n", msg)
 		return nil
 	}
-	if agentMode && resp.Status >= 400 {
+	if agentErrorContractEnabled() && resp.Status >= 400 {
 		responseExitCode = exitCodeForHTTPStatus(resp.Status)
 		writeStructuredError(cli.Stderr, structuredErrorForResponse(resp))
 		return nil
