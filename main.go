@@ -267,6 +267,7 @@ func run() (exitCode int) {
 	cli.Init("dci", version)
 	cli.Defaults()
 	overrideTableOutput()
+	installOutputGuard()
 	installResponseGuard()
 	registerAgentFlags()
 	printFirstRunOnboarding(configured)
@@ -1420,6 +1421,10 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
 	dciCmd.PersistentFlags().IntP("table-max-col-width", "X", 0, "Maximum width per column when fitting or wrapping (0 = auto)")
 	dciCmd.PersistentFlags().StringP("customer-context", "D", "", "Override the active customer context for this command (e.g. acme.com)")
+	dciCmd.PersistentFlags().String("fields", "", "Comma-separated response fields to include")
+	dciCmd.PersistentFlags().String("exclude", "", "Comma-separated response fields to exclude")
+	dciCmd.PersistentFlags().Bool("full", false, "Return the full response without agent-oriented truncation")
+	dciCmd.PersistentFlags().Bool("no-truncate", false, "Disable long-value truncation")
 
 	// Bind table flags into viper so the renderer can pick them up.
 	prev := dciCmd.PersistentPreRunE
@@ -1457,6 +1462,21 @@ func addOutputFlag() {
 		}
 		bindNonNegativeIntFlag(cmd, "table-width")
 		bindNonNegativeIntFlag(cmd, "table-max-col-width")
+		for flagName, configName := range map[string]string{
+			"fields":      "agent-fields",
+			"exclude":     "agent-exclude",
+			"full":        "agent-full",
+			"no-truncate": "agent-no-truncate",
+		} {
+			if flag := cmd.Flags().Lookup(flagName); flag != nil {
+				viper.Set(configName, flag.Value.String())
+			}
+		}
+		if fields := strings.TrimSpace(viper.GetString("agent-fields")); fields != "" {
+			if flag := cmd.Flags().Lookup("table-columns"); flag == nil || !flag.Changed {
+				viper.Set("table-columns", fields)
+			}
+		}
 
 		// If --customer-context / -D was explicitly passed, override whatever
 		// applyCustomerContext() injected from the file or env var.
