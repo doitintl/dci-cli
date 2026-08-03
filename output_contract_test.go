@@ -52,6 +52,60 @@ func TestShapeResponseBodyProjectsExcludesAndTruncates(t *testing.T) {
 	}
 }
 
+func TestExcludePreservesWrapperMetadataAndNestedObjects(t *testing.T) {
+	viper.Set("agent-exclude", "rowCount,amount")
+	t.Cleanup(viper.Reset)
+
+	input := map[string]interface{}{
+		"budgets": []interface{}{
+			map[string]interface{}{
+				"id":     "budget-1",
+				"amount": 1000,
+				"alertThresholds": []interface{}{
+					map[string]interface{}{"amount": 900, "percentage": 90},
+				},
+			},
+		},
+		"rowCount": 1,
+	}
+
+	shaped := shapeResponseBody(input).(map[string]interface{})
+	if shaped["rowCount"] != 1 {
+		t.Fatalf("rowCount = %#v", shaped["rowCount"])
+	}
+	row := shaped["budgets"].([]interface{})[0].(map[string]interface{})
+	if _, exists := row["amount"]; exists {
+		t.Fatal("top-level row amount remains")
+	}
+	threshold := row["alertThresholds"].([]interface{})[0].(map[string]interface{})
+	if threshold["amount"] != 900 {
+		t.Fatalf("nested amount = %#v", threshold["amount"])
+	}
+}
+
+func TestUnknownProjectionFieldsWriteWarning(t *testing.T) {
+	viper.Set("agent-fields", "nosuchfield")
+	oldStderr := cli.Stderr
+	var stderr bytes.Buffer
+	cli.Stderr = &stderr
+	t.Cleanup(func() {
+		cli.Stderr = oldStderr
+		viper.Reset()
+	})
+
+	input := map[string]interface{}{
+		"budgets":  []interface{}{map[string]interface{}{"id": "budget-1"}},
+		"rowCount": 1,
+	}
+	shaped := shapeResponseBody(input).(map[string]interface{})
+	if !strings.Contains(stderr.String(), "none of the requested fields exist") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if shaped["rowCount"] != 1 {
+		t.Fatalf("rowCount = %#v", shaped["rowCount"])
+	}
+}
+
 func TestShapeResponseBodyDefinitiveEmptyState(t *testing.T) {
 	oldAgentMode := agentMode
 	agentMode = true
