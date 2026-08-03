@@ -19,10 +19,13 @@ var (
 
 var explicitlyDestructiveOperations = map[string]bool{
 	"accept-budget-suggestion":        true,
+	"assign-objects-to-label":         true,
 	"cancel-contract":                 true,
 	"cancel-invite":                   true,
 	"delete-datahub-events-by-filter": true,
 	"dismiss-budget-suggestion":       true,
+	"trigger-cloudflow-webhook":       true,
+	"update-user":                     true,
 }
 
 func resetDestructiveContractState() {
@@ -125,13 +128,6 @@ func isDestructiveCommand(command *cobra.Command) bool {
 }
 
 func enforceDestructiveConfirmation(command *cobra.Command, args []string) error {
-	if err := ensureDestructiveOperations(); err != nil {
-		return fmt.Errorf("load destructive operation metadata: %w", err)
-	}
-	if !isDestructiveCommand(command) {
-		return nil
-	}
-	destructiveActionName = command.Name()
 	if viper.GetBool("agent-dry-run") {
 		result := dryRunResult{DryRun: true, Command: command.Name(), Arguments: args}
 		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
@@ -142,6 +138,13 @@ func enforceDestructiveConfirmation(command *cobra.Command, args []string) error
 		command.RunE = func(command *cobra.Command, args []string) error { return nil }
 		return nil
 	}
+	if err := ensureDestructiveOperations(); err != nil {
+		return fmt.Errorf("load destructive operation metadata: %w", err)
+	}
+	if !isDestructiveCommand(command) {
+		return nil
+	}
+	destructiveActionName = command.Name()
 	confirmed := viper.GetBool("agent-confirm-destructive")
 	if !confirmed {
 		confirmed, _ = parseBoolish(os.Getenv("DCI_CONFIRM_DESTRUCTIVE"))

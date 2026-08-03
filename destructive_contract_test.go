@@ -67,6 +67,44 @@ func TestDestructiveConfirmation(t *testing.T) {
 	})
 }
 
+func TestDryRunNeverExecutesNonDestructiveCommand(t *testing.T) {
+	viper.Reset()
+	viper.Set("agent-dry-run", true)
+	t.Cleanup(viper.Reset)
+
+	executed := false
+	command := &cobra.Command{
+		Use: "list-budgets",
+		RunE: func(command *cobra.Command, args []string) error {
+			executed = true
+			return nil
+		},
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = writer
+	err = enforceDestructiveConfirmation(command, nil)
+	writer.Close()
+	os.Stdout = oldStdout
+	_, readErr := io.ReadAll(reader)
+	reader.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.RunE(command, nil); err != nil {
+		t.Fatal(err)
+	}
+	if executed {
+		t.Fatal("--dry-run executed the request")
+	}
+}
+
 func TestDestructiveConfirmationErrorMetadata(t *testing.T) {
 	err := destructiveConfirmationError{Command: "delete-budget"}
 	if err.ExitCode() != 30 || err.AgentErrorCode() != "DESTRUCTIVE_REQUIRES_CONFIRMATION" {
@@ -83,9 +121,20 @@ func TestDestructiveCommandClassification(t *testing.T) {
 		{Name: "archive-contract-template", Method: "DELETE"},
 		{Name: "id-of-ticket-tags-remove", Method: "DELETE"},
 		{Name: "delete-datahub-events-by-filter", Method: "POST"},
+		{Name: "trigger-cloudflow-webhook", Method: "POST"},
+		{Name: "assign-objects-to-label", Method: "POST"},
+		{Name: "update-user", Method: "PATCH"},
 		{Name: "list-budgets", Method: "GET"},
 	})
-	for _, name := range []string{"delete-budget", "archive-contract-template", "id-of-ticket-tags-remove", "delete-datahub-events-by-filter"} {
+	for _, name := range []string{
+		"delete-budget",
+		"archive-contract-template",
+		"id-of-ticket-tags-remove",
+		"delete-datahub-events-by-filter",
+		"trigger-cloudflow-webhook",
+		"assign-objects-to-label",
+		"update-user",
+	} {
 		if !isDestructiveCommand(&cobra.Command{Use: name}) {
 			t.Errorf("%s was not classified as destructive", name)
 		}
