@@ -24,6 +24,8 @@ Use `--fields id,name` to project list or detail responses before output, and us
 3. Discover command shape before drafting or running commands: `dci --help` and `dci <command> --help`
 4. Prefer `list-*`, `get-*`, `get-report`, and `query` before `create-*`, `update-*`, or `delete-*`
 
+Use `dci skill list` to inspect the files embedded in the installed CLI. Use `dci skill update <agent>` to refresh one installed copy, or omit the agent to update every detected installation; locally edited managed files require an explicit `--force` overwrite.
+
 ## Query Modes
 
 Use `dci query` in two modes:
