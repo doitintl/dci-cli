@@ -92,6 +92,7 @@ that is cheap to parse and free of decoration:
 - Default `--output` becomes `toon` (compact, token-efficient) instead of `table`
 - No color, spinners, or other terminal decoration
 - Banners, tips, and status chatter go to **stderr**, leaving **stdout** for data only
+- `--fields` selects response fields and `--exclude` removes fields before output; `--full` or `--no-truncate` preserves long values when needed
 - The request `User-Agent` carries a `mode=` token — `agent` (explicit flag/env or a known AI-agent environment), `noninteractive` (piped/redirected output or CI/CD), or `interactive` (human at a terminal) — so API traffic can be segmented by interface
 
 ### How agent mode is detected
