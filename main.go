@@ -222,6 +222,7 @@ func run() (exitCode int) {
 	// Reset per-invocation state so repeated calls (e.g. in tests) start clean.
 	customerContextFlagValue = ""
 	nonJSONErrorResponse = false
+	resetErrorContractState()
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
 	// output format, stderr routing, and the User-Agent mode token — all key off
@@ -255,8 +256,7 @@ func run() (exitCode int) {
 	configDir := dciConfigDir()
 	configured, err := ensureConfig(configDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize config: %v\n", err)
-		return 1
+		return reportExecutionError(fmt.Errorf("failed to initialize config: %w", err), 0, configDir)
 	}
 
 	// Kick off the update check now so it runs in parallel with the command;
@@ -276,8 +276,7 @@ func run() (exitCode int) {
 	cli.AddAuth("oauth-authorization-code", &oauth.AuthorizationCodeHandler{})
 
 	if err := rejectProfileFlags(os.Args); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
+		return reportExecutionError(err, 0, configDir)
 	}
 	// Keep profile fixed until we support multi-profile UX.
 	os.Setenv("RSH_PROFILE", "default")
@@ -316,18 +315,49 @@ func run() (exitCode int) {
 	setupCompletion()
 	os.Args = normalizeArgs(os.Args)
 
-	if err := cli.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		maybeHintDoerContext(1, cli.GetLastStatus(), configDir)
-		return 1
+	if err := executeCLI(); err != nil {
+		return reportExecutionError(err, cli.GetLastStatus(), configDir)
 	}
 	code := cli.GetExitCode()
-	// Force a non-zero exit when a 2xx response carried an error page/body.
+	if agentErrorContractEnabled() {
+		code = exitCodeForProcessStatus(cli.GetLastStatus())
+		if responseExitCode != 0 {
+			code = responseExitCode
+		}
+	}
 	if code == 0 && nonJSONErrorResponse {
-		code = 1
+		if agentErrorContractEnabled() {
+			code = exitServer
+		} else {
+			code = 1
+		}
 	}
 	maybeHintDoerContext(code, cli.GetLastStatus(), configDir)
 	return code
+}
+
+func reportExecutionError(err error, status int, configDir string) int {
+	if !agentErrorContractEnabled() {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		maybeHintDoerContext(1, status, configDir)
+		return 1
+	}
+	code := exitCodeForExecutionError(err, status)
+	if code == exitSuccess && isSilentExecutionError(err) {
+		return exitSuccess
+	}
+	if !agentErrorWritten {
+		writeStructuredError(os.Stderr, structuredErrorForExecution(err, status))
+	}
+	maybeHintDoerContext(code, status, configDir)
+	return code
+}
+
+func exitCodeForProcessStatus(status int) int {
+	if viper.GetBool("rsh-ignore-status-code") {
+		return exitSuccess
+	}
+	return exitCodeForHTTPStatus(status)
 }
 
 func rejectProfileFlags(args []string) error {
@@ -339,7 +369,7 @@ func rejectProfileFlags(args []string) error {
 			return nil
 		}
 		if arg == "--profile" || arg == "--rsh-profile" || strings.HasPrefix(arg, "--profile=") || strings.HasPrefix(arg, "--rsh-profile=") {
-			return fmt.Errorf("profile selection is currently disabled")
+			return fmt.Errorf("invalid argument: profile selection is currently disabled")
 		}
 		if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") || arg == "-" {
 			continue
@@ -1160,7 +1190,7 @@ func authSource() string {
 // without a customer context set — covering both interactive and CI/CD usage.
 // status is the HTTP status code from the last request (pass cli.GetLastStatus()).
 func maybeHintDoerContext(exitCode int, status int, configDir string) {
-	if exitCode == 0 || (status != 401 && status != 403) {
+	if agentErrorContractEnabled() || exitCode == 0 || (status != 401 && status != 403) {
 		return
 	}
 	if !cachedTokenIsDoer() {
@@ -1262,9 +1292,8 @@ func registerAuthCommands(configDir string) {
 			// token exchange succeeds (token is cached) even when validate returns 403,
 			// so we can inspect the token here and fix the chicken-and-egg problem.
 			if applyDoerContext(configDir) {
-				err = nil // the 403 was due to missing context; auth itself succeeded
-				// Reset the HTTP status so GetExitCode() returns 0 for this process.
-				viper.Set("rsh-ignore-status-code", true)
+				err = nil
+				acceptDoerLoginValidation()
 			}
 
 			if err != nil {
@@ -1297,6 +1326,12 @@ func registerAuthCommands(configDir string) {
 			return nil
 		},
 	})
+}
+
+func acceptDoerLoginValidation() {
+	responseExitCode = 0
+	agentErrorWritten = false
+	viper.Set("rsh-ignore-status-code", true)
 }
 
 // customerContextPath returns the path to the custom file that stores the
@@ -1504,16 +1539,39 @@ type dciResponseGuard struct {
 func (g dciResponseGuard) Format(resp cli.Response) error {
 	if isHTMLErrorPage(resp) {
 		nonJSONErrorResponse = true
+		if agentErrorContractEnabled() {
+			responseExitCode = exitServer
+			detail := structuredErrorForResponse(resp)
+			detail.Code = "UPSTREAM_NON_JSON_RESPONSE"
+			detail.Message = "The DoiT API returned a non-JSON response"
+			detail.Hint = "Retry the request; contact DoiT support with the request ID if it persists"
+			detail.Retryable = true
+			writeStructuredError(cli.Stderr, detail)
+			return nil
+		}
 		printNonJSONError(resp)
 		return nil
 	}
 	if msg, ok := jsonApplicationError(resp); ok {
 		nonJSONErrorResponse = true
+		if agentErrorContractEnabled() {
+			responseExitCode = exitServer
+			detail := structuredErrorForResponse(resp)
+			detail.Code = "APPLICATION_ERROR"
+			detail.Message = msg
+			writeStructuredError(cli.Stderr, detail)
+			return nil
+		}
 		if err := g.next.Format(resp); err != nil {
 			return err
 		}
 		// cli.Stderr (not os.Stderr) so callers like login can suppress it; don't revert.
 		fmt.Fprintf(cli.Stderr, "Error: the DoiT API returned an application error: %s\n", msg)
+		return nil
+	}
+	if agentErrorContractEnabled() && resp.Status >= 400 {
+		responseExitCode = exitCodeForHTTPStatus(resp.Status)
+		writeStructuredError(cli.Stderr, structuredErrorForResponse(resp))
 		return nil
 	}
 	return g.next.Format(resp)
