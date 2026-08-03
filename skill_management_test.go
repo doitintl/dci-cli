@@ -83,6 +83,70 @@ func TestInspectInstalledSkillTreatsMissingFileAsLocalChange(t *testing.T) {
 	}
 }
 
+func TestInspectInstalledSkillAcceptsFilesFromPreviousManifest(t *testing.T) {
+	target := t.TempDir()
+	if err := installSkill(target); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(target, "skills", "dci-cli")
+	manifest, exists, err := readSkillManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("skill manifest was not installed")
+	}
+
+	previous := []byte("previous release\n")
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), previous, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Files["SKILL.md"] = skillFileDigest(previous)
+	if err := writeSkillManifest(root, manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := inspectInstalledSkill(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff.HasLocalChanges() {
+		t.Fatalf("previous installed version was treated as a local edit: %+v", diff)
+	}
+	if err := installSkill(target); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := inspectInstalledSkill(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.HasLocalChanges() {
+		t.Fatalf("updated skill is dirty: %+v", updated)
+	}
+}
+
+func TestInspectInstalledSkillDoesNotBlockOnExtraFiles(t *testing.T) {
+	target := t.TempDir()
+	if err := installSkill(target); err != nil {
+		t.Fatal(err)
+	}
+	extraPath := filepath.Join(target, "skills", "dci-cli", ".DS_Store")
+	if err := os.WriteFile(extraPath, []byte("metadata"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := inspectInstalledSkill(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(diff.Extra, ".DS_Store") {
+		t.Fatalf("extra file was not reported: %+v", diff)
+	}
+	if diff.HasLocalChanges() {
+		t.Fatalf("non-overwritten extra file blocked update: %+v", diff)
+	}
+}
+
 func TestSkillUpdateTargetsSupportsCustomDirectory(t *testing.T) {
 	target := t.TempDir()
 	if err := installSkill(target); err != nil {
