@@ -588,43 +588,6 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		assertNoOAuthOrPanic(t, res.output)
 	})
 
-	t.Run("unknown command is compact and suggests a match", func(t *testing.T) {
-		home := t.TempDir()
-		res := runCLIWithEnv(t, bin, home, []string{"DCI_AGENT_MODE=0", "DCI_API_KEY=test-key"}, "list-bugets")
-		if res.timedOut {
-			t.Fatalf("command timed out; output:\n%s", res.output)
-		}
-		if res.exitCode != 2 {
-			t.Fatalf("exit code = %d, want 2; output:\n%s", res.exitCode, res.output)
-		}
-		for _, expected := range []string{"unknown command \"list-bugets\"", "list-budgets", "dci --help"} {
-			if !strings.Contains(res.output, expected) {
-				t.Fatalf("output missing %q:\n%s", expected, res.output)
-			}
-		}
-		if strings.Contains(res.output, "Alerts Commands:") {
-			t.Fatalf("unknown command printed the full catalog:\n%s", res.output)
-		}
-	})
-
-	t.Run("agent unknown command is structured", func(t *testing.T) {
-		home := t.TempDir()
-		res := runCLIWithEnv(t, bin, home, []string{"DCI_AGENT_MODE=1", "DCI_API_KEY=test-key"}, "list-bugets")
-		if res.timedOut {
-			t.Fatalf("command timed out; output:\n%s", res.output)
-		}
-		if res.exitCode != 2 {
-			t.Fatalf("exit code = %d, want 2; output:\n%s", res.exitCode, res.output)
-		}
-		var envelope unknownCommandEnvelope
-		if err := json.Unmarshal([]byte(res.output), &envelope); err != nil {
-			t.Fatalf("invalid structured error %q: %v", res.output, err)
-		}
-		if envelope.Error.Code != "UNKNOWN_COMMAND" || !strings.Contains(envelope.Error.Hint, "list-budgets") {
-			t.Fatalf("unexpected structured error: %+v", envelope.Error)
-		}
-	})
-
 	t.Run("status works", func(t *testing.T) {
 		home := t.TempDir()
 		res := runCLIWithHome(t, bin, home, "status")

@@ -316,7 +316,6 @@ func run() (exitCode int) {
 	applyCustomerContext(configDir)
 	lockToDCI()
 	setupCompletion()
-	installUnknownCommandHandler()
 	os.Args = normalizeArgs(os.Args)
 
 	if err := executeCLI(); err != nil {
@@ -780,34 +779,6 @@ Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
 
 const dciLongDescription = "Command-line interface for the DoiT Cloud Intelligence API."
 
-const compactRootHelpHeader = `Command-line interface for the DoiT Cloud Intelligence API.
-
-Usage:
-  dci <command> [flags]
-  dci <command> --help
-
-Common commands:
-  login          Sign in to the DoiT Console
-  status         Show CLI configuration and active context
-  list-budgets   List budgets
-  list-reports   List Cloud Analytics reports
-  list-alerts    List alerts
-  query          Run a Cloud Analytics query
-  skill          Manage AI agent skills
-  version        Print the CLI version
-
-Discovery:
-  dci <command> --help   Show detailed help for one command
-`
-
-func compactRootHelp() string {
-	help := compactRootHelpHeader
-	if isRootCommand("commands") {
-		help += "  dci commands          Show the complete command catalog\n  dci commands --json   Show the machine-readable catalog\n"
-	}
-	return help
-}
-
 var rootExamples = []string{
 	"  dci status",
 	"  dci list-budgets",
@@ -893,7 +864,8 @@ func lockToDCI() {
 	}
 }
 
-// setupCompletion configures shell completion and compact root help.
+// setupCompletion configures shell completion and root help so that API
+// commands appear at root level (alongside status, login, etc.).
 //
 // The "dci" API subcommand is hidden since users access its commands directly
 // via normalizeArgs. Its ValidArgsFunction (which returns URL paths from
@@ -964,13 +936,44 @@ func setupCompletion() {
 		return completions, cobra.ShellCompDirectiveNoFileComp
 	}
 
+	// Override root help to include API commands. Load the API, move its
+	// commands to root so the standard usage template renders them, then
+	// show help normally.
 	defaultHelp := cli.Root.HelpFunc()
 	cli.Root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		hasAPICommands := false
 		if cmd == cli.Root {
-			fmt.Fprint(cmd.OutOrStdout(), compactRootHelp())
-			return
+			loadAPI()
+			hasAPICommands = len(dciCmd.Commands()) > 0
+			// Copy command groups from the API subcommand to root so the
+			// usage template can render grouped commands.
+			for _, g := range dciCmd.Groups() {
+				if !cli.Root.ContainsGroup(g.ID) {
+					cli.Root.AddGroup(g)
+				}
+			}
+			// Collect first — iterating Commands() while removing mutates the slice.
+			subs := make([]*cobra.Command, len(dciCmd.Commands()))
+			copy(subs, dciCmd.Commands())
+			for _, sub := range subs {
+				dciCmd.RemoveCommand(sub)
+				cli.Root.AddCommand(sub)
+			}
 		}
 		defaultHelp(cmd, args)
+		if cmd == cli.Root && !hasAPICommands {
+			hint := "\n! To get started, authenticate with: dci login (or set DCI_API_KEY)\n\n"
+			// In agent mode the hint is chatter — route it to stderr (plain, no
+			// color) so stdout stays parseable.
+			if agentMode {
+				fmt.Fprint(os.Stderr, hint)
+			} else {
+				if term.IsTerminal(int(os.Stdout.Fd())) {
+					hint = "\n\033[1;33m!\033[0m To get started, authenticate with: \033[1mdci login\033[0m (or set \033[1mDCI_API_KEY\033[0m)\n\n"
+				}
+				fmt.Fprint(os.Stdout, hint)
+			}
+		}
 	})
 }
 
