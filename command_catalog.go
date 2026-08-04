@@ -52,7 +52,13 @@ type commandCatalogFlag struct {
 	Default     interface{} `json:"default,omitempty"`
 	Description string      `json:"description,omitempty"`
 	Example     interface{} `json:"example,omitempty"`
+	Required    bool        `json:"required"`
 	SafetyRole  string      `json:"safety_role,omitempty"`
+}
+
+var requiredOperationFlags = map[string]map[string]bool{
+	"cancel-invite": {"idempotency-key": true},
+	"resend-invite": {"idempotency-key": true},
 }
 
 func registerCommandCatalog() {
@@ -121,6 +127,7 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 				Default:     parameter.Default,
 				Description: parameter.Description,
 				Example:     parameter.Example,
+				Required:    requiredOperationFlags[operation.Name][parameter.OptionName()],
 			})
 		}
 		flags = appendUniqueCatalogFlags(flags, agentContractCatalogFlags())

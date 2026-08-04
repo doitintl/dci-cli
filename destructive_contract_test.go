@@ -168,6 +168,31 @@ func TestDryRunDefersToOperationOwnedFlag(t *testing.T) {
 	}
 }
 
+func TestDryRunPreservesExplicitIdempotencyKey(t *testing.T) {
+	viper.Reset()
+	viper.Set("agent-dry-run", true)
+	t.Cleanup(func() {
+		viper.Reset()
+		resetDestructiveContractState()
+	})
+
+	command := &cobra.Command{Use: "cancel-invite"}
+	command.Flags().Bool("dry-run", false, "Use the API simulation")
+	command.Flags().String("idempotency-key", "", "Idempotency key")
+	if err := command.Flags().Set("dry-run", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Flags().Set("idempotency-key", "caller-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := enforceDestructiveConfirmation(command, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := command.Flags().Lookup("idempotency-key").Value.String(); got != "caller-key" {
+		t.Fatalf("idempotency key = %q, want caller-key", got)
+	}
+}
+
 func TestDestructiveConfirmationErrorMetadata(t *testing.T) {
 	err := destructiveConfirmationError{Command: "delete-budget"}
 	if err.ExitCode() != 30 || err.AgentErrorCode() != "DESTRUCTIVE_REQUIRES_CONFIRMATION" {
