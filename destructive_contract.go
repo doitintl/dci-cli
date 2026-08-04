@@ -17,14 +17,22 @@ var (
 	destructiveCommandSet = map[string]bool{}
 )
 
+// Non-DELETE operations belong here only when they can revoke access, alter financial contracts,
+// or disable ingestion or automation. Routine lifecycle and cosmetic updates remain ungated.
 var explicitlyDestructiveOperations = map[string]bool{
 	"accept-budget-suggestion":        true,
+	"activate-contract":               true,
 	"assign-objects-to-label":         true,
 	"cancel-contract":                 true,
 	"cancel-invite":                   true,
 	"delete-datahub-events-by-filter": true,
 	"dismiss-budget-suggestion":       true,
 	"trigger-cloudflow-webhook":       true,
+	"update-aws-feature":              true,
+	"update-cloudflow-connection":     true,
+	"update-contract":                 true,
+	"update-contract-template":        true,
+	"update-resource-permission":      true,
 	"update-user":                     true,
 }
 
@@ -38,7 +46,7 @@ type destructiveConfirmationError struct {
 }
 
 func (e destructiveConfirmationError) Error() string {
-	return fmt.Sprintf("%s is destructive; re-run with --yes or set DCI_CONFIRM_DESTRUCTIVE=1", e.Command)
+	return fmt.Sprintf("%s requires confirmation; re-run with --yes or set DCI_CONFIRM_DESTRUCTIVE=1", e.Command)
 }
 
 func (e destructiveConfirmationError) ExitCode() int {
@@ -79,6 +87,9 @@ type destructiveActionSummaryGuard struct {
 
 func (guard destructiveActionSummaryGuard) Format(response cli.Response) error {
 	if destructiveActionName != "" && response.Status >= 200 && response.Status < 300 {
+		if isErrorResponseBody(response) {
+			return guard.next.Format(response)
+		}
 		response.Body = actionResult{
 			Action: actionSummary{Command: destructiveActionName, Status: "completed"},
 			Result: response.Body,
