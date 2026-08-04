@@ -52,6 +52,7 @@ type commandCatalogFlag struct {
 	Default     interface{} `json:"default,omitempty"`
 	Description string      `json:"description,omitempty"`
 	Example     interface{} `json:"example,omitempty"`
+	SafetyRole  string      `json:"safety_role,omitempty"`
 }
 
 func registerCommandCatalog() {
@@ -161,8 +162,13 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 
 func appendUniqueCatalogFlags(existing []commandCatalogFlag, additional []commandCatalogFlag) []commandCatalogFlag {
 	seen := make(map[string]bool, len(existing)+len(additional))
-	for _, flag := range existing {
+	for index, flag := range existing {
 		seen[flag.Name] = true
+		for _, candidate := range additional {
+			if candidate.Name == flag.Name && existing[index].SafetyRole == "" {
+				existing[index].SafetyRole = candidate.SafetyRole
+			}
+		}
 	}
 	for _, flag := range additional {
 		if seen[flag.Name] {
@@ -247,9 +253,9 @@ func catalogFlagsFromFlagSet(flags *pflag.FlagSet) []commandCatalogFlag {
 
 func agentContractCatalogFlags() []commandCatalogFlag {
 	flags := []commandCatalogFlag{
-		{Name: "--dry-run", Type: "bool", Default: false, Description: "Preview a destructive operation without executing it"},
+		{Name: "--dry-run", Type: "bool", Default: false, Description: "Preview a destructive operation without executing it", SafetyRole: "preview_before_execution"},
 		{Name: "--output", Type: "string", Description: "Select table, JSON, YAML, automatic, or TOON output"},
-		{Name: "--yes", Type: "bool", Default: false, Description: "Confirm a destructive operation"},
+		{Name: "--yes", Type: "bool", Default: false, Description: "Confirm a destructive operation", SafetyRole: "destructive_confirmation"},
 	}
 	apiCommand := findDCICommand()
 	if apiCommand == nil {

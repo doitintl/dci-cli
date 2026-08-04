@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rest-sh/restish/cli"
@@ -115,9 +116,13 @@ func TestDryRunNeverExecutesNonDestructiveCommand(t *testing.T) {
 
 func TestDryRunDefersToOperationOwnedFlag(t *testing.T) {
 	setDestructiveOperations([]cli.Operation{{Name: "cancel-invite", Method: "POST"}})
+	resetDestructiveContractState()
 	viper.Reset()
 	viper.Set("agent-dry-run", true)
-	t.Cleanup(viper.Reset)
+	t.Cleanup(func() {
+		viper.Reset()
+		resetDestructiveContractState()
+	})
 
 	executed := false
 	command := &cobra.Command{
@@ -128,14 +133,38 @@ func TestDryRunDefersToOperationOwnedFlag(t *testing.T) {
 		},
 	}
 	command.Flags().Bool("dry-run", false, "Use the API simulation")
+	command.Flags().String("idempotency-key", "", "Idempotency key")
+	if err := command.Flags().Set("dry-run", "true"); err != nil {
+		t.Fatal(err)
+	}
 	if err := enforceDestructiveConfirmation(command, []string{"invite-1"}); err != nil {
 		t.Fatal(err)
+	}
+	if flag := command.Flags().Lookup("dry-run"); flag == nil || !flag.Changed || flag.Value.String() != "true" {
+		t.Fatalf("dry-run flag was not preserved: %+v", flag)
+	}
+	idempotencyFlag := command.Flags().Lookup("idempotency-key")
+	if idempotencyFlag == nil || !idempotencyFlag.Changed || !strings.HasPrefix(idempotencyFlag.Value.String(), "dci-dry-run-") {
+		t.Fatalf("idempotency flag was not synthesized: %+v", idempotencyFlag)
 	}
 	if err := command.RunE(command, []string{"invite-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if !executed {
 		t.Fatal("operation-owned dry run was replaced by the local preview")
+	}
+
+	next := &recordingFormatter{}
+	guard := destructiveActionSummaryGuard{next: next}
+	if err := guard.Format(cli.Response{Status: 200, Body: map[string]interface{}{"cancelled": false}}); err != nil {
+		t.Fatal(err)
+	}
+	result, ok := next.got.Body.(actionResult)
+	if !ok {
+		t.Fatalf("response body = %#v", next.got.Body)
+	}
+	if result.Action.Status != "simulated" || !result.Action.DryRun {
+		t.Fatalf("action summary = %+v", result.Action)
 	}
 }
 

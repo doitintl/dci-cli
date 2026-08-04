@@ -124,7 +124,7 @@ dci --no-agent list-budgets | less -S
 
 Run `dci status` to see whether agent mode is active and why.
 
-Pass `--dry-run` to preview any API command without sending its request. Commands classified as destructive require `--yes` or `DCI_CONFIRM_DESTRUCTIVE=1` before execution.
+Pass `--dry-run` to preview any API command. Most commands use a local preview and send no request; operations with an API-native `dryRun` parameter send a simulation request and return an action marked `"dry_run": true`. The CLI supplies an idempotency key when that simulation requires one. Commands classified as destructive require `--yes` or `DCI_CONFIRM_DESTRUCTIVE=1` before real execution.
 
 ## Updating
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,8 +15,9 @@ import (
 )
 
 var (
-	destructiveActionName string
-	destructiveCommandSet = map[string]bool{}
+	destructiveActionName   string
+	destructiveActionDryRun bool
+	destructiveCommandSet   = map[string]bool{}
 )
 
 // Non-DELETE operations belong here only when they can revoke access, alter financial contracts,
@@ -38,6 +41,7 @@ var explicitlyDestructiveOperations = map[string]bool{
 
 func resetDestructiveContractState() {
 	destructiveActionName = ""
+	destructiveActionDryRun = false
 	destructiveCommandSet = map[string]bool{}
 }
 
@@ -74,6 +78,7 @@ type dryRunResult struct {
 type actionSummary struct {
 	Command string `json:"command"`
 	Status  string `json:"status"`
+	DryRun  bool   `json:"dry_run,omitempty"`
 }
 
 type actionResult struct {
@@ -90,8 +95,12 @@ func (guard destructiveActionSummaryGuard) Format(response cli.Response) error {
 		if isErrorResponseBody(response) {
 			return guard.next.Format(response)
 		}
+		status := "completed"
+		if destructiveActionDryRun {
+			status = "simulated"
+		}
 		response.Body = actionResult{
-			Action: actionSummary{Command: destructiveActionName, Status: "completed"},
+			Action: actionSummary{Command: destructiveActionName, Status: status, DryRun: destructiveActionDryRun},
 			Result: response.Body,
 		}
 	}
@@ -141,6 +150,11 @@ func isDestructiveCommand(command *cobra.Command) bool {
 func enforceDestructiveConfirmation(command *cobra.Command, args []string) error {
 	if viper.GetBool("agent-dry-run") {
 		if command.LocalNonPersistentFlags().Lookup("dry-run") != nil {
+			if err := ensureDryRunIdempotencyKey(command); err != nil {
+				return err
+			}
+			destructiveActionName = command.Name()
+			destructiveActionDryRun = true
 			return nil
 		}
 		result := dryRunResult{DryRun: true, Command: command.Name(), Arguments: args}
@@ -148,6 +162,7 @@ func enforceDestructiveConfirmation(command *cobra.Command, args []string) error
 			return err
 		}
 		destructiveActionName = ""
+		destructiveActionDryRun = false
 		command.Run = nil
 		command.RunE = func(command *cobra.Command, args []string) error { return nil }
 		return nil
@@ -159,6 +174,7 @@ func enforceDestructiveConfirmation(command *cobra.Command, args []string) error
 		return nil
 	}
 	destructiveActionName = command.Name()
+	destructiveActionDryRun = false
 	confirmed := viper.GetBool("agent-confirm-destructive")
 	if !confirmed {
 		confirmed, _ = parseBoolish(os.Getenv("DCI_CONFIRM_DESTRUCTIVE"))
@@ -166,6 +182,21 @@ func enforceDestructiveConfirmation(command *cobra.Command, args []string) error
 	if !confirmed {
 		destructiveActionName = ""
 		return destructiveConfirmationError{Command: command.Name()}
+	}
+	return nil
+}
+
+func ensureDryRunIdempotencyKey(command *cobra.Command) error {
+	flag := command.LocalNonPersistentFlags().Lookup("idempotency-key")
+	if flag == nil || flag.Changed {
+		return nil
+	}
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return fmt.Errorf("generate dry-run idempotency key: %w", err)
+	}
+	if err := command.Flags().Set("idempotency-key", "dci-dry-run-"+hex.EncodeToString(bytes)); err != nil {
+		return fmt.Errorf("set dry-run idempotency key: %w", err)
 	}
 	return nil
 }

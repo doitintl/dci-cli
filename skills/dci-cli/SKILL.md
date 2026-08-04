@@ -40,7 +40,7 @@ Load [query-patterns.md](references/query-patterns.md) when you need query examp
 - Prefer env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context> dci ...` over `dci customer-context set` unless the user explicitly wants a persistent local change.
 - Treat `create-*`, `update-*`, `delete-*`, invite, ingest, and comment-post commands as side-effectful.
 - Use `dci commands --json` when you need machine-readable argument, flag, output-shape, authentication, and destructive-operation metadata.
-- Run a side-effectful command with `--dry-run` first; it prints the intended command and arguments without sending the API request.
+- Run a side-effectful command with `--dry-run` first. Most commands print a local preview without sending a request; commands with an API-native `dryRun` parameter send a simulation request and return an action marked `"dry_run": true`.
 - Pass `--yes` only after the user has approved a command classified as destructive. Do not set `DCI_CONFIRM_DESTRUCTIVE=1` as a blanket bypass.
 - Keep shared examples anonymized. Redact customer IDs, report IDs, emails, and URLs unless the user explicitly asks for live values.
 - When a command may fail because of permissions or context, explain that `dci login` proves authentication but not authorization.

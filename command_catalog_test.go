@@ -54,6 +54,9 @@ func TestBuildCommandCatalog(t *testing.T) {
 	for _, flag := range deleteEntry.Flags {
 		if flag.Name == "--yes" {
 			foundConfirmation = true
+			if flag.SafetyRole != "destructive_confirmation" {
+				t.Fatalf("yes safety role = %q", flag.SafetyRole)
+			}
 		}
 	}
 	if !foundConfirmation {
@@ -85,6 +88,9 @@ func TestBuildCommandCatalog(t *testing.T) {
 			dryRunFlags++
 			if flag.Description != "Use the API simulation" {
 				t.Fatalf("dry-run description = %q", flag.Description)
+			}
+			if flag.SafetyRole != "preview_before_execution" {
+				t.Fatalf("dry-run safety role = %q", flag.SafetyRole)
 			}
 		}
 	}
