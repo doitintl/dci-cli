@@ -17,6 +17,8 @@ var (
 	destructiveCommandSet = map[string]bool{}
 )
 
+// Non-DELETE operations belong here only when they can revoke access, alter financial contracts,
+// or disable ingestion or automation. Routine lifecycle and cosmetic updates remain ungated.
 var explicitlyDestructiveOperations = map[string]bool{
 	"accept-budget-suggestion":        true,
 	"activate-contract":               true,
@@ -25,9 +27,9 @@ var explicitlyDestructiveOperations = map[string]bool{
 	"cancel-invite":                   true,
 	"delete-datahub-events-by-filter": true,
 	"dismiss-budget-suggestion":       true,
-	"set-active-theme":                true,
 	"trigger-cloudflow-webhook":       true,
 	"update-aws-feature":              true,
+	"update-cloudflow-connection":     true,
 	"update-contract":                 true,
 	"update-contract-template":        true,
 	"update-resource-permission":      true,
@@ -44,7 +46,7 @@ type destructiveConfirmationError struct {
 }
 
 func (e destructiveConfirmationError) Error() string {
-	return fmt.Sprintf("%s is destructive; re-run with --yes or set DCI_CONFIRM_DESTRUCTIVE=1", e.Command)
+	return fmt.Sprintf("%s requires confirmation; re-run with --yes or set DCI_CONFIRM_DESTRUCTIVE=1", e.Command)
 }
 
 func (e destructiveConfirmationError) ExitCode() int {
