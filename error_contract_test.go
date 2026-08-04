@@ -131,8 +131,12 @@ func TestAgentResponseGuardWritesOneStructuredError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.called {
-		t.Fatal("formatter received an agent-mode error response")
+	if !next.called {
+		t.Fatal("formatter did not receive the original API error response")
+	}
+	body, ok := next.got.Body.(map[string]interface{})
+	if !ok || body["message"] != "access denied" {
+		t.Fatalf("formatted body = %#v", next.got.Body)
 	}
 	if responseExitCode != exitAuthorization {
 		t.Fatalf("responseExitCode = %d", responseExitCode)
