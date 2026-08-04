@@ -1,7 +1,7 @@
 documentation:
   - changed-files:
       - any-glob-to-any-file:
-          - "**/*.md"
+          - "*.md"
 
 dependencies:
   - changed-files:
@@ -9,7 +9,24 @@ dependencies:
           - go.mod
           - go.sum
 
-go:
+release:
   - changed-files:
       - any-glob-to-any-file:
-          - "**/*.go"
+          - .goreleaser.yaml
+          - .github/workflows/release.yml
+          - .github/workflows/post-release-verify.yml
+          - .github/workflows/sync-manifests.yml
+
+packaging:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packaging/**"
+          - "Formula/**"
+          - "bucket/**"
+
+automation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - .github/labeler.yml
+          - .github/dependabot.yml
