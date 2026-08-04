@@ -1,0 +1,47 @@
+name: AI Observer Reconcile
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Reconcile AI Observer drafts
+        env:
+          AI_OBSERVER_AUTH_TOKEN: ${{ secrets.AI_OBSERVER_RECONCILE_TOKEN }}
+          AI_OBSERVER_RECONCILE_DELAY_SECONDS: "10"
+          AI_OBSERVER_BASE_BRANCH: "main"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$AI_OBSERVER_AUTH_TOKEN" ]; then
+            echo "::notice::AI_OBSERVER_RECONCILE_TOKEN is not configured; skipping AI Observer reconciliation."
+            exit 0
+          fi
+
+          if [ "${AI_OBSERVER_RECONCILE_DELAY_SECONDS}" -gt 0 ]; then
+            echo "::notice::Waiting ${AI_OBSERVER_RECONCILE_DELAY_SECONDS}s for async AI Observer drafts before reconciliation."
+            sleep "${AI_OBSERVER_RECONCILE_DELAY_SECONDS}"
+          fi
+
+          set +e
+          node .github/scripts/ai-observer/reconcile-github-commits.mjs
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::AI Observer reconciliation failed with exit code ${status}."
+          fi
+          exit 0
