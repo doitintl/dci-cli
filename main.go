@@ -840,6 +840,13 @@ func brandRootCommand() {
 }
 
 func lockToDCI() {
+	cli.Root.Args = cobra.NoArgs
+	cli.Root.Run = nil
+	cli.Root.RunE = func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	}
+	cli.Root.ValidArgsFunction = nil
+
 	// Remove API management commands, generic RESTish commands, and any
 	// additional API entrypoints so users can only call the DCI API.
 	allowed := map[string]bool{
@@ -1530,7 +1537,7 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 	if agentErrorContractEnabled() && resp.Status >= 400 {
 		responseExitCode = exitCodeForHTTPStatus(resp.Status)
 		writeStructuredError(cli.Stderr, structuredErrorForResponse(resp))
-		return nil
+		return g.next.Format(resp)
 	}
 	return g.next.Format(resp)
 }
