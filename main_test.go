@@ -191,6 +191,48 @@ func TestLockToDCI(t *testing.T) {
 	}
 }
 
+func TestLockToDCIDisablesGenericRootRequests(t *testing.T) {
+	oldRoot := cli.Root
+	requestExecuted := false
+	root := &cobra.Command{
+		Use:  "dci",
+		Args: cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			requestExecuted = true
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return []string{"example.com"}, cobra.ShellCompDirectiveDefault
+		},
+	}
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	cli.Root = root
+	t.Cleanup(func() {
+		cli.Root = oldRoot
+	})
+
+	lockToDCI()
+
+	if root.Run != nil {
+		t.Fatal("generic root request handler remains installed")
+	}
+	if root.RunE == nil {
+		t.Fatal("safe root handler was not installed")
+	}
+	if root.ValidArgsFunction != nil {
+		t.Fatal("generic hostname completion remains installed")
+	}
+	if err := root.Args(root, []string{""}); err == nil {
+		t.Fatal("empty hostname argument was accepted")
+	}
+	if err := root.RunE(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	if requestExecuted {
+		t.Fatal("generic root request handler executed")
+	}
+}
+
 func TestBrandRootAndDCICommands(t *testing.T) {
 	oldRoot := cli.Root
 	root := &cobra.Command{Use: "dci"}
