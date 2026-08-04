@@ -1363,7 +1363,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().IntP("table-max-col-width", "X", 0, "Maximum width per column when fitting or wrapping (0 = auto)")
 	dciCmd.PersistentFlags().StringP("customer-context", "D", "", "Override the active customer context for this command (e.g. acme.com)")
 	dciCmd.PersistentFlags().String("fields", "", "Comma-separated response fields to include")
-	dciCmd.PersistentFlags().String("exclude", "", "Comma-separated response fields to exclude")
+	dciCmd.PersistentFlags().String("exclude", "", "Comma-separated top-level fields to exclude from response items or wrappers")
 	dciCmd.PersistentFlags().Bool("full", false, "Return the full response without agent-oriented truncation")
 	dciCmd.PersistentFlags().Bool("no-truncate", false, "Disable long-value truncation")
 	dciCmd.PersistentFlags().Bool("yes", false, "Confirm a destructive operation")
