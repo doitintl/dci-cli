@@ -15,15 +15,15 @@ func shapeResponseBody(body interface{}) interface{} {
 	excluded := commaSeparatedValues(viper.GetString("agent-exclude"))
 	if len(fields) > 0 {
 		matchedFields := make(map[string]bool, len(fields))
-		var comparable bool
-		body, comparable = projectResponseValue(body, fields, matchedFields)
+		var hasComparableRows bool
+		body, hasComparableRows = projectResponseValue(body, fields, matchedFields)
 		missingFields := make([]string, 0, len(fields))
 		for _, field := range fields {
 			if !matchedFields[field] {
 				missingFields = append(missingFields, field)
 			}
 		}
-		if comparable && len(missingFields) > 0 && cli.Stderr != nil {
+		if hasComparableRows && len(missingFields) > 0 && cli.Stderr != nil {
 			fmt.Fprintf(cli.Stderr, "warning: requested fields not present in the response: %s\n", strings.Join(missingFields, ", "))
 		}
 	}
@@ -75,14 +75,14 @@ func projectResponseValue(value interface{}, fields []string, matchedFields map[
 	case []interface{}:
 		return projectRows(item, fields, matchedFields)
 	case map[string]interface{}:
-		if result, comparable, ok := projectNestedRows(item, fields, matchedFields); ok {
-			return result, comparable
+		if result, hasComparableRows, ok := projectNestedRows(item, fields, matchedFields); ok {
+			return result, hasComparableRows
 		}
 		if key, rows, ok := listWrapperRows(item); ok {
 			result := copyObject(item)
-			projectedRows, comparable := projectRows(rows, fields, matchedFields)
+			projectedRows, hasComparableRows := projectRows(rows, fields, matchedFields)
 			result[key] = projectedRows
-			return result, comparable
+			return result, hasComparableRows
 		}
 		return projectObject(item, fields, matchedFields)
 	default:
@@ -92,13 +92,13 @@ func projectResponseValue(value interface{}, fields []string, matchedFields map[
 
 func projectRows(rows []interface{}, fields []string, matchedFields map[string]bool) ([]interface{}, bool) {
 	result := make([]interface{}, len(rows))
-	comparable := false
+	hasComparableRows := false
 	for index, row := range rows {
 		var rowComparable bool
 		result[index], rowComparable = projectObject(row, fields, matchedFields)
-		comparable = comparable || rowComparable
+		hasComparableRows = hasComparableRows || rowComparable
 	}
-	return result, comparable
+	return result, hasComparableRows
 }
 
 func projectNestedRows(root map[string]interface{}, fields []string, matchedFields map[string]bool) (map[string]interface{}, bool, bool) {
@@ -113,17 +113,17 @@ func projectNestedRows(root map[string]interface{}, fields []string, matchedFiel
 		}
 		result := copyObject(root)
 		projectedContainer := copyObject(container)
-		projectedRows, comparable := projectSchemaRows(rows, readReportSchemaColumnNames(container["schema"]), fields, matchedFields)
+		projectedRows, hasComparableRows := projectSchemaRows(rows, readReportSchemaColumnNames(container["schema"]), fields, matchedFields)
 		projectedContainer["rows"] = projectedRows
 		result[key] = projectedContainer
-		return result, comparable, true
+		return result, hasComparableRows, true
 	}
 	return nil, false, false
 }
 
 func projectSchemaRows(rows []interface{}, schema []string, fields []string, matchedFields map[string]bool) ([]interface{}, bool) {
 	result := make([]interface{}, len(rows))
-	comparable := false
+	hasComparableRows := false
 	for index, row := range rows {
 		if cells, ok := row.([]interface{}); ok {
 			object := make(map[string]interface{}, len(cells))
@@ -131,14 +131,14 @@ func projectSchemaRows(rows []interface{}, schema []string, fields []string, mat
 				object[reportColumnName(schema, cellIndex)] = cell
 			}
 			result[index], _ = projectObject(object, fields, matchedFields)
-			comparable = true
+			hasComparableRows = true
 			continue
 		}
 		var rowComparable bool
 		result[index], rowComparable = projectObject(row, fields, matchedFields)
-		comparable = comparable || rowComparable
+		hasComparableRows = hasComparableRows || rowComparable
 	}
-	return result, comparable
+	return result, hasComparableRows
 }
 
 func listWrapperRows(object map[string]interface{}) (string, []interface{}, bool) {
