@@ -19,6 +19,38 @@ const (
 	skillManifestName = ".dci-skill-manifest.json"
 )
 
+var releasedSkillFileDigests = map[string]map[string]bool{
+	"SKILL.md": {
+		"cba678af093b07de01367d6c2ba46011902333c2c75f36c46726ff7b5d20ec31": true,
+		"70558f9b0181578db580f3dd6556d9f0ee318ddb259244a8da1a1dbf5c7e588a": true,
+		"d444ea090c6822c5b87317630bee3a4acbc04a4aeb2aa237830f645b11e02992": true,
+		"67b73db41a4860739892c4a750cd1a82287f4df19915928e403adfe3509885bf": true,
+	},
+	"agents/openai.yaml": {
+		"71d2d01635821bea91a2db815e1699766423c2c1673b25536448f9e0f97ba31e": true,
+	},
+	"references/capabilities.md": {
+		"d8fd324802123cab31be090f26e75ca79df0ca6f7f3811e74f550e4a7ab79c0f": true,
+		"b1d4c321f88af2d39f30be7951079111d18e9c8618e039b36a2eb640a1c3d3a6": true,
+	},
+	"references/cost-optimization.md": {
+		"48fe64d32e6b9769f27afdd24b2a032a3f2d71fb5caa9d3b10e034aa5a6bf583": true,
+		"2130c2318e4a8317a5bea8e7c5efb0f538dcfd5fa00a4335587993a90b1467e2": true,
+	},
+	"references/evals.md": {
+		"0e2285fb4f0dc2861bcf9e9bf1cbc9c8245a15f941be0ffadba5fb4d5e6fc500": true,
+		"d17a339500cf9c522d4ecbe25b458d11f6c94478709ae0c8ef737876b6051c7c": true,
+	},
+	"references/examples.md": {
+		"ba70cadac261149b4d9d1f83778045a60861db1a563283268d2de4f7468ae33f": true,
+		"6cabc1c6234315f720757cec0ff222cbc93d470f4dae4528f073d25b2e8fe39b": true,
+	},
+	"references/query-patterns.md": {
+		"5bb6f96b32ef1979a6411010d36ed9b11f14ade8a480685fa1f0a867197b583e": true,
+		"96dcf10a7b3e696a8e68a8ed61dbb39618a129b7d21fecd741afff7945b5727f": true,
+	},
+}
+
 type skillAgent struct {
 	Name        string
 	RelativeDir string
@@ -92,15 +124,22 @@ func installSkillSafely(targetDir string, force bool) ([]string, error) {
 		return nil, fmt.Errorf("installed skill has local changes to %s; inspect them and re-run with --force to overwrite", strings.Join(diff.LocalChangePaths(), ", "))
 	}
 	backups := make([]string, 0, len(diff.Changed))
-	if force {
+	if force && len(diff.Changed) > 0 {
+		backupRoot, err := os.MkdirTemp(filepath.Dir(root), ".dci-cli-backup-*")
+		if err != nil {
+			return nil, err
+		}
 		for _, relativePath := range diff.Changed {
 			path := filepath.Join(root, relativePath)
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return nil, err
 			}
-			backupPath := path + ".bak"
-			if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+			backupPath := filepath.Join(backupRoot, relativePath)
+			if err := os.MkdirAll(filepath.Dir(backupPath), 0o755); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(backupPath, data, 0o600); err != nil {
 				return nil, err
 			}
 			backups = append(backups, backupPath)
@@ -210,7 +249,15 @@ func inspectInstalledSkill(targetDir string) (skillDiff, error) {
 	if !hasManifest {
 		baseline = make(map[string]string, len(embedded))
 		for relativePath, data := range embedded {
-			baseline[relativePath] = skillFileDigest(data)
+			embeddedDigest := skillFileDigest(data)
+			baseline[relativePath] = embeddedDigest
+			installed, readErr := os.ReadFile(filepath.Join(root, relativePath))
+			if readErr == nil {
+				installedDigest := skillFileDigest(installed)
+				if installedDigest == embeddedDigest || releasedSkillFileDigests[relativePath][installedDigest] {
+					baseline[relativePath] = installedDigest
+				}
+			}
 		}
 	}
 
@@ -331,6 +378,9 @@ func registerSkillCommands() {
 		Short: "Manage the dci skill for AI agents",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if installForce && !installAll {
+				return errorsForInvalidAgentArgument("--force requires --all or a named agent")
+			}
 			if !installAll {
 				return command.Help()
 			}
