@@ -34,6 +34,9 @@ func TestBuildCommandCatalog(t *testing.T) {
 			QueryParams: []*cli.Param{
 				{Name: "dryRun", Type: "boolean", Description: "Use the API simulation"},
 			},
+			HeaderParams: []*cli.Param{
+				{Name: "Idempotency-Key", Type: "string", Description: "Idempotency key"},
+			},
 		},
 		{Name: "list-budgets", Short: "List budgets", Method: "GET"},
 	}}
@@ -83,6 +86,7 @@ func TestBuildCommandCatalog(t *testing.T) {
 		}
 	}
 	dryRunFlags := 0
+	foundRequiredIdempotencyKey := false
 	for _, flag := range cancelInviteEntry.Flags {
 		if flag.Name == "--dry-run" {
 			dryRunFlags++
@@ -93,9 +97,15 @@ func TestBuildCommandCatalog(t *testing.T) {
 				t.Fatalf("dry-run safety role = %q", flag.SafetyRole)
 			}
 		}
+		if flag.Name == "--idempotency-key" && flag.Required {
+			foundRequiredIdempotencyKey = true
+		}
 	}
 	if dryRunFlags != 1 {
 		t.Fatalf("dry-run flags = %d", dryRunFlags)
+	}
+	if !foundRequiredIdempotencyKey {
+		t.Fatal("catalog did not mark --idempotency-key as required")
 	}
 }
 
