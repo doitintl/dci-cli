@@ -6,24 +6,13 @@ on:
 
 permissions:
   contents: read
-  issues: write
+  pull-requests: write
 
 jobs:
   assign-author:
-    if: ${{ github.event.pull_request.user.type == 'User' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      - uses: toshimaru/auto-author-assign@5cd66f093de6691e0812ef186b7492589b0b7866
         with:
-          script: |
-            try {
-              await github.rest.issues.addAssignees({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                assignees: [context.payload.pull_request.user.login],
-              });
-            } catch (error) {
-              core.warning(`Could not assign PR author: ${error.message}`);
-            }
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
