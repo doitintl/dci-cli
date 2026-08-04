@@ -268,8 +268,8 @@ func run() (exitCode int) {
 	cli.Defaults()
 	overrideTableOutput()
 	installOutputGuard()
-	installDestructiveActionSummaryGuard()
 	installResponseGuard()
+	installDestructiveActionSummaryGuard()
 	registerAgentFlags()
 	printFirstRunOnboarding(configured)
 	maybeHintAgentMode()
@@ -1565,6 +1565,14 @@ func isHTMLErrorPage(resp cli.Response) bool {
 		return bodyLooksLikeHTML(string(b))
 	}
 	return false
+}
+
+func isErrorResponseBody(resp cli.Response) bool {
+	if isHTMLErrorPage(resp) {
+		return true
+	}
+	_, applicationError := jsonApplicationError(resp)
+	return applicationError
 }
 
 func bodyLooksLikeHTML(s string) bool {

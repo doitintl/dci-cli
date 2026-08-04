@@ -79,10 +79,7 @@ type destructiveActionSummaryGuard struct {
 
 func (guard destructiveActionSummaryGuard) Format(response cli.Response) error {
 	if destructiveActionName != "" && response.Status >= 200 && response.Status < 300 {
-		if isHTMLErrorPage(response) {
-			return guard.next.Format(response)
-		}
-		if _, applicationError := jsonApplicationError(response); applicationError {
+		if isErrorResponseBody(response) {
 			return guard.next.Format(response)
 		}
 		response.Body = actionResult{
