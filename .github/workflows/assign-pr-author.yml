@@ -1,8 +1,12 @@
 name: Assign PR Author
 
 on:
-  pull_request_target:
-    types: [opened, reopened]
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -13,6 +17,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: toshimaru/auto-author-assign@5cd66f093de6691e0812ef186b7492589b0b7866
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: toshimaru/auto-author-assign@3e19bfc990cb1cf0589dce95e9f75289bb1e22de # v3.0.3
