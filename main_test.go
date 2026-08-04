@@ -109,6 +109,7 @@ func TestNormalizeArgs(t *testing.T) {
 
 func TestRegisterVersionCommand(t *testing.T) {
 	setupTestRoot(t)
+	cli.Root.Use = "custom-dci"
 	registerVersionCommand()
 
 	command, _, err := cli.Root.Find([]string{"version"})
@@ -124,7 +125,7 @@ func TestRegisterVersionCommand(t *testing.T) {
 	var output strings.Builder
 	command.SetOut(&output)
 	command.Run(command, nil)
-	want := fmt.Sprintf("%s version %s\n", cli.Root.Name(), version)
+	want := fmt.Sprintf("custom-dci version %s\n", version)
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
 	}
