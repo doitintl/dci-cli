@@ -165,3 +165,25 @@ func TestDestructiveActionSummaryDoesNotMaskApplicationErrors(t *testing.T) {
 		t.Fatalf("response body = %#v", next.got.Body)
 	}
 }
+
+func TestDestructiveActionSummaryDoesNotMaskHTMLErrors(t *testing.T) {
+	destructiveActionName = "delete-budget"
+	t.Cleanup(func() { destructiveActionName = "" })
+
+	next := &recordingFormatter{}
+	guard := destructiveActionSummaryGuard{next: next}
+	err := guard.Format(cli.Response{
+		Status:  200,
+		Headers: map[string]string{"Content-Type": "text/html"},
+		Body:    "<html>upstream error</html>",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.called {
+		t.Fatal("formatter was not called")
+	}
+	if next.got.Body != "<html>upstream error</html>" {
+		t.Fatalf("response body = %#v", next.got.Body)
+	}
+}
