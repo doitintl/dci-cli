@@ -32,6 +32,14 @@ func TestDestructiveConfirmation(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts environment confirmation", func(t *testing.T) {
+		viper.Reset()
+		t.Setenv("DCI_CONFIRM_DESTRUCTIVE", "1")
+		if err := enforceDestructiveConfirmation(command, []string{"budget-1"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("dry run does not execute", func(t *testing.T) {
 		viper.Reset()
 		viper.Set("agent-dry-run", true)
@@ -123,7 +131,13 @@ func TestDestructiveCommandClassification(t *testing.T) {
 		{Name: "delete-datahub-events-by-filter", Method: "POST"},
 		{Name: "trigger-cloudflow-webhook", Method: "POST"},
 		{Name: "assign-objects-to-label", Method: "POST"},
+		{Name: "activate-contract", Method: "POST"},
 		{Name: "update-user", Method: "PATCH"},
+		{Name: "update-aws-feature", Method: "PUT"},
+		{Name: "update-cloudflow-connection", Method: "PATCH"},
+		{Name: "update-contract", Method: "POST"},
+		{Name: "update-contract-template", Method: "PUT"},
+		{Name: "update-resource-permission", Method: "PUT"},
 		{Name: "list-budgets", Method: "GET"},
 	})
 	for _, name := range []string{
@@ -133,7 +147,13 @@ func TestDestructiveCommandClassification(t *testing.T) {
 		"delete-datahub-events-by-filter",
 		"trigger-cloudflow-webhook",
 		"assign-objects-to-label",
+		"activate-contract",
 		"update-user",
+		"update-aws-feature",
+		"update-cloudflow-connection",
+		"update-contract",
+		"update-contract-template",
+		"update-resource-permission",
 	} {
 		if !isDestructiveCommand(&cobra.Command{Use: name}) {
 			t.Errorf("%s was not classified as destructive", name)
@@ -141,5 +161,49 @@ func TestDestructiveCommandClassification(t *testing.T) {
 	}
 	if isDestructiveCommand(&cobra.Command{Use: "list-budgets"}) {
 		t.Fatal("read-only command was classified as destructive")
+	}
+}
+
+func TestDestructiveActionSummaryDoesNotMaskApplicationErrors(t *testing.T) {
+	destructiveActionName = "delete-budget"
+	t.Cleanup(func() { destructiveActionName = "" })
+
+	next := &recordingFormatter{}
+	guard := destructiveActionSummaryGuard{next: next}
+	err := guard.Format(cli.Response{
+		Status: 200,
+		Body:   map[string]interface{}{"error": "deletion failed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.called {
+		t.Fatal("formatter was not called")
+	}
+	body, ok := next.got.Body.(map[string]interface{})
+	if !ok || body["error"] != "deletion failed" {
+		t.Fatalf("response body = %#v", next.got.Body)
+	}
+}
+
+func TestDestructiveActionSummaryDoesNotMaskHTMLErrors(t *testing.T) {
+	destructiveActionName = "delete-budget"
+	t.Cleanup(func() { destructiveActionName = "" })
+
+	next := &recordingFormatter{}
+	guard := destructiveActionSummaryGuard{next: next}
+	err := guard.Format(cli.Response{
+		Status:  200,
+		Headers: map[string]string{"Content-Type": "text/html"},
+		Body:    "<html>upstream error</html>",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.called {
+		t.Fatal("formatter was not called")
+	}
+	if next.got.Body != "<html>upstream error</html>" {
+		t.Fatalf("response body = %#v", next.got.Body)
 	}
 }

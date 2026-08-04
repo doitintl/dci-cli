@@ -1,0 +1,32 @@
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "*.md"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - go.mod
+          - go.sum
+
+release:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .goreleaser.yaml
+          - .github/workflows/release.yml
+          - .github/workflows/post-release-verify.yml
+          - .github/workflows/sync-manifests.yml
+
+packaging:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packaging/**"
+          - "Formula/**"
+          - "bucket/**"
+
+automation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - .github/labeler.yml
+          - .github/dependabot.yml
