@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rest-sh/restish/cli"
 )
 
 func TestEmbeddedSkillFilesIncludesTokenEstimates(t *testing.T) {
@@ -147,6 +149,32 @@ func TestInspectInstalledSkillDoesNotBlockOnExtraFiles(t *testing.T) {
 	}
 }
 
+func TestInspectInstalledSkillAcceptsReleasedFilesWithoutManifest(t *testing.T) {
+	target := t.TempDir()
+	if err := installSkill(target); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(target, "skills", "dci-cli")
+	if err := os.Remove(filepath.Join(root, skillManifestName)); err != nil {
+		t.Fatal(err)
+	}
+	previous := []byte("previous released skill\n")
+	previousDigest := skillFileDigest(previous)
+	releasedSkillFileDigests["SKILL.md"][previousDigest] = true
+	t.Cleanup(func() { delete(releasedSkillFileDigests["SKILL.md"], previousDigest) })
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), previous, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := inspectInstalledSkill(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff.HasLocalChanges() {
+		t.Fatalf("released manifest-free install was treated as a local edit: %+v", diff)
+	}
+}
+
 func TestInstallSkillSafelyProtectsAndBacksUpLocalEdits(t *testing.T) {
 	target := t.TempDir()
 	if err := installSkill(target); err != nil {
@@ -177,10 +205,13 @@ func TestInstallSkillSafelyProtectsAndBacksUpLocalEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(backups) != 1 || backups[0] != path+".bak" {
+	if len(backups) != 1 {
 		t.Fatalf("backups = %v", backups)
 	}
-	backup, err := os.ReadFile(path + ".bak")
+	if strings.HasPrefix(backups[0], filepath.Join(target, "skills", "dci-cli")+string(filepath.Separator)) {
+		t.Fatalf("backup was created inside the managed skill root: %s", backups[0])
+	}
+	backup, err := os.ReadFile(backups[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,6 +224,44 @@ func TestInstallSkillSafelyProtectsAndBacksUpLocalEdits(t *testing.T) {
 	}
 	if strings.Contains(string(installed), "LOCAL EDIT") {
 		t.Fatal("forced update did not restore the embedded file")
+	}
+
+	secondEdit := append(append([]byte{}, installed...), []byte("\nSECOND EDIT\n")...)
+	if err := os.WriteFile(path, secondEdit, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secondBackups, err := installSkillSafely(target, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondBackups) != 1 || secondBackups[0] == backups[0] {
+		t.Fatalf("repeated force backups = %v, first backups = %v", secondBackups, backups)
+	}
+	if _, err := os.Stat(backups[0]); err != nil {
+		t.Fatalf("first backup was not preserved: %v", err)
+	}
+	secondBackup, err := os.ReadFile(secondBackups[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(secondBackup), "SECOND EDIT") {
+		t.Fatal("second backup does not contain the second local edit")
+	}
+}
+
+func TestSkillForceRequiresAllOrNamedAgent(t *testing.T) {
+	setupTestRoot(t)
+	registerSkillCommands()
+	command, _, err := cli.Root.Find([]string{"skill"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	err = command.RunE(command, nil)
+	if err == nil || !strings.Contains(err.Error(), "--force requires --all or a named agent") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
