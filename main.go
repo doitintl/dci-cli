@@ -1406,12 +1406,10 @@ func addOutputFlag() {
 		bindNonNegativeIntFlag(cmd, "table-width")
 		bindNonNegativeIntFlag(cmd, "table-max-col-width")
 		for flagName, configName := range map[string]string{
-			"fields":      "agent-fields",
-			"exclude":     "agent-exclude",
-			"full":        "agent-full",
-			"no-truncate": "agent-no-truncate",
-			"yes":         "agent-confirm-destructive",
-			"dry-run":     "agent-dry-run",
+			"fields":  "agent-fields",
+			"exclude": "agent-exclude",
+			"yes":     "agent-confirm-destructive",
+			"dry-run": "agent-dry-run",
 		} {
 			if flag := cmd.Flags().Lookup(flagName); flag != nil {
 				viper.Set(configName, flag.Value.String())

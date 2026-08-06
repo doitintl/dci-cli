@@ -243,8 +243,6 @@ func agentContractCatalogFlags() []commandCatalogFlag {
 	for _, optional := range []commandCatalogFlag{
 		{Name: "--exclude", Type: "string", Description: "Exclude response fields"},
 		{Name: "--fields", Type: "string", Description: "Select response fields"},
-		{Name: "--full", Type: "bool", Default: false, Description: "Disable agent-oriented truncation"},
-		{Name: "--no-truncate", Type: "bool", Default: false, Description: "Disable long-value truncation"},
 	} {
 		if apiCommand.PersistentFlags().Lookup(strings.TrimPrefix(optional.Name, "--")) != nil {
 			flags = append(flags, optional)

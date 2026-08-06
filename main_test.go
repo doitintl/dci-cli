@@ -1116,6 +1116,19 @@ func TestFilterObjectColumns(t *testing.T) {
 			t.Errorf("visible = %v, want %v", visible, keys)
 		}
 	})
+
+	t.Run("long strings remain visible", func(t *testing.T) {
+		longDescription := strings.Repeat("a", 3000)
+		rows := []map[string]interface{}{{"id": "item-1", "description": longDescription}}
+		keys := []string{"id", "description"}
+		visible, hidden := filterObjectColumns(rows, keys)
+		if len(hidden) != 0 {
+			t.Fatalf("hidden = %v, want empty", hidden)
+		}
+		if !reflect.DeepEqual(visible, keys) {
+			t.Fatalf("visible = %v, want %v", visible, keys)
+		}
+	})
 }
 
 // --- measureContentWidths tests ---
