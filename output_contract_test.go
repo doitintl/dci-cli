@@ -52,6 +52,162 @@ func TestShapeResponseBodyProjectsExcludesAndTruncates(t *testing.T) {
 	}
 }
 
+func TestExcludeHonorsWrapperFieldsWithoutRecursingIntoNestedObjects(t *testing.T) {
+	viper.Set("agent-exclude", "rowCount,amount")
+	t.Cleanup(viper.Reset)
+
+	input := map[string]interface{}{
+		"budgets": []interface{}{
+			map[string]interface{}{
+				"id":     "budget-1",
+				"amount": 1000,
+				"alertThresholds": []interface{}{
+					map[string]interface{}{"amount": 900, "percentage": 90},
+				},
+			},
+		},
+		"rowCount": 1,
+	}
+
+	shaped := shapeResponseBody(input).(map[string]interface{})
+	if _, exists := shaped["rowCount"]; exists {
+		t.Fatal("explicitly excluded rowCount remains")
+	}
+	row := shaped["budgets"].([]interface{})[0].(map[string]interface{})
+	if _, exists := row["amount"]; exists {
+		t.Fatal("top-level row amount remains")
+	}
+	threshold := row["alertThresholds"].([]interface{})[0].(map[string]interface{})
+	if threshold["amount"] != 900 {
+		t.Fatalf("nested amount = %#v", threshold["amount"])
+	}
+}
+
+func TestExcludeHonorsListWrapperKey(t *testing.T) {
+	viper.Set("agent-exclude", "budgets")
+	t.Cleanup(viper.Reset)
+
+	input := map[string]interface{}{
+		"budgets":  []interface{}{map[string]interface{}{"id": "budget-1"}},
+		"rowCount": 1,
+	}
+	shaped := shapeResponseBody(input).(map[string]interface{})
+	if _, exists := shaped["budgets"]; exists {
+		t.Fatal("explicitly excluded list wrapper remains")
+	}
+	if shaped["rowCount"] != 1 {
+		t.Fatalf("rowCount = %#v", shaped["rowCount"])
+	}
+}
+
+func TestExcludeFiltersReportSchemaAndPositionalRows(t *testing.T) {
+	viper.Set("agent-exclude", "cost")
+	t.Cleanup(viper.Reset)
+
+	input := map[string]interface{}{
+		"result": map[string]interface{}{
+			"schema": []interface{}{
+				map[string]interface{}{"name": "service"},
+				map[string]interface{}{"name": "cost"},
+			},
+			"rows": []interface{}{[]interface{}{"BigQuery", 123.45}},
+		},
+	}
+	shaped := shapeResponseBody(input).(map[string]interface{})
+	result := shaped["result"].(map[string]interface{})
+	wantSchema := []interface{}{map[string]interface{}{"name": "service"}}
+	if !reflect.DeepEqual(result["schema"], wantSchema) {
+		t.Fatalf("schema = %#v, want %#v", result["schema"], wantSchema)
+	}
+	wantRows := []interface{}{[]interface{}{"BigQuery"}}
+	if !reflect.DeepEqual(result["rows"], wantRows) {
+		t.Fatalf("rows = %#v, want %#v", result["rows"], wantRows)
+	}
+}
+
+func TestExcludeHonorsReportContainerFields(t *testing.T) {
+	viper.Set("agent-exclude", "schema")
+	t.Cleanup(viper.Reset)
+
+	input := map[string]interface{}{
+		"result": map[string]interface{}{
+			"schema": []interface{}{map[string]interface{}{"name": "service"}},
+			"rows":   []interface{}{[]interface{}{"BigQuery"}},
+		},
+	}
+	result := shapeResponseBody(input).(map[string]interface{})["result"].(map[string]interface{})
+	if _, exists := result["schema"]; exists {
+		t.Fatal("explicitly excluded schema remains")
+	}
+	if _, exists := result["rows"]; !exists {
+		t.Fatal("rows were removed with schema")
+	}
+}
+
+func TestUnknownProjectionFieldsWriteWarning(t *testing.T) {
+	viper.Set("agent-fields", "id,nosuchfield")
+	oldStderr := cli.Stderr
+	var stderr bytes.Buffer
+	cli.Stderr = &stderr
+	t.Cleanup(func() {
+		cli.Stderr = oldStderr
+		viper.Reset()
+	})
+
+	input := map[string]interface{}{
+		"budgets":  []interface{}{map[string]interface{}{"id": "budget-1"}},
+		"rowCount": 1,
+	}
+	shaped := shapeResponseBody(input).(map[string]interface{})
+	if !strings.Contains(stderr.String(), "requested fields not present in the response: nosuchfield") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "response: id") {
+		t.Fatalf("matched field was reported missing: %q", stderr.String())
+	}
+	if shaped["rowCount"] != 1 {
+		t.Fatalf("rowCount = %#v", shaped["rowCount"])
+	}
+}
+
+func TestProjectionWarningUsesObjectReportRowFields(t *testing.T) {
+	viper.Set("agent-fields", "service")
+	oldStderr := cli.Stderr
+	var stderr bytes.Buffer
+	cli.Stderr = &stderr
+	t.Cleanup(func() {
+		cli.Stderr = oldStderr
+		viper.Reset()
+	})
+
+	input := map[string]interface{}{
+		"result": map[string]interface{}{
+			"schema": []interface{}{map[string]interface{}{"name": "colA"}},
+			"rows":   []interface{}{map[string]interface{}{"service": "BigQuery"}},
+		},
+	}
+	shapeResponseBody(input)
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestEmptyProjectionDoesNotWarn(t *testing.T) {
+	viper.Set("agent-fields", "id")
+	oldStderr := cli.Stderr
+	var stderr bytes.Buffer
+	cli.Stderr = &stderr
+	t.Cleanup(func() {
+		cli.Stderr = oldStderr
+		viper.Reset()
+	})
+
+	shapeResponseBody([]interface{}{})
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestShapeResponseBodyDefinitiveEmptyState(t *testing.T) {
 	oldAgentMode := agentMode
 	agentMode = true
