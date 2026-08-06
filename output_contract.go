@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-const defaultAgentTruncationLength = 2000
-
 func shapeResponseBody(body interface{}) interface{} {
 	fields := commaSeparatedValues(viper.GetString("agent-fields"))
 	excluded := commaSeparatedValues(viper.GetString("agent-exclude"))
@@ -29,9 +27,6 @@ func shapeResponseBody(body interface{}) interface{} {
 	}
 	if len(excluded) > 0 {
 		body = excludeResponseValue(body, excluded)
-	}
-	if agentMode && !viper.GetBool("agent-full") && !viper.GetBool("agent-no-truncate") {
-		body = truncateResponseValue(body, defaultAgentTruncationLength)
 	}
 	if agentMode {
 		body = makeEmptyStateDefinitive(body)

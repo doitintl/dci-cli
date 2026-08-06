@@ -10,19 +10,18 @@ import (
 	"github.com/spf13/viper"
 )
 
-func TestShapeResponseBodyProjectsExcludesAndTruncates(t *testing.T) {
+func TestShapeResponseBodyProjectsAndExcludesWithoutChangingValueTypes(t *testing.T) {
 	oldAgentMode := agentMode
 	agentMode = true
 	viper.Set("agent-fields", "id,description,owner")
 	viper.Set("agent-exclude", "owner")
-	viper.Set("agent-full", false)
-	viper.Set("agent-no-truncate", false)
 	t.Cleanup(func() {
 		agentMode = oldAgentMode
 		viper.Reset()
 	})
 
-	longValue := strings.Repeat("a", defaultAgentTruncationLength+9)
+	previousAgentTruncationLength := 2000
+	longValue := strings.Repeat("a", previousAgentTruncationLength+9)
 	input := map[string]interface{}{
 		"results": []interface{}{
 			map[string]interface{}{
@@ -43,9 +42,8 @@ func TestShapeResponseBodyProjectsExcludesAndTruncates(t *testing.T) {
 	if _, exists := row["ignored"]; exists {
 		t.Fatal("unselected field remains")
 	}
-	truncated := row["description"].(map[string]interface{})
-	if truncated["_truncated"] != 9 {
-		t.Fatalf("truncation marker = %v", truncated["_truncated"])
+	if row["description"] != longValue {
+		t.Fatalf("description changed type or value: %#v", row["description"])
 	}
 	if shaped["pageToken"] != "next" {
 		t.Fatal("wrapper metadata was removed")
