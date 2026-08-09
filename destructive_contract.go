@@ -18,6 +18,9 @@ var (
 	destructiveActionName   string
 	destructiveActionDryRun bool
 	destructiveCommandSet   = map[string]bool{}
+	destructiveMetadataRead bool
+	destructiveMetadataErr  error
+	loadOperationAPI        = cli.Load
 )
 
 // Non-DELETE operations belong here only when they can revoke access, alter financial contracts,
@@ -43,6 +46,8 @@ func resetDestructiveContractState() {
 	destructiveActionName = ""
 	destructiveActionDryRun = false
 	destructiveCommandSet = map[string]bool{}
+	destructiveMetadataRead = false
+	destructiveMetadataErr = nil
 }
 
 type destructiveConfirmationError struct {
@@ -122,25 +127,33 @@ func setDestructiveOperations(operations []cli.Operation) {
 	for _, operation := range operations {
 		destructiveCommandSet[operation.Name] = isDestructiveOperation(operation)
 	}
+	destructiveMetadataRead = true
+	destructiveMetadataErr = nil
 }
 
 func ensureDestructiveOperations() error {
-	if len(destructiveCommandSet) > 0 {
-		return nil
+	if destructiveMetadataRead {
+		return destructiveMetadataErr
 	}
-	base, err := apiBase()
+	api, err := loadDCIOperationAPI()
 	if err != nil {
 		return err
 	}
-	api, err := cli.Load(base, &cobra.Command{})
-	if err != nil {
-		return err
-	}
+	destructiveMetadataRead = true
 	if len(api.Operations) == 0 {
-		return errors.New("DCI operation metadata is unavailable")
+		destructiveMetadataErr = errors.New("DCI operation metadata is unavailable")
+		return destructiveMetadataErr
 	}
 	setDestructiveOperations(api.Operations)
 	return nil
+}
+
+func loadDCIOperationAPI() (cli.API, error) {
+	base, err := apiBase()
+	if err != nil {
+		return cli.API{}, err
+	}
+	return loadOperationAPI(base, &cobra.Command{})
 }
 
 func isDestructiveCommand(command *cobra.Command) bool {

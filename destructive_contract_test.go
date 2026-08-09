@@ -3,14 +3,115 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+func TestDestructiveMetadataReusesWarmRestishDiskCacheOffline(t *testing.T) {
+	bin := buildBinary(t)
+	var requests atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		if request.URL.Path != "/openapi.json" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{
+			"openapi": "3.0.0",
+			"info": {"title": "DCI test", "version": "1.0.0"},
+			"paths": {
+				"/budgets/{id}": {
+					"delete": {
+						"operationId": "delete-budget",
+						"parameters": [
+							{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+						],
+						"responses": {"204": {"description": "Deleted"}}
+					}
+				}
+			}
+		}`)
+	}))
+	t.Cleanup(server.Close)
+
+	home := t.TempDir()
+	configDir := filepath.Join(home, "xdg", "dci")
+	cacheDir := filepath.Join(home, "cache")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config, err := json.Marshal(map[string]interface{}{
+		"dci": map[string]interface{}{
+			"base":     server.URL,
+			"profiles": map[string]interface{}{"default": map[string]interface{}{}},
+			"tls":      map[string]interface{}{"insecure": true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	environment := []string{
+		"DCI_AGENT_MODE=1",
+		"DCI_API_BASE_URL=" + server.URL,
+		"DCI_CACHE_DIR=" + cacheDir,
+		"DCI_CONFIG_DIR=" + configDir,
+		"DCI_NO_UPDATE_CHECK=1",
+	}
+	first := runCLIWithEnv(t, bin, home, environment, "delete-budget", "budget-1")
+	if first.timedOut || first.exitCode != 30 || !strings.Contains(first.output, "requires confirmation") {
+		t.Fatalf("cold-cache command = %+v", first)
+	}
+	if requests.Load() == 0 {
+		t.Fatal("cold-cache command did not fetch operation metadata")
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, "dci.cbor")); err != nil {
+		t.Fatalf("operation metadata cache was not created: %v", err)
+	}
+
+	server.Close()
+	second := runCLIWithEnv(t, bin, home, environment, "delete-budget", "budget-1")
+	if second.timedOut || second.exitCode != 30 || !strings.Contains(second.output, "requires confirmation") {
+		t.Fatalf("warm-cache offline command = %+v", second)
+	}
+}
+
+func TestDestructiveMetadataDoesNotReloadEmptyOperationSet(t *testing.T) {
+	resetDestructiveContractState()
+	t.Setenv("DCI_API_BASE_URL", "https://api.example.com")
+	originalLoadOperationAPI := loadOperationAPI
+	var calls int
+	loadOperationAPI = func(base string, root *cobra.Command) (cli.API, error) {
+		calls++
+		return cli.API{}, nil
+	}
+	t.Cleanup(func() {
+		loadOperationAPI = originalLoadOperationAPI
+		resetDestructiveContractState()
+	})
+
+	for range 2 {
+		if err := ensureDestructiveOperations(); err == nil || err.Error() != "DCI operation metadata is unavailable" {
+			t.Fatalf("ensureDestructiveOperations() error = %v", err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("operation metadata loads = %d, want 1", calls)
+	}
+}
 
 func TestDestructiveConfirmation(t *testing.T) {
 	setDestructiveOperations([]cli.Operation{{Name: "delete-budget", Method: "DELETE"}})
