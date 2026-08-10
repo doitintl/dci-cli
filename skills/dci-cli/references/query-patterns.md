@@ -14,11 +14,12 @@ When a user asks for SQL, raw billing rows, or references an old `body.query:"SE
 dci query < query.json
 ```
 
+`query.json` — top 10 services by cost over the last 30 days:
+
 ```json
 {
   "config": {
     "dataSource": "billing",
-    "layout": "table",
     "timeInterval": "day",
     "timeRange": {
       "mode": "last",
@@ -32,6 +33,11 @@ dci query < query.json
         "value": "cost"
       }
     ],
+    "metricFilter": {
+      "metric": { "type": "basic", "value": "cost" },
+      "operator": "gt",
+      "values": [0.1]
+    },
     "group": [
       {
         "id": "service_description",
@@ -50,10 +56,23 @@ dci query < query.json
 }
 ```
 
+Practical rules:
+
+- **Always set a group `limit`.** An unlimited grouped query over 30 days can return thousands
+  of rows; agent mode caps output at 500 rows (`rowsOmitted` marks truncation) but the query
+  itself still does the full work.
+- **Add a `metricFilter`** (e.g. cost > 0.1) to drop zero-cost noise rows.
+- Use `timeInterval: "month"` for trend questions — far fewer rows than daily granularity.
+- Use `--rows keyed` when consuming results programmatically (`result.rows` become objects
+  keyed by schema names).
+- Use `--pivot --output table` when presenting results to a human.
+- Use `--output csv` for spreadsheet export.
+
 ## Recommended Agent Behavior
 
 - Translate SQL-oriented prompts only when their analysis goal is representable, and state any semantic differences.
 - Do not present an aggregated report config as equivalent to raw-row SQL inspection.
 - Use JSON for reusable cost reports, dashboards, and 30-day optimization workflows.
 - Prefer `--output toon` (compact, token-efficient; the agent-mode default). Use `--output json` when you need standard JSON, e.g. to pipe into `jq`.
+- Check `rowCount` / `rowsTotal` before loading full results into context.
 - Use env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context>` if a customer switch is needed temporarily.

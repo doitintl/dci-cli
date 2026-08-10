@@ -59,6 +59,7 @@ type skillAgent struct {
 var skillAgents = []skillAgent{
 	{Name: "claude", RelativeDir: ".claude"},
 	{Name: "codex", RelativeDir: ".codex"},
+	{Name: "cursor", RelativeDir: ".cursor"},
 	{Name: "kiro", RelativeDir: ".kiro"},
 	{Name: "gemini", RelativeDir: ".gemini"},
 	{Name: "opencode", RelativeDir: ".config/opencode"},

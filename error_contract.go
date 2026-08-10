@@ -195,7 +195,7 @@ func structuredErrorForStatus(status int, message string, headers map[string]str
 		result.Hint = authenticationFailureHint()
 	case 403:
 		result.Code = "PERMISSION_DENIED"
-		result.Hint = "Check the active customer context and your DoiT permissions"
+		result.Hint = authFailureHint(status)
 	case 404:
 		result.Code = "RESOURCE_NOT_FOUND"
 	case 409:
@@ -264,6 +264,37 @@ func firstHeaderValue(headers map[string]string, names ...string) string {
 		}
 	}
 	return ""
+}
+
+// resolvedCustomerContext holds the customer context applied to this run from
+// the env var or config file (the -D flag override lives in
+// customerContextFlagValue). Set by applyCustomerContext, reset per run().
+var resolvedCustomerContext string
+
+// activeCustomerContext returns the customer context in effect for the
+// current invocation, preferring an explicit -D flag override.
+func activeCustomerContext() string {
+	if customerContextFlagValue != "" {
+		return customerContextFlagValue
+	}
+	return resolvedCustomerContext
+}
+
+// authFailureHint returns a remediation hint for 401/403 responses that
+// matches how the user actually authenticated: pointing an API-key user at
+// `dci login` sends them to the wrong fix.
+func authFailureHint(status int) string {
+	if status == 403 {
+		hint := "Check the active customer context and your DoiT permissions"
+		if ctx := activeCustomerContext(); ctx != "" {
+			hint = fmt.Sprintf("Check the active customer context (%q) and your DoiT permissions", ctx)
+		}
+		return hint
+	}
+	if os.Getenv("DCI_API_KEY") != "" {
+		return "Check DCI_API_KEY: the token may be malformed, expired, or revoked (new tokens can take up to a minute to activate)"
+	}
+	return "Run: dci login"
 }
 
 func writeStructuredError(writer io.Writer, detail structuredError) {

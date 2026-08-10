@@ -36,7 +36,7 @@ Expected behavior:
 
 - explain that `dci query` takes a Cloud Analytics JSON config rather than SQL and cannot inspect raw billing rows
 - ask for the intended analysis goal before translating the request
-- produce `dci query < query.json` only if the goal is representable, with any semantic differences stated explicitly
+- produce `dci query < query.json` only if the goal is representable, using a small config with a group `limit` and stating any semantic differences explicitly
 
 ## Eval 4: Legacy SQL Example
 
@@ -93,8 +93,8 @@ Prompt:
 
 Expected behavior:
 
-- produce a JSON query config with a group limit
-- explain how to aggregate and rank top services
+- produce a JSON query config with a group `limit` and a `metricFilter`
+- explain how to aggregate and rank top services (`--rows keyed` + jq, or `--pivot` for display)
 - produce actionable recommendation categories rather than generic buckets
 
 ## Eval 9: Ask Ava a Cost Question

@@ -223,6 +223,7 @@ func main() {
 func run() (exitCode int) {
 	// Reset per-invocation state so repeated calls (e.g. in tests) start clean.
 	customerContextFlagValue = ""
+	resolvedCustomerContext = ""
 	nonJSONErrorResponse = false
 	resetErrorContractState()
 	resetDestructiveContractState()
@@ -305,11 +306,10 @@ func run() (exitCode int) {
 	registerDocsCommand()
 	registerSkillCommands()
 	registerCommandCatalog()
-	// Unhide the customer-context command for DoiT employees so it appears in help.
 	if cachedTokenIsDoer() {
-		for _, c := range cli.Root.Commands() {
-			if c.Use == "customer-context" {
-				c.Hidden = false
+		for _, command := range cli.Root.Commands() {
+			if command.Use == "customer-context" {
+				command.Hidden = false
 				break
 			}
 		}
@@ -328,19 +328,14 @@ func run() (exitCode int) {
 	if err := executeCLI(); err != nil {
 		return reportExecutionError(err, cli.GetLastStatus(), configDir)
 	}
-	code := cli.GetExitCode()
-	if agentErrorContractEnabled() {
-		code = exitCodeForProcessStatus(cli.GetLastStatus())
-		if responseExitCode != 0 {
-			code = responseExitCode
-		}
+	// One exit-code taxonomy for every mode: the same failure maps to the same
+	// exit code whether the CLI is driven by a human, an agent, or a script.
+	code := exitCodeForProcessStatus(cli.GetLastStatus())
+	if responseExitCode != 0 {
+		code = responseExitCode
 	}
 	if code == 0 && nonJSONErrorResponse {
-		if agentErrorContractEnabled() {
-			code = exitServer
-		} else {
-			code = 1
-		}
+		code = exitServer
 	}
 	maybeHintDoerContext(code, cli.GetLastStatus(), configDir)
 	return code
@@ -357,9 +352,13 @@ func reportExecutionError(err error, status int, configDir string) int {
 		return preflightError.ExitCode()
 	}
 	if !agentErrorContractEnabled() {
+		code := exitCodeForExecutionError(err, status)
+		if code == exitSuccess && isSilentExecutionError(err) {
+			return exitSuccess
+		}
 		fmt.Fprintf(os.Stderr, "%v\n", err)
-		maybeHintDoerContext(1, status, configDir)
-		return 1
+		maybeHintDoerContext(code, status, configDir)
+		return code
 	}
 	code := exitCodeForExecutionError(err, status)
 	if code == exitSuccess && isSilentExecutionError(err) {
@@ -991,6 +990,7 @@ func setupCompletion() {
 	// show help normally.
 	defaultHelp := cli.Root.HelpFunc()
 	cli.Root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		sanitizeFlagPlaceholders(cmd)
 		hasAPICommands := false
 		if cmd == cli.Root {
 			loadAPI()
@@ -1027,6 +1027,20 @@ func setupCompletion() {
 	})
 }
 
+// sanitizeFlagPlaceholders strips backticks from generated flag descriptions.
+// pflag renders a backticked word as the flag's value placeholder, so spec
+// descriptions like "together with `startDate`" would render as
+// "--end-date startDate" — the wrong flag's name in the placeholder position.
+func sanitizeFlagPlaceholders(cmd *cobra.Command) {
+	sanitize := func(flag *pflag.Flag) {
+		if strings.Count(flag.Usage, "`") >= 2 {
+			flag.Usage = strings.ReplaceAll(flag.Usage, "`", "")
+		}
+	}
+	cmd.LocalFlags().VisitAll(sanitize)
+	cmd.InheritedFlags().VisitAll(sanitize)
+}
+
 func registerCustomerContextCommands(configDir string) {
 	cmd := &cobra.Command{
 		Use:    "customer-context",
@@ -1040,13 +1054,14 @@ func registerCustomerContextCommands(configDir string) {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			token := strings.TrimSpace(args[0])
-			if token == "" {
-				return fmt.Errorf("customerContext cannot be empty")
+			if err := validateCustomerContextValue(token); err != nil {
+				return err
 			}
 			if err := os.WriteFile(customerContextPath(configDir), []byte(token+"\n"), 0o600); err != nil {
 				return err
 			}
 			fmt.Fprintln(os.Stdout, "customerContext saved")
+			fmt.Fprintln(os.Stderr, "Note: the context is applied to every subsequent command. Verify access with: dci validate")
 			return nil
 		},
 	})
@@ -1081,6 +1096,24 @@ func registerCustomerContextCommands(configDir string) {
 	cli.Root.AddCommand(cmd)
 }
 
+// validateCustomerContextValue applies syntactic checks before persisting a
+// customer context: a bad value silently breaks every subsequent command with
+// a 403, so obvious mistakes are rejected at set time.
+func validateCustomerContextValue(token string) error {
+	if token == "" {
+		return fmt.Errorf("customerContext cannot be empty")
+	}
+	if strings.ContainsAny(token, " \t\r\n") {
+		return fmt.Errorf("customerContext cannot contain whitespace")
+	}
+	// Valid contexts are customer domains (acme.com) or customer IDs (20-char
+	// alphanumeric). Anything shorter without a dot is almost certainly a typo.
+	if !strings.Contains(token, ".") && len(token) < 8 {
+		return fmt.Errorf("customerContext %q does not look like a customer domain (e.g. acme.com) or customer ID", token)
+	}
+	return nil
+}
+
 func brandDCIRootCommand() {
 	applyCommandBranding(findDCICommand(), "DoiT Cloud Intelligence API CLI", apiExamples)
 }
@@ -1109,6 +1142,14 @@ func registerStatusCommands(configDir string) {
 			fmt.Fprintf(os.Stdout, "API Base: %s\n", base)
 		}
 		fmt.Fprintf(os.Stdout, "Auth: %s\n", authSource())
+		switch {
+		case os.Getenv("DCI_API_KEY") != "":
+			_, _ = fmt.Fprintln(os.Stdout, "Session: API key set (verify identity and permissions with: dci validate)")
+		case cli.Cache != nil && cli.Cache.GetString("dci:default.token") != "":
+			_, _ = fmt.Fprintln(os.Stdout, "Session: cached OAuth token (verify with: dci validate)")
+		default:
+			_, _ = fmt.Fprintln(os.Stdout, "Session: not authenticated (run: dci login, or set DCI_API_KEY)")
+		}
 		fmt.Fprintf(os.Stdout, "Default Output: %s\n", currentOutput())
 		if agentMode {
 			fmt.Fprintf(os.Stdout, "Agent Mode: on (%s)\n", agentModeReason)
@@ -1366,6 +1407,7 @@ func isTenantHeader(h string) bool {
 
 func applyCustomerContext(configDir string) {
 	ctx := readCustomerContext(configDir)
+	resolvedCustomerContext = ctx
 	if ctx == "" {
 		return
 	}
@@ -1399,7 +1441,7 @@ func addOutputFlag() {
 		return
 	}
 
-	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, auto, toon (default: table, or toon in agent mode). toon is compact and token-efficient — good for LLM agents.")
+	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, csv, auto, toon (default: table, or toon in agent mode). toon is compact and token-efficient — good for LLM agents.")
 	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate) or wrap (multi-line)")
 	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include in table/toon output (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
@@ -1411,6 +1453,11 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("no-truncate", false, "Disable long-value truncation")
 	dciCmd.PersistentFlags().Bool("yes", false, "Confirm a destructive operation")
 	dciCmd.PersistentFlags().Bool("dry-run", false, "Preview a destructive operation without executing it")
+	dciCmd.PersistentFlags().Int("max-rows", -1, "Maximum report result rows to output (default: 500 in agent mode, unlimited otherwise; 0 = unlimited)")
+	dciCmd.PersistentFlags().String("rows", "", "Report row encoding: positional (default) or keyed (schema-named objects)")
+	dciCmd.PersistentFlags().Bool("pivot", false, "Pivot report results: groups as rows, time periods as columns, with totals")
+	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
+	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Print numbers unformatted in table output (no digit grouping or rounding)")
 
 	// Bind table flags into viper so the renderer can pick them up.
 	prev := dciCmd.PersistentPreRunE
@@ -1427,13 +1474,48 @@ func addOutputFlag() {
 		} else {
 			out := strings.TrimSpace(outFlag.Value.String())
 			switch out {
-			case "table", "json", "yaml", "auto", "toon":
+			case "table", "json", "yaml", "csv", "auto", "toon":
 				viper.Set("rsh-output-format", out)
 			default:
-				return fmt.Errorf("invalid --output %q (supported: table, json, yaml, auto, toon)", out)
+				return fmt.Errorf("invalid --output %q (supported: table, json, yaml, csv, auto, toon)", out)
 			}
 		}
 		defaultToBodyOutput()
+
+		// Always (re)set these keys: viper state persists across in-process
+		// runs, so conditional writes would leak a previous invocation's flags.
+		maxRows := -1 // auto: agent default in agent mode, unlimited otherwise
+		if flag := cmd.Flags().Lookup("max-rows"); flag != nil && flag.Changed {
+			v, err := strconv.Atoi(flag.Value.String())
+			if err != nil || v < 0 {
+				return fmt.Errorf("invalid --max-rows %q (use a non-negative integer; 0 = unlimited)", flag.Value.String())
+			}
+			maxRows = v
+		}
+		viper.Set("max-rows", maxRows)
+
+		rowsMode := ""
+		if flag := cmd.Flags().Lookup("rows"); flag != nil && flag.Changed {
+			rowsMode = strings.ToLower(strings.TrimSpace(flag.Value.String()))
+			switch rowsMode {
+			case "keyed", "positional":
+			default:
+				return fmt.Errorf("invalid --rows %q (supported: positional, keyed)", flag.Value.String())
+			}
+		}
+		viper.Set("rows-mode", rowsMode)
+
+		for flagName, configName := range map[string]string{
+			"pivot":              "pivot-rows",
+			"include-empty-rows": "include-empty-rows",
+			"raw-numbers":        "raw-numbers",
+		} {
+			value := false
+			if flag := cmd.Flags().Lookup(flagName); flag != nil {
+				value = flag.Value.String() == "true"
+			}
+			viper.Set(configName, value)
+		}
 
 		if flag := cmd.Flags().Lookup("table-mode"); flag != nil {
 			v := strings.TrimSpace(flag.Value.String())
@@ -1531,6 +1613,7 @@ func overrideTableOutput() {
 	// header for content negotiation, which is skipped at q=-1, so it's left
 	// empty — restish resolves --output by the short name ("toon").
 	cli.AddContentType("toon", "", -1, &dciToonContentType{})
+	cli.AddContentType("csv", "", -1, &dciCSVContentType{})
 }
 
 // nonJSONErrorResponse flags that the last API response was an error page/body
@@ -1546,10 +1629,28 @@ type dciResponseGuard struct {
 }
 
 func (g dciResponseGuard) Format(resp cli.Response) error {
-	if resp.Status >= 400 && agentErrorContractEnabled() {
-		responseExitCode = exitCodeForHTTPStatus(resp.Status)
-		writeStructuredError(cli.Stderr, structuredErrorForResponse(resp))
+	if resp.Status >= 400 {
+		if agentErrorContractEnabled() {
+			responseExitCode = exitCodeForHTTPStatus(resp.Status)
+			writeStructuredError(cli.Stderr, structuredErrorForResponse(resp))
+			if isHTMLErrorPage(resp) {
+				return nil
+			}
+			return g.next.Format(resp)
+		}
+		if agentUAMode == uaModeInteractive {
+			nonJSONErrorResponse = true
+			responseExitCode = exitCodeForHTTPStatus(resp.Status)
+			if isHTMLErrorPage(resp) {
+				printNonJSONError(resp)
+			} else {
+				printHumanAPIError(resp)
+			}
+			return nil
+		}
 		if isHTMLErrorPage(resp) {
+			nonJSONErrorResponse = true
+			printNonJSONError(resp)
 			return nil
 		}
 		return g.next.Format(resp)
@@ -1589,6 +1690,7 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 		fmt.Fprintf(cli.Stderr, "Error: the DoiT API returned an application error: %s\n", msg)
 		return nil
 	}
+	resp.Body = transformSuccessBody(resp.Body)
 	return g.next.Format(resp)
 }
 
@@ -1600,8 +1702,24 @@ func responseBodyIsEmpty(body interface{}) bool {
 		return strings.TrimSpace(value) == ""
 	case []byte:
 		return strings.TrimSpace(string(value)) == ""
-	default:
-		return false
+	}
+	return false
+}
+
+func printHumanAPIError(resp cli.Response) {
+	message := responseErrorMessage(resp.Body)
+	if message == "" {
+		message = fmt.Sprintf("DoiT API request failed with HTTP status %d", resp.Status)
+	}
+	_, _ = fmt.Fprintf(cli.Stderr, "Error: %s (HTTP %d)\n", message, resp.Status)
+	if trace := traceID(resp.Headers); trace != "" {
+		_, _ = fmt.Fprintf(cli.Stderr, "Trace: %s\n", trace)
+	}
+	if resp.Status == 401 || resp.Status == 403 {
+		if ctx := activeCustomerContext(); ctx != "" {
+			_, _ = fmt.Fprintf(cli.Stderr, "Active customer context: %s\n", ctx)
+		}
+		_, _ = fmt.Fprintf(cli.Stderr, "Hint: %s\n", authFailureHint(resp.Status))
 	}
 }
 
@@ -2056,16 +2174,17 @@ func extractGetReportRows(root map[string]interface{}) ([]map[string]interface{}
 			return nil, true, fmt.Errorf("error building table. result.rows must be an array")
 		}
 
+		schema := readReportSchema(container["schema"])
 		colNames := readReportSchemaColumnNames(container["schema"])
 		rows := make([]map[string]interface{}, 0, len(rowItems))
 		for _, item := range rowItems {
 			switch row := item.(type) {
 			case map[string]interface{}:
-				rows = append(rows, row)
+				rows = append(rows, displayTimestampFields(row, schema))
 			case []interface{}:
 				obj := map[string]interface{}{}
 				for i, cell := range row {
-					obj[reportColumnName(colNames, i)] = cell
+					obj[reportColumnName(colNames, i)] = displayTimestampCell(cell, schemaColumnType(schema, i))
 				}
 				rows = append(rows, obj)
 			default:
@@ -2267,21 +2386,26 @@ func measureContentWidths(rows []map[string]interface{}, keys []string) []int {
 	}
 	for _, row := range rows {
 		for i, k := range keys {
-			val := row[k]
-			if s, ok := val.([]interface{}); ok {
-				converted := make([]string, len(s))
-				for j := range s {
-					converted[j] = formatValue(s[j])
-				}
-				val = strings.Join(converted, ", ")
-			}
-			w := runewidth.StringWidth(formatValue(val))
+			w := runewidth.StringWidth(tableCellText(row[k]))
 			if w > widths[i] {
 				widths[i] = w
 			}
 		}
 	}
 	return widths
+}
+
+// tableCellText renders a raw row value as table cell text, joining arrays
+// the same way toon cells do.
+func tableCellText(val interface{}) string {
+	if s, ok := val.([]interface{}); ok {
+		converted := make([]string, len(s))
+		for j := range s {
+			converted[j] = formatValue(s[j])
+		}
+		return strings.Join(converted, ", ")
+	}
+	return formatTableValue(val)
 }
 
 // computeColumnWidths distributes terminal width across columns. Columns that
@@ -2309,10 +2433,10 @@ func computeColumnWidths(contentWidths []int, terminalWidth int, maxColWidth int
 	remaining, unsettled := settleNarrowColumns(widths, settled, capped, available, cols)
 	if unsettled > 0 {
 		distributeRemainder(widths, settled, remaining, unsettled, maxColWidth)
-	} else if remaining > 0 {
-		// All columns fit their content — distribute leftover evenly.
-		distributeEvenly(widths, remaining, maxColWidth)
 	}
+	// When every column fits its content, leftover terminal width stays
+	// unused: stretching short columns to fill wide terminals hurts
+	// readability.
 	return widths
 }
 
@@ -2377,23 +2501,6 @@ func distributeRemainder(widths []int, settled []bool, remaining int, unsettled 
 	}
 }
 
-// distributeEvenly spreads remaining space across all columns, respecting maxColWidth.
-func distributeEvenly(widths []int, remaining int, maxColWidth int) {
-	share := remaining / len(widths)
-	rem := remaining % len(widths)
-	for i := range widths {
-		add := share
-		if rem > 0 {
-			add++
-			rem--
-		}
-		widths[i] += add
-		if maxColWidth > 0 && widths[i] > maxColWidth {
-			widths[i] = maxColWidth
-		}
-	}
-}
-
 func tableOverhead(cols int) int {
 	if cols <= 0 {
 		return 0
@@ -2402,17 +2509,92 @@ func tableOverhead(cols int) int {
 	return 1 + 3*cols
 }
 
-// formatValue converts a raw cell value to a display string. Large float64
+// formatValue converts a raw cell value to a display string. Large numeric
 // values that look like Unix timestamps (milliseconds since epoch, roughly
-// 2001–2099) are formatted as ISO 8601 in UTC.
+// 2001–2099) are formatted as ISO 8601 in UTC. Both float64 and int64 are
+// handled: integral response numbers are normalized to int64.
 func formatValue(val interface{}) string {
-	f, ok := val.(float64)
-	if ok && f >= 1e12 && f < 4.1e12 {
-		sec := int64(f) / 1000
-		ms := int64(f) % 1000
-		return time.Unix(sec, ms*1e6).UTC().Format(time.RFC3339)
+	if ms, ok := numericCell(val); ok && ms >= 1e12 && ms < 4.1e12 {
+		sec := int64(ms) / 1000
+		rem := int64(ms) % 1000
+		return time.Unix(sec, rem*1e6).UTC().Format(time.RFC3339)
 	}
 	return fmt.Sprintf("%v", val)
+}
+
+// schemaColumnType returns the schema type of column i, or "" when unknown.
+func schemaColumnType(schema []reportColumn, i int) string {
+	if i >= 0 && i < len(schema) {
+		return schema[i].Type
+	}
+	return ""
+}
+
+// displayTimestampCell converts schema-declared timestamp cells (epoch
+// seconds) to ISO 8601 for the human-facing table/TOON renderers. Machine
+// formats (json, yaml, csv via raw rows) keep the raw epoch values.
+func displayTimestampCell(cell interface{}, colType string) interface{} {
+	if colType != "timestamp" && colType != "datetime" {
+		return cell
+	}
+	sec, ok := numericCell(cell)
+	if !ok || sec < 1e9 || sec >= 4.1e9 {
+		return cell
+	}
+	return time.Unix(int64(sec), 0).UTC().Format(time.RFC3339)
+}
+
+// displayTimestampFields applies displayTimestampCell to keyed rows.
+func displayTimestampFields(row map[string]interface{}, schema []reportColumn) map[string]interface{} {
+	if len(schema) == 0 {
+		return row
+	}
+	out := make(map[string]interface{}, len(row))
+	for k, v := range row {
+		out[k] = v
+	}
+	for _, col := range schema {
+		if v, ok := out[col.Name]; ok {
+			out[col.Name] = displayTimestampCell(v, col.Type)
+		}
+	}
+	return out
+}
+
+// formatTableValue renders a cell for table output: floats get digit grouping
+// and two decimals (unless --raw-numbers), everything else follows
+// formatValue.
+func formatTableValue(val interface{}) string {
+	f, ok := val.(float64)
+	if !ok || viper.GetBool("raw-numbers") {
+		return formatValue(val)
+	}
+	return groupDigits(fmt.Sprintf("%.2f", f))
+}
+
+// groupDigits inserts thousands separators into the integer part of a
+// formatted decimal number.
+func groupDigits(s string) string {
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	intPart, fracPart, hasFrac := strings.Cut(s, ".")
+	var b strings.Builder
+	for i, digit := range intPart {
+		if i > 0 && (len(intPart)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(digit)
+	}
+	out := b.String()
+	if hasFrac {
+		out += "." + fracPart
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
 }
 
 func buildTableString(rows []map[string]interface{}, keys []string, colWidths []int, mode string) (string, error) {
@@ -2443,16 +2625,14 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 		body := make([]*simpletable.Cell, 0, len(keys))
 		for i, k := range keys {
 			val := row[k]
-			if s, ok := val.([]interface{}); ok {
-				converted := make([]string, len(s))
-				for j := range s {
-					converted[j] = formatValue(s[j])
-				}
-				val = strings.Join(converted, ", ")
-			}
-			cellText := formatValue(val)
+			cellText := tableCellText(val)
 			cellText = formatCell(cellText, colWidths[i], mode)
-			body = append(body, &simpletable.Cell{Align: simpletable.AlignRight, Text: cellText})
+			// Numbers align right for magnitude comparison; text reads left.
+			align := simpletable.AlignLeft
+			if _, isNumeric := numericCell(val); isNumeric {
+				align = simpletable.AlignRight
+			}
+			body = append(body, &simpletable.Cell{Align: align, Text: cellText})
 		}
 		table.Body.Cells = append(table.Body.Cells, body)
 	}
@@ -2462,17 +2642,6 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 	// Replace the U+2800 padding placeholder with real spaces.
 	out = strings.ReplaceAll(out, "\u2800", " ")
 	return out, nil
-}
-
-func padMultilineCell(s string, width int) string {
-	if width <= 0 {
-		return s
-	}
-	lines := strings.Split(s, "\n")
-	for i := range lines {
-		lines[i] = padCell(lines[i], width)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func padCell(s string, width int) string {
@@ -2557,18 +2726,76 @@ func formatCell(val string, width int, mode string) string {
 	}
 }
 
+// wrapText soft-wraps at word boundaries when possible, falling back to a
+// hard break only for words wider than the column, so wrapped cells never
+// split words mid-token.
 func wrapText(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	var lines []string
+	for _, paragraph := range strings.Split(s, "\n") {
+		lines = append(lines, wrapLine(paragraph, width)...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func wrapLine(s string, width int) []string {
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return []string{s}
+	}
+	lines := []string{}
+	current := ""
+	currentWidth := 0
+	flush := func() {
+		if current != "" {
+			lines = append(lines, current)
+			current = ""
+			currentWidth = 0
+		}
+	}
+	for _, word := range words {
+		wordWidth := runewidth.StringWidth(word)
+		if wordWidth > width {
+			// A single over-wide token (URL, ID) must hard-break.
+			flush()
+			lines = append(lines, hardBreak(word, width)...)
+			if len(lines) > 0 {
+				last := lines[len(lines)-1]
+				lines = lines[:len(lines)-1]
+				current = last
+				currentWidth = runewidth.StringWidth(last)
+			}
+			continue
+		}
+		separator := 0
+		if current != "" {
+			separator = 1
+		}
+		if currentWidth+separator+wordWidth > width {
+			flush()
+			separator = 0
+		}
+		if separator == 1 {
+			current += " "
+			currentWidth++
+		}
+		current += word
+		currentWidth += wordWidth
+	}
+	flush()
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func hardBreak(s string, width int) []string {
 	var lines []string
 	var current strings.Builder
 	currentWidth := 0
 	for _, r := range s {
-		if r == '\n' {
-			lines = append(lines, current.String())
-			current.Reset()
-			currentWidth = 0
-			continue
-		}
-
 		rw := runewidth.RuneWidth(r)
 		if rw < 0 {
 			rw = 0
@@ -2578,19 +2805,13 @@ func wrapText(s string, width int) string {
 			current.Reset()
 			currentWidth = 0
 		}
-
 		current.WriteRune(r)
 		currentWidth += rw
-		if currentWidth >= width {
-			lines = append(lines, current.String())
-			current.Reset()
-			currentWidth = 0
-		}
 	}
 	if current.Len() > 0 {
 		lines = append(lines, current.String())
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 func truncateText(s string, width int) string {

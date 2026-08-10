@@ -35,10 +35,23 @@ dci list-platforms --output toon
 
 ## Query Examples
 
-Queries use a Cloud Analytics JSON `config`:
+Queries use a Cloud Analytics JSON `config`. There is no SQL input mode, and unknown top-level body fields are rejected.
 
 ```bash
 dci query < query.json
+```
+
+Present results to a human as a pivoted table, or export to a spreadsheet:
+
+```bash
+dci query --pivot --output table < query.json
+dci query --output csv < query.json > results.csv
+```
+
+Consume results programmatically with schema-named rows:
+
+```bash
+dci query --rows keyed --output json < query.json | jq '.result.rows[0].cost'
 ```
 
 `query.json` example:
