@@ -1166,7 +1166,9 @@ func TestMeasureContentWidthsFormatsTimestamps(t *testing.T) {
 
 // --- computeColumnWidths tests ---
 
-func TestComputeColumnWidthsSumMatchesAvailable(t *testing.T) {
+func TestComputeColumnWidthsNeverExceedAvailable(t *testing.T) {
+	// Columns fit their content and never stretch beyond it to fill wide
+	// terminals; the sum must stay within the available width.
 	tests := []struct {
 		name          string
 		contentWidths []int
@@ -1188,14 +1190,17 @@ func TestComputeColumnWidthsSumMatchesAvailable(t *testing.T) {
 			available := tt.termWidth - overhead
 
 			sum := 0
-			for _, w := range widths {
+			for i, w := range widths {
 				sum += w
 				if w < 1 {
 					t.Errorf("column width %d < 1", w)
 				}
+				if w > tt.contentWidths[i] {
+					t.Errorf("col %d: width %d stretched beyond content width %d", i, w, tt.contentWidths[i])
+				}
 			}
-			if sum != available {
-				t.Errorf("sum of widths = %d, want %d (termWidth=%d overhead=%d)", sum, available, tt.termWidth, overhead)
+			if sum > available {
+				t.Errorf("sum of widths = %d exceeds available %d (termWidth=%d overhead=%d)", sum, available, tt.termWidth, overhead)
 			}
 		})
 	}
@@ -1234,6 +1239,24 @@ func TestComputeColumnWidthsWideColumnGetsMore(t *testing.T) {
 
 // --- buildTableString width tests ---
 
+// assertTableWidthFits checks the no-stretch contract: the rendered table
+// never exceeds the terminal width, and when the content is wider than the
+// terminal the table uses the full width.
+func assertTableWidthFits(t *testing.T, out string, termWidth int, contentWidths []int) {
+	t.Helper()
+	w := tableDisplayWidth(out)
+	if w > termWidth {
+		t.Errorf("display width = %d exceeds terminal width %d", w, termWidth)
+	}
+	natural := tableOverhead(len(contentWidths))
+	for _, cw := range contentWidths {
+		natural += cw
+	}
+	if natural >= termWidth && w != termWidth {
+		t.Errorf("display width = %d, want full terminal width %d (content is wider)", w, termWidth)
+	}
+}
+
 func TestBuildTableStringExactWidth(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1252,10 +1275,7 @@ func TestBuildTableStringExactWidth(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildTableString error: %v", err)
 			}
-			w := tableDisplayWidth(out)
-			if w != tt.termWidth {
-				t.Errorf("display width = %d, want %d", w, tt.termWidth)
-			}
+			assertTableWidthFits(t, out, tt.termWidth, contentW)
 		})
 	}
 }
@@ -1272,10 +1292,7 @@ func TestBuildTableStringAlertLikeExactWidth(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildTableString error: %v", err)
 			}
-			w := tableDisplayWidth(out)
-			if w != termWidth {
-				t.Errorf("display width = %d, want %d", w, termWidth)
-			}
+			assertTableWidthFits(t, out, termWidth, contentW)
 		})
 	}
 }
@@ -1292,10 +1309,7 @@ func TestBuildTableStringReportLikeExactWidth(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildTableString error: %v", err)
 			}
-			w := tableDisplayWidth(out)
-			if w != termWidth {
-				t.Errorf("display width = %d, want %d", w, termWidth)
-			}
+			assertTableWidthFits(t, out, termWidth, contentW)
 		})
 	}
 }
@@ -1312,10 +1326,7 @@ func TestBuildTableStringWithHiddenColumnsIncluded(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildTableString error: %v", err)
 			}
-			w := tableDisplayWidth(out)
-			if w != termWidth {
-				t.Errorf("display width = %d, want %d", w, termWidth)
-			}
+			assertTableWidthFits(t, out, termWidth, contentW)
 		})
 	}
 }

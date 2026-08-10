@@ -18,7 +18,7 @@ Do not assume the local saved context should be overwritten.
 
 ## JSON Report Query
 
-Use a portable report query to identify the largest service pools:
+Use a portable Cloud Analytics JSON report query to identify the largest service pools. The API does not provide a SQL input mode.
 
 ```bash
 cat >/tmp/dci-cost-query.json <<'EOF'
@@ -61,10 +61,16 @@ EOF
 DCI_CUSTOMER_CONTEXT=<customer-context> dci query < /tmp/dci-cost-query.json --output json
 ```
 
-Aggregate the rows:
+Aggregate the rows (use `--rows keyed` so fields are addressable by name):
 
 ```bash
-DCI_CUSTOMER_CONTEXT=<customer-context> dci query < /tmp/dci-cost-query.json --output json | jq '.result.rows | group_by(.[0]) | map({service: .[0][0], total_cost: (map(.[4]) | add)}) | sort_by(-.total_cost) | .[:10]'
+DCI_CUSTOMER_CONTEXT=<customer-context> dci query --rows keyed < /tmp/dci-cost-query.json --output json | jq '.result.rows | group_by(.service_description) | map({service: .[0].service_description, total_cost: (map(.cost) | add)}) | sort_by(-.total_cost) | .[:10]'
+```
+
+Or present a monthly pivot directly:
+
+```bash
+DCI_CUSTOMER_CONTEXT=<customer-context> dci query --pivot --output table < /tmp/dci-cost-query.json
 ```
 
 ## How To Write The Top 3
