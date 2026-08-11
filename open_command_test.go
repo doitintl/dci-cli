@@ -21,10 +21,16 @@ func TestLooksLikeCustomerID(t *testing.T) {
 }
 
 func TestTokenCustomerID(t *testing.T) {
-	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"CustomerID":"AbCdEfGhIjKlMnOpQrSt","sub":"user@example.com"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"customerId":"AbCdEfGhIjKlMnOpQrSt","sub":"user@example.com"}`))
 	t.Setenv("DCI_API_KEY", "header."+payload+".signature")
 	if got := tokenCustomerID(); got != "AbCdEfGhIjKlMnOpQrSt" {
 		t.Errorf("tokenCustomerID = %q, want claim value", got)
+	}
+
+	payload = base64.RawURLEncoding.EncodeToString([]byte(`{"CustomerID":"LegacyCustomerID123"}`))
+	t.Setenv("DCI_API_KEY", "header."+payload+".signature")
+	if got := tokenCustomerID(); got != "LegacyCustomerID123" {
+		t.Errorf("legacy tokenCustomerID = %q, want claim value", got)
 	}
 
 	t.Setenv("DCI_API_KEY", "not-a-jwt")

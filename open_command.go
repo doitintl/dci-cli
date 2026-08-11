@@ -123,10 +123,14 @@ func tokenCustomerID() string {
 		return ""
 	}
 	var claims struct {
-		CustomerID string `json:"CustomerID"`
+		CustomerID       string `json:"customerId"`
+		LegacyCustomerID string `json:"CustomerID"`
 	}
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return ""
+	}
+	if claims.CustomerID == "" {
+		return claims.LegacyCustomerID
 	}
 	return claims.CustomerID
 }
