@@ -2374,6 +2374,31 @@ func (r *recordingFormatter) Format(resp cli.Response) error {
 }
 
 func TestResponseGuardFormat(t *testing.T) {
+	t.Run("empty successful response does not invoke the formatter", func(t *testing.T) {
+		bodies := []interface{}{nil, "", " \n\t", []byte{}, []byte(" \n\t")}
+		for _, body := range bodies {
+			next := &recordingFormatter{}
+			guard := dciResponseGuard{next: next}
+			if err := guard.Format(cli.Response{Status: 200, Body: body}); err != nil {
+				t.Fatalf("unexpected error for %#v: %v", body, err)
+			}
+			if next.called {
+				t.Fatalf("formatter invoked for empty body %#v", body)
+			}
+		}
+	})
+
+	t.Run("empty error response still invokes the formatter", func(t *testing.T) {
+		next := &recordingFormatter{}
+		guard := dciResponseGuard{next: next}
+		if err := guard.Format(cli.Response{Status: 500, Body: ""}); err != nil {
+			t.Fatal(err)
+		}
+		if !next.called {
+			t.Fatal("formatter was not invoked for an empty error response")
+		}
+	})
+
 	t.Run("html page prints message and sets flag without delegating", func(t *testing.T) {
 		nonJSONErrorResponse = false
 		t.Cleanup(func() { nonJSONErrorResponse = false })
