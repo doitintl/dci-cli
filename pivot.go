@@ -96,6 +96,7 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 		return nil, false
 	}
 	viper.Set("pivot-active", true)
+	viper.Set("pivot-total-rows", len(metricIdx))
 
 	// Highest row total first, matching how report tables rank groups.
 	sort.SliceStable(groupOrder, func(i, j int) bool {

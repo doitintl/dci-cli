@@ -1582,6 +1582,7 @@ func addOutputFlag() {
 		viper.Set("report-hourly", false)
 		viper.Set("pivot-columns-auto", false)
 		viper.Set("pivot-active", false)
+		viper.Set("pivot-total-rows", 0)
 
 		heatmapRequested := true
 		if flag := cmd.Flags().Lookup("heatmap"); flag != nil {
@@ -2877,14 +2878,10 @@ func newHeatmap(rows []map[string]interface{}, keys []string) *tableHeatmap {
 		return nil
 	}
 	heat := &tableHeatmap{totalsRows: map[int]bool{}, periodSet: periodSet}
+	totalRowStart := len(rows) - viper.GetInt("pivot-total-rows")
 	for rowIndex, row := range rows {
-		for _, value := range row {
-			if text, ok := value.(string); ok && text == "TOTAL" {
-				heat.totalsRows[rowIndex] = true
-				break
-			}
-		}
-		if heat.totalsRows[rowIndex] {
+		if totalRowStart >= 0 && rowIndex >= totalRowStart {
+			heat.totalsRows[rowIndex] = true
 			continue
 		}
 		for k := range periodSet {

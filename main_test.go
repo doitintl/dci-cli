@@ -1536,10 +1536,12 @@ func TestHeatmapColorizesPivotPeriodCells(t *testing.T) {
 	viper.Set("heatmap", true)
 	viper.Set("pivot-active", true)
 	viper.Set("pivot-columns-auto", false)
+	viper.Set("pivot-total-rows", 1)
 	t.Cleanup(func() {
 		viper.Set("heatmap", nil)
 		viper.Set("pivot-active", nil)
 		viper.Set("pivot-columns-auto", nil)
+		viper.Set("pivot-total-rows", nil)
 	})
 
 	rows := []map[string]interface{}{
@@ -1583,9 +1585,11 @@ func TestHeatmapColorizesPivotPeriodCells(t *testing.T) {
 func TestHeatmapUsesAbsoluteMagnitudes(t *testing.T) {
 	viper.Set("heatmap", true)
 	viper.Set("pivot-active", true)
+	viper.Set("pivot-total-rows", 1)
 	t.Cleanup(func() {
 		viper.Set("heatmap", nil)
 		viper.Set("pivot-active", nil)
+		viper.Set("pivot-total-rows", nil)
 	})
 
 	for _, rows := range [][]map[string]interface{}{
@@ -1607,6 +1611,33 @@ func TestHeatmapUsesAbsoluteMagnitudes(t *testing.T) {
 		if shaded := heat.colorize(0, "2026-06", rows[0]["2026-06"], "-900"); !strings.Contains(shaded, "\x1b[") {
 			t.Errorf("negative cell not shaded: %q", shaded)
 		}
+	}
+}
+
+func TestHeatmapShadesDataRowsNamedTotal(t *testing.T) {
+	viper.Set("heatmap", true)
+	viper.Set("pivot-active", true)
+	viper.Set("pivot-total-rows", 1)
+	t.Cleanup(func() {
+		viper.Set("heatmap", nil)
+		viper.Set("pivot-active", nil)
+		viper.Set("pivot-total-rows", nil)
+	})
+
+	rows := []map[string]interface{}{
+		{"group": "TOTAL", "2026-06": 900.0},
+		{"group": "other", "2026-06": 100.0},
+		{"group": "TOTAL", "2026-06": 1000.0},
+	}
+	heat := newHeatmap(rows, []string{"group", "2026-06"})
+	if heat == nil || heat.max != 900 {
+		t.Fatalf("heatmap max = %v, want 900", heat)
+	}
+	if shaded := heat.colorize(0, "2026-06", 900.0, "900"); !strings.Contains(shaded, "\x1b[") {
+		t.Errorf("data row named TOTAL not shaded: %q", shaded)
+	}
+	if shaded := heat.colorize(2, "2026-06", 1000.0, "1,000"); shaded != "1,000" {
+		t.Errorf("generated totals row shaded: %q", shaded)
 	}
 }
 
