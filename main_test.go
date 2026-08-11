@@ -500,6 +500,27 @@ func TestResolveAgentMode(t *testing.T) {
 	}
 }
 
+func TestHeatmapEnabled(t *testing.T) {
+	tests := []struct {
+		name                           string
+		requested, agent, tty, noColor bool
+		want                           bool
+	}{
+		{name: "interactive", requested: true, tty: true, want: true},
+		{name: "disabled", requested: false, tty: true},
+		{name: "agent", requested: true, agent: true, tty: true},
+		{name: "pipe", requested: true},
+		{name: "no color", requested: true, tty: true, noColor: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := heatmapEnabled(test.requested, test.agent, test.tty, test.noColor); got != test.want {
+				t.Errorf("heatmapEnabled() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAgentFlagOverride(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1365,6 +1386,20 @@ func TestFormatValueNilIsEmptyCell(t *testing.T) {
 	}
 }
 
+func TestDisplayTimestampCellRawNumbersPreservesEpoch(t *testing.T) {
+	viper.Set("raw-numbers", false)
+	t.Cleanup(func() { viper.Set("raw-numbers", nil) })
+
+	const epoch = float64(1786356000)
+	if got := displayTimestampCell(epoch, "timestamp"); got != "2026-08-10T10:00:00Z" {
+		t.Errorf("displayTimestampCell = %v, want RFC3339 timestamp", got)
+	}
+	viper.Set("raw-numbers", true)
+	if got := displayTimestampCell(epoch, "timestamp"); got != epoch {
+		t.Errorf("raw displayTimestampCell = %v, want %v", got, epoch)
+	}
+}
+
 func TestFormatTableValueRendering(t *testing.T) {
 	viper.Set("raw-numbers", false)
 	t.Cleanup(func() { viper.Set("raw-numbers", nil) })
@@ -1484,6 +1519,52 @@ func TestRenderCellTextCurrency(t *testing.T) {
 	viper.Set("report-currency", "USD")
 	if got := renderCellText(row, "cost"); got != "135616.704056" {
 		t.Errorf("raw mode = %q, want unformatted", got)
+	}
+}
+
+func TestHeatmapColorizesPivotPeriodCells(t *testing.T) {
+	viper.Set("heatmap", true)
+	viper.Set("pivot-columns-auto", true)
+	t.Cleanup(func() {
+		viper.Set("heatmap", nil)
+		viper.Set("pivot-columns-auto", nil)
+	})
+
+	rows := []map[string]interface{}{
+		{"service_description": "svc-a", "2026-06": 100.0, "2026-07": 900.0, "total": 1000.0, "trend": "+800%"},
+		{"service_description": "TOTAL", "2026-06": 100.0, "2026-07": 900.0, "total": 1000.0, "trend": "+800%"},
+	}
+	keys := []string{"service_description", "2026-06", "2026-07", "total", "trend"}
+	heat := newHeatmap(rows, keys)
+	if heat == nil {
+		t.Fatal("heatmap not built for pivot rows")
+	}
+	hot := heat.colorize(0, "2026-07", 900.0, "$900")
+	if !strings.Contains(hot, "\x1b[48;5;124") || !strings.Contains(hot, "$900") {
+		t.Errorf("hot cell = %q, want ANSI-shaded", hot)
+	}
+	cool := heat.colorize(0, "2026-06", 100.0, "$100")
+	if !strings.Contains(cool, "\x1b[48;5;28") || !strings.Contains(cool, "$100") {
+		t.Errorf("cool cell = %q, want lower ANSI shade", cool)
+	}
+	if got := heat.colorize(1, "2026-07", 900.0, "$900"); got != "$900" {
+		t.Errorf("totals row shaded: %q", got)
+	}
+	if got := heat.colorize(0, "total", 1000.0, "$1,000"); got != "$1,000" {
+		t.Errorf("total column shaded: %q", got)
+	}
+	if got := heat.colorize(0, "trend", nil, "+800%"); got != "+800%" {
+		t.Errorf("trend column shaded: %q", got)
+	}
+
+	viper.Set("heatmap", false)
+	if newHeatmap(rows, keys) != nil {
+		t.Error("heatmap built while disabled")
+	}
+	viper.Set("heatmap", true)
+	viper.Set("pivot-columns-auto", false)
+	if newHeatmap(rows, keys) != nil {
+		t.Error("heatmap built outside pivot view")
 	}
 }
 
