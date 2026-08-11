@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -2374,6 +2375,46 @@ func (r *recordingFormatter) Format(resp cli.Response) error {
 }
 
 func TestResponseGuardFormat(t *testing.T) {
+	t.Run("client error HTML is classified by status in agent mode", func(t *testing.T) {
+		previousAgentMode := agentMode
+		previousAgentUAMode := agentUAMode
+		previousStderr := cli.Stderr
+		agentMode = true
+		agentUAMode = uaModeAgent
+		resetErrorContractState()
+		var stderr bytes.Buffer
+		cli.Stderr = &stderr
+		t.Cleanup(func() {
+			agentMode = previousAgentMode
+			agentUAMode = previousAgentUAMode
+			cli.Stderr = previousStderr
+			resetErrorContractState()
+		})
+
+		next := &recordingFormatter{}
+		guard := dciResponseGuard{next: next}
+		if err := guard.Format(cli.Response{
+			Status:  400,
+			Headers: map[string]string{"Content-Type": "text/html"},
+			Body:    "<html>invalid maxResults</html>",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if next.called {
+			t.Fatal("HTML client error delegated to formatter")
+		}
+		if responseExitCode != exitValidation {
+			t.Fatalf("exit code = %d", responseExitCode)
+		}
+		var envelope structuredErrorEnvelope
+		if err := json.Unmarshal(stderr.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope.Error.Code != "VALIDATION_ERROR" || envelope.Error.Retryable {
+			t.Fatalf("error = %#v", envelope.Error)
+		}
+	})
+
 	t.Run("empty successful response does not invoke the formatter", func(t *testing.T) {
 		bodies := []interface{}{nil, "", " \n\t", []byte{}, []byte(" \n\t")}
 		for _, body := range bodies {

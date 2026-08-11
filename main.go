@@ -1508,6 +1508,14 @@ type dciResponseGuard struct {
 }
 
 func (g dciResponseGuard) Format(resp cli.Response) error {
+	if resp.Status >= 400 && agentErrorContractEnabled() {
+		responseExitCode = exitCodeForHTTPStatus(resp.Status)
+		writeStructuredError(cli.Stderr, structuredErrorForResponse(resp))
+		if isHTMLErrorPage(resp) {
+			return nil
+		}
+		return g.next.Format(resp)
+	}
 	if resp.Status >= 200 && resp.Status < 300 && responseBodyIsEmpty(resp.Body) {
 		return nil
 	}
@@ -1542,11 +1550,6 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 		// cli.Stderr (not os.Stderr) so callers like login can suppress it; don't revert.
 		fmt.Fprintf(cli.Stderr, "Error: the DoiT API returned an application error: %s\n", msg)
 		return nil
-	}
-	if agentErrorContractEnabled() && resp.Status >= 400 {
-		responseExitCode = exitCodeForHTTPStatus(resp.Status)
-		writeStructuredError(cli.Stderr, structuredErrorForResponse(resp))
-		return g.next.Format(resp)
 	}
 	return g.next.Format(resp)
 }
