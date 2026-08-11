@@ -225,6 +225,7 @@ func run() (exitCode int) {
 	// Reset per-invocation state so repeated calls (e.g. in tests) start clean.
 	customerContextFlagValue = ""
 	resolvedCustomerContext = ""
+	helpFullRequested = false
 	requestReportCurrency = ""
 	bufferedRequestBody = nil
 	nonJSONErrorResponse = false
@@ -307,6 +308,7 @@ func run() (exitCode int) {
 	registerUpgradeCommand(configDir)
 	registerVersionCommand()
 	registerDocsCommand()
+	registerOpenCommand(configDir)
 	registerSkillCommands()
 	registerCommandCatalog()
 	if cachedTokenIsDoer() {
@@ -323,6 +325,7 @@ func run() (exitCode int) {
 	applyCustomerContext(configDir)
 	lockToDCI()
 	setupCompletion()
+	os.Args = rewriteHelpFullFlag(os.Args)
 	os.Args = normalizeArgs(os.Args)
 	if err := preflightAPIInvocation(os.Args); err != nil {
 		return reportExecutionError(err, 0, configDir)
@@ -341,6 +344,10 @@ func run() (exitCode int) {
 		code = exitServer
 	}
 	maybeHintDoerContext(code, cli.GetLastStatus(), configDir)
+	if code == 0 {
+		// Success only: failure stderr must stay a single parseable envelope.
+		maybeAgentOnboardingHint(configDir)
+	}
 	return code
 }
 
@@ -417,6 +424,33 @@ func rejectProfileFlags(args []string) error {
 		}
 	}
 	return nil
+}
+
+var helpFullRequested bool
+
+func rewriteHelpFullFlag(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--help-full" {
+			helpFullRequested = true
+			out = append(out, "--help")
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
+func terseHelpText(long string) (string, bool) {
+	idx := strings.Index(long, "## ")
+	if idx < 0 {
+		return long, false
+	}
+	head := strings.TrimSpace(long[:idx])
+	if head == "" {
+		head = "(no description)"
+	}
+	return head + "\n\nSchemas and examples: add --help-full", true
 }
 
 func normalizeArgs(args []string) []string {
@@ -792,6 +826,28 @@ func maybeHintAgentMode() {
 	fmt.Fprintln(os.Stderr, "Tip: set DCI_AGENT_MODE=1 (or pass --agent) for compact, parse-friendly output.")
 }
 
+// maybeAgentOnboardingHint prints a one-time stderr pointer when an agent
+// environment is first seen with this config dir, so agents discover the
+// embedded skill, the machine-readable catalog, and the docs without being
+// told. Stderr only — stdout must stay parseable — and marker-gated so it
+// never becomes per-command chatter.
+func maybeAgentOnboardingHint(configDir string) {
+	if !agentMode || agentEnvDetected == "" {
+		return
+	}
+	marker := filepath.Join(configDir, "agent_onboarding_shown")
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+	if err := os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
+		return // cannot persist the marker; stay silent rather than repeat forever
+	}
+	fmt.Fprintln(os.Stderr, "Agent mode is active. Useful entry points:")
+	fmt.Fprintln(os.Stderr, "  dci skill <agent>    install CLI usage guidance for this agent (claude, codex, cursor, gemini, kiro, opencode)")
+	fmt.Fprintln(os.Stderr, "  dci commands --json  machine-readable command catalog (args, flags, destructive metadata)")
+	fmt.Fprintln(os.Stderr, "  dci docs             documentation entry points, incl. https://help.doit.com/llms.txt")
+}
+
 const dciUsageTemplate = `Usage:{{if .Runnable}}
   {{.Use}}{{if .HasAvailableFlags}} [flags]{{end}}{{end}}{{if .HasAvailableSubCommands}}
   dci [command]
@@ -822,7 +878,8 @@ Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
 `
 
 const dciLongDescription = "Command-line interface for the Cloud Intelligence™ API.\n\n" +
-	"Documentation: https://help.doit.com/docs/cli or run `dci docs` for every entry point."
+	"Documentation: https://help.doit.com/docs/cli or run `dci docs` for every entry point.\n" +
+	"AI agents: `dci skill <agent>` installs usage guidance; `dci commands --json` prints the machine-readable catalog."
 
 var rootExamples = []string{
 	"  dci status",
@@ -994,6 +1051,13 @@ func setupCompletion() {
 	defaultHelp := cli.Root.HelpFunc()
 	cli.Root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		sanitizeFlagPlaceholders(cmd)
+		if !helpFullRequested {
+			if terse, truncated := terseHelpText(cmd.Long); truncated {
+				originalLong := cmd.Long
+				cmd.Long = terse
+				defer func() { cmd.Long = originalLong }()
+			}
+		}
 		hasAPICommands := false
 		if cmd == cli.Root {
 			loadAPI()

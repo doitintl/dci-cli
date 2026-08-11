@@ -93,6 +93,15 @@ dci query --rows keyed --output json < query.json | jq '.result.rows[0].cost'
 }
 ```
 
+## Answering Cost Questions
+
+Map the user's question to the read commands before reaching for anything else:
+
+- "Why did our bill spike yesterday?" → `dci list-anomalies`, `dci get-anomaly <id>`, then a scoped `dci query`
+- "Are we on track for this month's budgets?" → `dci list-budgets` (utilization, forecast)
+- "What does service X cost per environment?" → `dci query` grouped by the label, `--pivot` for humans
+- "Hand this to a human" → `dci open report <id>` (prints the console deep link in agent mode)
+
 ## Report Drill-Down
 
 ```bash
