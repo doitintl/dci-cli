@@ -34,9 +34,9 @@ Prompt:
 
 Expected behavior:
 
-- explain that `dci query` takes a Cloud Analytics JSON config rather than SQL
-- translate the intent into metrics, grouping, time range, and a group limit
-- produce `dci query < query.json` with the payload
+- explain that `dci query` takes a Cloud Analytics JSON config rather than SQL and cannot inspect raw billing rows
+- ask for the intended analysis goal before translating the request
+- produce `dci query < query.json` only if the goal is representable, with any semantic differences stated explicitly
 
 ## Eval 4: Legacy SQL Example
 
@@ -48,7 +48,7 @@ Expected behavior:
 
 - recognize `body.query:"SELECT ..."` as an invalid legacy example
 - avoid producing a `body.query` command
-- offer the equivalent JSON report config
+- offer a JSON report config only when the requested analysis is representable, without claiming it is equivalent to arbitrary SQL
 
 ## Eval 5: Structured 30-Day Cost Report
 
