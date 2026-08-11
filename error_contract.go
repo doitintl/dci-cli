@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/rest-sh/restish/cli"
@@ -191,7 +192,7 @@ func structuredErrorForStatus(status int, message string, headers map[string]str
 		result.Hint = "Review the request arguments and payload"
 	case 401:
 		result.Code = "AUTHENTICATION_FAILED"
-		result.Hint = "Run: dci login"
+		result.Hint = authenticationFailureHint()
 	case 403:
 		result.Code = "PERMISSION_DENIED"
 		result.Hint = "Check the active customer context and your DoiT permissions"
@@ -212,6 +213,13 @@ func structuredErrorForStatus(status int, message string, headers map[string]str
 		}
 	}
 	return result
+}
+
+func authenticationFailureHint() string {
+	if strings.TrimSpace(os.Getenv("DCI_API_KEY")) != "" {
+		return "Check DCI_API_KEY: the token may be malformed, expired, or revoked"
+	}
+	return "Run: dci login"
 }
 
 func responseErrorMessage(body interface{}) string {

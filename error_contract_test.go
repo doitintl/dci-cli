@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/rest-sh/restish/cli"
@@ -147,6 +148,20 @@ func TestAgentResponseGuardWritesOneStructuredError(t *testing.T) {
 	}
 	if envelope.Error.Code != "PERMISSION_DENIED" || envelope.Error.RequestID != "request-403" {
 		t.Fatalf("unexpected envelope: %+v", envelope)
+	}
+}
+
+func TestAuthenticationFailureHintMatchesCredentialSource(t *testing.T) {
+	t.Setenv("DCI_API_KEY", "")
+	loginError := structuredErrorForStatus(401, "unauthorized", nil)
+	if loginError.Hint != "Run: dci login" {
+		t.Fatalf("OAuth hint = %q", loginError.Hint)
+	}
+
+	t.Setenv("DCI_API_KEY", "invalid-token")
+	apiKeyError := structuredErrorForStatus(401, "unauthorized", nil)
+	if !strings.Contains(apiKeyError.Hint, "DCI_API_KEY") {
+		t.Fatalf("API key hint = %q", apiKeyError.Hint)
 	}
 }
 
