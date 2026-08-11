@@ -255,7 +255,7 @@ func TestBrandRootAndDCICommands(t *testing.T) {
 	brandRootCommand()
 	brandDCIRootCommand()
 
-	if cli.Root.Short != "DoiT Cloud Intelligence CLI" {
+	if cli.Root.Short != "Cloud Intelligence™ CLI" {
 		t.Fatalf("root short = %q", cli.Root.Short)
 	}
 	if cli.Root.Long != dciLongDescription {
@@ -268,7 +268,7 @@ func TestBrandRootAndDCICommands(t *testing.T) {
 		t.Fatalf("root usage template mismatch")
 	}
 
-	if dciCmd.Short != "DoiT Cloud Intelligence API CLI" {
+	if dciCmd.Short != "Cloud Intelligence™ API CLI" {
 		t.Fatalf("dci short = %q", dciCmd.Short)
 	}
 	if dciCmd.Long != dciLongDescription {
@@ -648,7 +648,7 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		if res.exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
 		}
-		if !strings.Contains(res.output, "DoiT Cloud Intelligence") {
+		if !strings.Contains(res.output, "Cloud Intelligence™") {
 			t.Fatalf("status output missing expected text:\n%s", res.output)
 		}
 
@@ -906,7 +906,7 @@ func assertRootHelpBranded(t *testing.T, out string) {
 	if strings.Contains(out, "A generic client for REST-ish APIs") {
 		t.Fatalf("unexpected stock restish root help:\n%s", out)
 	}
-	if !strings.Contains(out, "Command-line interface for the DoiT Cloud Intelligence API.") {
+	if !strings.Contains(out, "Command-line interface for the Cloud Intelligence™ API.") {
 		t.Fatalf("missing DCI root branding in help output:\n%s", out)
 	}
 }
@@ -1039,7 +1039,7 @@ func TestFormatValue(t *testing.T) {
 		{"unix ms timestamp 2", 1.774010451448e+12, time.UnixMilli(1774010451448).UTC().Format(time.RFC3339)},
 		{"below timestamp range", 9.99e+11, "9.99e+11"},
 		{"above timestamp range", 5e+12, "5e+12"},
-		{"nil value", nil, "<nil>"},
+		{"nil value", nil, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1158,9 +1158,9 @@ func TestMeasureContentWidthsFormatsTimestamps(t *testing.T) {
 	rows, _ := mockAlertRows()
 	keys := []string{"createTime"}
 	widths := measureContentWidths(rows, keys)
-	// ISO 8601 timestamp "2024-03-04T12:28:41Z" is 20 chars
-	if widths[0] != 20 {
-		t.Errorf("timestamp width = %d, want 20", widths[0])
+	// Human-readable timestamp "2024-03-04 12:28" is 16 chars
+	if widths[0] != 16 {
+		t.Errorf("timestamp width = %d, want 16", widths[0])
 	}
 }
 
@@ -1328,6 +1328,134 @@ func TestBuildTableStringWithHiddenColumnsIncluded(t *testing.T) {
 			}
 			assertTableWidthFits(t, out, termWidth, contentW)
 		})
+	}
+}
+
+func TestFormatValueNilIsEmptyCell(t *testing.T) {
+	if got := formatValue(nil); got != "" {
+		t.Errorf("formatValue(nil) = %q, want empty", got)
+	}
+}
+
+func TestFormatTableValueRendering(t *testing.T) {
+	viper.Set("raw-numbers", false)
+	t.Cleanup(func() { viper.Set("raw-numbers", nil) })
+
+	if got := formatTableValue(1786356000000.0); got != "2026-08-10 10:00" {
+		t.Errorf("epoch-ms float = %q, want human-readable timestamp", got)
+	}
+	if got := formatTableValue("2026-06-01T00:00:00Z"); got != "2026-06-01" {
+		t.Errorf("midnight timestamp = %q, want bare date", got)
+	}
+	if got := formatTableValue("2026-08-10T09:16:14Z"); got != "2026-08-10 09:16" {
+		t.Errorf("timestamp = %q, want minute precision", got)
+	}
+	if got := formatTableValue("not a timestamp"); got != "not a timestamp" {
+		t.Errorf("plain string = %q, want untouched", got)
+	}
+
+	// Hourly report resolution keeps the time even at midnight.
+	viper.Set("report-hourly", true)
+	t.Cleanup(func() { viper.Set("report-hourly", nil) })
+	if got := formatTableValue("2026-06-01T00:00:00Z"); got != "2026-06-01 00:00" {
+		t.Errorf("hourly midnight = %q, want time kept", got)
+	}
+	if got := formatTableValue(55.0); got != "55" {
+		t.Errorf("integral float = %q, want 55 (no decimals)", got)
+	}
+	if got := formatTableValue(291018.6548470196); got != "291,018.65" {
+		t.Errorf("decimal float = %q, want grouped 2dp", got)
+	}
+	viper.Set("raw-numbers", true)
+	if got := formatTableValue(291018.6548470196); got != "291018.6548470196" {
+		t.Errorf("--raw-numbers float = %q, want unformatted", got)
+	}
+}
+
+func TestFitColumnsToTerminalKeepsPriorityAndHidesOverflow(t *testing.T) {
+	rows := []map[string]interface{}{{
+		"alpha":  strings.Repeat("a", 28),
+		"beta":   strings.Repeat("b", 28),
+		"gamma":  strings.Repeat("c", 28),
+		"delta":  strings.Repeat("d", 28),
+		"id":     "b0f3c260-3df3-4270-b946-df31ddee6a92",
+		"status": "active",
+	}}
+	keys := []string{"alpha", "beta", "gamma", "delta", "id", "status"}
+	visible, hidden := fitColumnsToTerminal(rows, keys, 80)
+	if len(hidden) == 0 {
+		t.Fatal("expected overflow columns to be hidden at width 80")
+	}
+	foundID := false
+	for _, k := range visible {
+		if k == "id" {
+			foundID = true
+		}
+	}
+	if !foundID {
+		t.Errorf("id column not kept: visible=%v hidden=%v", visible, hidden)
+	}
+	if len(visible)+len(hidden) != len(keys) {
+		t.Errorf("columns lost: visible=%v hidden=%v", visible, hidden)
+	}
+
+	// Everything fits on a wide terminal.
+	visible, hidden = fitColumnsToTerminal(rows, keys, 500)
+	if len(hidden) != 0 {
+		t.Errorf("nothing should hide at width 500: hidden=%v", hidden)
+	}
+	if len(visible) != len(keys) {
+		t.Errorf("visible=%v, want all keys", visible)
+	}
+}
+
+func TestFormatMoney(t *testing.T) {
+	if got := formatMoney(239927.13841529994, "USD"); got != "$239,927" {
+		t.Errorf("USD = %q, want $239,927", got)
+	}
+	if got := formatMoney(1400, "EUR"); got != "€1,400" {
+		t.Errorf("EUR = %q, want €1,400", got)
+	}
+	if got := formatMoney(1234.56, "SEK"); got != "SEK 1,235" {
+		t.Errorf("unknown code = %q, want SEK 1,235", got)
+	}
+	if got := formatMoney(-500.4, "USD"); got != "-$500" {
+		t.Errorf("negative = %q, want -$500", got)
+	}
+}
+
+func TestRenderCellTextCurrency(t *testing.T) {
+	viper.Set("raw-numbers", false)
+	viper.Set("report-currency", "USD")
+	viper.Set("money-columns", "cost,total")
+	t.Cleanup(func() {
+		for _, key := range []string{"raw-numbers", "report-currency", "money-columns"} {
+			viper.Set(key, nil)
+		}
+	})
+
+	row := map[string]interface{}{"cost": 135616.704056, "usage": 42.5}
+	if got := renderCellText(row, "cost"); got != "$135,617" {
+		t.Errorf("marked money column = %q, want $135,617", got)
+	}
+	if got := renderCellText(row, "usage"); got != "42.50" {
+		t.Errorf("non-money metric = %q, want plain number", got)
+	}
+
+	// Per-row currency (budgets shape) formats money-named columns.
+	budget := map[string]interface{}{"amount": 4900.0, "currency": "EUR", "currentUtilization": 0.0}
+	viper.Set("money-columns", "")
+	viper.Set("report-currency", "")
+	if got := renderCellText(budget, "amount"); got != "€4,900" {
+		t.Errorf("row-currency amount = %q, want €4,900", got)
+	}
+
+	// --raw-numbers disables everything.
+	viper.Set("raw-numbers", true)
+	viper.Set("money-columns", "cost")
+	viper.Set("report-currency", "USD")
+	if got := renderCellText(row, "cost"); got != "135616.704056" {
+		t.Errorf("raw mode = %q, want unformatted", got)
 	}
 }
 

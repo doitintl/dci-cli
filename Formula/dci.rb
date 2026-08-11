@@ -1,5 +1,5 @@
 class Dci < Formula
-  desc "DoiT Cloud Intelligence CLI"
+  desc "Cloud Intelligence™ CLI"
   homepage "https://github.com/doitintl/dci-cli"
   version "1.6.0"
 
@@ -29,6 +29,6 @@ class Dci < Formula
 
   test do
     output = shell_output("#{bin}/dci --help")
-    assert_match "DoiT Cloud Intelligence", output
+    assert_match "Cloud Intelligence™", output
   end
 end

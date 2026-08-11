@@ -1,13 +1,13 @@
 ---
 name: dci-cli
-description: Operate the DoiT Cloud Intelligence CLI (`dci`) for DoiT Cloud Intelligence workflows. Use when the agent needs to install or verify the CLI, authenticate, troubleshoot auth or `customerContext`, inspect capabilities, run read-only list/get/report/query commands, compose `dci query` JSON payloads, analyze cost/report output, or draft safe create/update/delete commands and payloads.
+description: Operate the Cloud Intelligence™ CLI (`dci`) for Cloud Intelligence™ workflows. Use when the agent needs to install or verify the CLI, authenticate, troubleshoot auth or `customerContext`, inspect capabilities, run read-only list/get/report/query commands, compose `dci query` JSON payloads, analyze cost/report output, or draft safe create/update/delete commands and payloads.
 ---
 
 # DCI CLI
 
 ## Overview
 
-Use `dci` as the primary interface for DoiT Cloud Intelligence CLI tasks. Prefer read-only discovery first, prefer `--output toon` (compact and token-efficient; `--output json` when you need standard JSON) for agent work, and use env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context>` when switching customer context temporarily.
+Use `dci` as the primary interface for Cloud Intelligence™ CLI tasks. Prefer read-only discovery first, prefer `--output toon` (compact and token-efficient; `--output json` when you need standard JSON) for agent work, and use env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context>` when switching customer context temporarily.
 
 Set `DCI_AGENT_MODE=1` (or pass `--agent`) to run in agent mode: output defaults to compact TOON, terminal decoration is disabled, and banners/hints are routed to stderr so stdout stays parseable. `dci` also auto-detects common agent environments, so this is usually already on — run `dci status` to confirm.
 
@@ -24,9 +24,10 @@ Use `--fields id,name` to project list or detail responses before output, and us
 - Report/query results are capped at 500 rows in agent mode. When the output contains `rowsOmitted`, the result was truncated: narrow the query with a group `limit` and a `metricFilter`, or pass `--max-rows <n>` (`--max-rows 0` for unlimited) when you genuinely need everything. Check `rowCount`/`rowsTotal` before dumping results into context.
 - Always include a group `limit` in query configs (e.g. top 10 by cost); unlimited grouped queries can return thousands of rows.
 - Use `--rows keyed` to receive `result.rows` as schema-named objects instead of positional arrays — no manual zipping with `result.schema`.
-- Use `--pivot` for a report-style view: groups as rows, time periods as columns, with totals (best with `--output table` for humans).
+- The interactive human table view pivots report results by default (groups × time periods with totals). Agent mode and machine formats stay flat; pass `--pivot` to force the pivot when presenting to a human, or `--flat` when a human-mode invocation needs flat rows.
 - Use `--output csv` to export list or report results for spreadsheets.
 - Rows with a null group and zero metrics are dropped by default; pass `--include-empty-rows` to keep them (`emptyRowsDropped` marks how many were removed).
+- Report results include a `currency` field when the query config specifies one — always report monetary values with their currency. Human tables render known-currency amounts with the currency sign rounded to whole units; `--raw-numbers` restores exact values.
 
 ## Quick Start
 

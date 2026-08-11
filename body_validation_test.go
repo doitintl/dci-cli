@@ -112,3 +112,30 @@ func TestValidateRequestBodyCanBeBypassed(t *testing.T) {
 		t.Fatalf("bypass rejected body: %v", err)
 	}
 }
+
+func TestExtractRequestCurrency(t *testing.T) {
+	validFields := map[string]bool{"config": true}
+	if currency := extractRequestCurrency(validFields, nil, nil); currency != "" {
+		t.Errorf("unspecified currency = %q, want empty", currency)
+	}
+	if currency := extractRequestCurrency(validFields, []string{`config.currency: EUR`}, nil); currency != "EUR" {
+		t.Errorf("shorthand currency = %q, want EUR", currency)
+	}
+	if currency := extractRequestCurrency(validFields, []string{`{"config":{"currency":"gbp"}}`}, nil); currency != "GBP" {
+		t.Errorf("inline JSON currency = %q, want GBP", currency)
+	}
+	bodyFile := t.TempDir() + "/query.json"
+	if err := os.WriteFile(bodyFile, []byte(`{"config":{"currency":"cad"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if currency := extractRequestCurrency(validFields, []string{"@" + bodyFile}, nil); currency != "CAD" {
+		t.Errorf("file currency = %q, want CAD", currency)
+	}
+	stdinBody := []byte(`{"config":{"currency":"ils"}}`)
+	if currency := extractRequestCurrency(validFields, nil, stdinBody); currency != "ILS" {
+		t.Errorf("stdin currency = %q, want ILS", currency)
+	}
+	if currency := extractRequestCurrency(map[string]bool{"body": true}, nil, nil); currency != "" {
+		t.Errorf("non-report currency = %q, want empty", currency)
+	}
+}

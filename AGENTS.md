@@ -16,7 +16,7 @@ This repo is one piece of a much larger system. `dci` wraps restish, sits in fro
 
 ### What Is This
 
-`dci` is the CLI for the DoiT Cloud Intelligence (DCI) API. It wraps [restish](https://github.com/rest-sh/restish) with DCI-specific configuration — auto-configured API base, OAuth2 via the DoiT Console, table-first output, and a locked-down command surface that exposes only DCI API operations. The entire CLI is a single `main.go` file. It ships as a Go binary distributed via Homebrew, Scoop, WinGet, and `.deb`/`.rpm` packages.
+`dci` is the CLI for the Cloud Intelligence™ (DCI) API. It wraps [restish](https://github.com/rest-sh/restish) with DCI-specific configuration — auto-configured API base, OAuth2 via the DoiT Console, table-first output, and a locked-down command surface that exposes only DCI API operations. The entire CLI is a single `main.go` file. It ships as a Go binary distributed via Homebrew, Scoop, WinGet, and `.deb`/`.rpm` packages.
 
 ### Restish Version (don't upgrade to v2)
 

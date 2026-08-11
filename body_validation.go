@@ -46,13 +46,12 @@ func (validationError requestBodyValidationError) AgentErrorRetryable() bool {
 
 var shorthandBodyFieldPattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)\s*[.\[:{]`)
 var schemaBodyFieldPattern = regexp.MustCompile(`^  ([A-Za-z_][A-Za-z0-9_-]*)\*?:`)
+var currencyBodyFieldPattern = regexp.MustCompile(`(?:^|[,\s])config\.currency:\s*"?([A-Za-z]{3})"?`)
+var bufferedRequestBody []byte
 
 func validateRequestBody(command *cobra.Command, args []string) error {
 	validFields := requestSchemaTopLevelFields(command.Long)
 	if len(validFields) == 0 {
-		return nil
-	}
-	if skip, _ := parseBoolish(os.Getenv("DCI_SKIP_BODY_VALIDATION")); skip {
 		return nil
 	}
 
@@ -60,6 +59,11 @@ func validateRequestBody(command *cobra.Command, args []string) error {
 	pathParameterCount := len(strings.Fields(command.Use)) - 1
 	if pathParameterCount > 0 && pathParameterCount <= len(args) {
 		bodyArguments = args[pathParameterCount:]
+	}
+	stdinFields, stdinBuffered := bufferStdinTopLevelFields()
+	requestReportCurrency = extractRequestCurrency(validFields, bodyArguments, bufferedRequestBody)
+	if skip, _ := parseBoolish(os.Getenv("DCI_SKIP_BODY_VALIDATION")); skip {
+		return nil
 	}
 	unknownFields := make([]string, 0)
 	for _, argument := range bodyArguments {
@@ -80,7 +84,7 @@ func validateRequestBody(command *cobra.Command, args []string) error {
 		}
 	}
 
-	if stdinFields, buffered := bufferStdinTopLevelFields(); buffered {
+	if stdinBuffered {
 		for _, field := range stdinFields {
 			if !validFields[field] {
 				unknownFields = append(unknownFields, field)
@@ -152,11 +156,47 @@ func bufferStdinTopLevelFields() ([]string, bool) {
 		return nil, false
 	}
 	cli.Stdin = &bufferedBodyInput{Reader: bytes.NewReader(data), info: inputInfo}
+	bufferedRequestBody = data
 	trimmedData := bytes.TrimSpace(data)
 	if len(trimmedData) == 0 || trimmedData[0] != '{' {
 		return nil, true
 	}
 	return jsonTopLevelFields(trimmedData), true
+}
+
+func extractRequestCurrency(validFields map[string]bool, bodyArguments []string, stdinBody []byte) string {
+	if !validFields["config"] {
+		return ""
+	}
+	for _, argument := range bodyArguments {
+		if match := currencyBodyFieldPattern.FindStringSubmatch(argument); match != nil {
+			return strings.ToUpper(match[1])
+		}
+		trimmedArgument := strings.TrimSpace(argument)
+		if currency := currencyFromJSONBody([]byte(trimmedArgument)); currency != "" {
+			return currency
+		}
+		if len(trimmedArgument) > 1 && (trimmedArgument[0] == '@' || trimmedArgument[0] == '<') {
+			if data, err := os.ReadFile(trimmedArgument[1:]); err == nil {
+				if currency := currencyFromJSONBody(data); currency != "" {
+					return currency
+				}
+			}
+		}
+	}
+	return currencyFromJSONBody(stdinBody)
+}
+
+func currencyFromJSONBody(data []byte) string {
+	var body struct {
+		Config struct {
+			Currency string `json:"currency"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(data, &body); err == nil && body.Config.Currency != "" {
+		return strings.ToUpper(body.Config.Currency)
+	}
+	return ""
 }
 
 type bufferedBodyInput struct {

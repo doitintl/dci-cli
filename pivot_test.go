@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestPivotReportBodyTimeAsColumns(t *testing.T) {
 		[]interface{}{"svc-b", "2026", "06", 100.0, float64(1780272000)},
 		[]interface{}{"svc-b", "2026", "07", 200.0, float64(1782864000)},
 	}
-	result, ok := pivotReportBody(rows, pivotSchema())
+	result, ok := pivotReportBody(rows, pivotSchema(), true)
 	if !ok {
 		t.Fatal("pivot not applied")
 	}
@@ -68,7 +69,7 @@ func TestPivotReportBodyNullGroups(t *testing.T) {
 	rows := []interface{}{
 		[]interface{}{nil, "2026", "06", 5.0, float64(1780272000)},
 	}
-	result, ok := pivotReportBody(rows, pivotSchema())
+	result, ok := pivotReportBody(rows, pivotSchema(), true)
 	if !ok {
 		t.Fatal("pivot not applied")
 	}
@@ -78,16 +79,127 @@ func TestPivotReportBodyNullGroups(t *testing.T) {
 	}
 }
 
+func TestPivotReportBodyKeepsMetricTotalsSeparate(t *testing.T) {
+	viper.Set("table-columns", "")
+	t.Cleanup(func() { viper.Set("table-columns", nil) })
+
+	schema := []reportColumn{
+		{Name: "service_description", Type: "string"},
+		{Name: "year", Type: "string"},
+		{Name: "month", Type: "string"},
+		{Name: "cost", Type: "float"},
+		{Name: "usage", Type: "float"},
+	}
+	rows := []interface{}{
+		[]interface{}{"svc", "2026", "06", 10.0, 100.0},
+		[]interface{}{"svc", "2026", "07", 20.0, 200.0},
+	}
+	result, ok := pivotReportBody(rows, schema, true)
+	if !ok {
+		t.Fatal("pivot not applied")
+	}
+	pivoted := result.([]interface{})
+	if len(pivoted) != 4 {
+		t.Fatalf("pivot rows = %d, want 2 metric rows + 2 totals", len(pivoted))
+	}
+	costTotal := pivoted[2].(map[string]interface{})
+	usageTotal := pivoted[3].(map[string]interface{})
+	if costTotal["metric"] != "cost" || costTotal["total"] != 30.0 {
+		t.Errorf("cost total = %#v, want 30", costTotal)
+	}
+	if usageTotal["metric"] != "usage" || usageTotal["total"] != 300.0 {
+		t.Errorf("usage total = %#v, want 300", usageTotal)
+	}
+}
+
+func TestPivotDefaultFallsBackOnManyPeriods(t *testing.T) {
+	viper.Set("table-columns", "")
+	t.Cleanup(func() {
+		viper.Set("table-columns", nil)
+		viper.Set("pivot-columns-auto", nil)
+	})
+
+	rows := []interface{}{}
+	for day := 1; day <= maxDefaultPivotPeriods+3; day++ {
+		rows = append(rows, []interface{}{"svc", "2026", "07", fmt.Sprintf("%02d", day), 1.0, float64(1780272000 + day*86400)})
+	}
+	schema := []reportColumn{
+		{Name: "service_description", Type: "string"},
+		{Name: "year", Type: "string"},
+		{Name: "month", Type: "string"},
+		{Name: "day", Type: "string"},
+		{Name: "cost", Type: "float"},
+		{Name: "timestamp", Type: "timestamp"},
+	}
+	if _, ok := pivotReportBody(rows, schema, false); ok {
+		t.Error("default pivot applied despite too many periods")
+	}
+	if _, ok := pivotReportBody(rows, schema, true); !ok {
+		t.Error("forced pivot refused")
+	}
+}
+
+func TestPivotPeriodHourly(t *testing.T) {
+	schema := append(pivotSchema()[:3], reportColumn{Name: "day", Type: "string"}, reportColumn{Name: "hour", Type: "string"}, reportColumn{Name: "cost", Type: "float"})
+	timeIdx, _, _ := classifyPivotColumns(schema)
+	cells := []interface{}{"svc", "2026", "08", "09", "01:00", 5.0}
+	if got := pivotPeriod(cells, timeIdx, schema); got != "2026-08-09 01:00" {
+		t.Errorf("hourly period = %q, want 2026-08-09 01:00", got)
+	}
+}
+
+func TestShouldPivotReportRowsDefaults(t *testing.T) {
+	oldAgentMode := agentMode
+	t.Cleanup(func() {
+		agentMode = oldAgentMode
+		for _, key := range []string{"pivot-rows", "flat-rows", "rsh-output-format", "table-columns"} {
+			viper.Set(key, nil)
+		}
+	})
+	reset := func(agent bool, output, columns string, pivot, flat bool) {
+		agentMode = agent
+		viper.Set("rsh-output-format", output)
+		viper.Set("table-columns", columns)
+		viper.Set("pivot-rows", pivot)
+		viper.Set("flat-rows", flat)
+	}
+
+	reset(false, "table", "", false, false)
+	if !shouldPivotReportRows() {
+		t.Error("human table view should pivot by default")
+	}
+	reset(false, "table", "", false, true)
+	if shouldPivotReportRows() {
+		t.Error("--flat must disable the default pivot")
+	}
+	reset(false, "table", "cost,month", false, false)
+	if shouldPivotReportRows() {
+		t.Error("-C column selection must keep the flat layout")
+	}
+	reset(false, "json", "", false, false)
+	if shouldPivotReportRows() {
+		t.Error("machine formats must stay flat by default")
+	}
+	reset(true, "toon", "", false, false)
+	if shouldPivotReportRows() {
+		t.Error("agent mode must stay flat by default")
+	}
+	reset(true, "toon", "", true, false)
+	if !shouldPivotReportRows() {
+		t.Error("--pivot must force the pivot even in agent mode")
+	}
+}
+
 func TestPivotReportBodySkipsNonReportShapes(t *testing.T) {
-	if _, ok := pivotReportBody([]interface{}{"not-a-row"}, pivotSchema()); ok {
+	if _, ok := pivotReportBody([]interface{}{"not-a-row"}, pivotSchema(), true); ok {
 		t.Error("pivot applied to malformed rows")
 	}
-	if _, ok := pivotReportBody(nil, nil); ok {
+	if _, ok := pivotReportBody(nil, nil, true); ok {
 		t.Error("pivot applied to empty input")
 	}
 	// No time columns → nothing to pivot.
 	schema := []reportColumn{{Name: "service_description", Type: "string"}, {Name: "cost", Type: "float"}}
-	if _, ok := pivotReportBody([]interface{}{[]interface{}{"svc", 1.0}}, schema); ok {
+	if _, ok := pivotReportBody([]interface{}{[]interface{}{"svc", 1.0}}, schema, true); ok {
 		t.Error("pivot applied without time columns")
 	}
 }
