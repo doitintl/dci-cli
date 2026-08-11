@@ -65,6 +65,15 @@ func TestValidateRequestBodyAcceptsKnownFields(t *testing.T) {
 	}
 }
 
+func TestValidateRequestBodySkipsPathParameters(t *testing.T) {
+	command := &cobra.Command{Use: "update-resource resource-id", Long: queryRequestHelp}
+	for _, pathParameter := range []string{"project.dataset", "urn:resource"} {
+		if err := validateRequestBody(command, []string{pathParameter, `config.timeInterval: day`}); err != nil {
+			t.Fatalf("path parameter %q rejected as a body field: %v", pathParameter, err)
+		}
+	}
+}
+
 func TestValidateRequestBodyRejectsUnknownPipedJSONAndPreservesInput(t *testing.T) {
 	inputFile, err := os.CreateTemp(t.TempDir(), "request-body")
 	if err != nil {
