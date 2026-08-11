@@ -26,7 +26,7 @@ Expected behavior:
 - mention `customerContext`
 - recommend `dci status` and an env-scoped context override before any persistent change
 
-## Eval 3: SQL Shorthand Query
+## Eval 3: SQL Prompt Redirection
 
 Prompt:
 
@@ -34,21 +34,21 @@ Prompt:
 
 Expected behavior:
 
-- choose SQL shorthand
-- produce a command in the shape `dci query body.query:"SELECT * FROM <billing-table> LIMIT 10"`
-- keep the table name anonymized unless the user already gave a concrete one
+- explain that `dci query` takes a Cloud Analytics JSON config rather than SQL
+- translate the intent into metrics, grouping, time range, and a group limit
+- produce `dci query < query.json` with the payload
 
-## Eval 4: README-Style SQL Prompt
+## Eval 4: Legacy SQL Example
 
 Prompt:
 
-`Use the aws_cur_2_0 style query from the README and show me the command shape.`
+`Use the aws_cur_2_0 style query from the old README and show me the command shape.`
 
 Expected behavior:
 
-- recognize the inline SQL shorthand as supported
-- produce the command shape without claiming it is unsupported
-- explain that actual availability of `aws_cur_2_0` depends on the environment
+- recognize `body.query:"SELECT ..."` as an invalid legacy example
+- avoid producing a `body.query` command
+- offer the equivalent JSON report config
 
 ## Eval 5: Structured 30-Day Cost Report
 
@@ -93,7 +93,7 @@ Prompt:
 
 Expected behavior:
 
-- offer either SQL shorthand or JSON query, with JSON preferred for a reusable report
+- produce a JSON query config with a group limit
 - explain how to aggregate and rank top services
 - produce actionable recommendation categories rather than generic buckets
 
@@ -113,7 +113,7 @@ Expected behavior:
 ## Pass Criteria
 
 - The skill triggers on DCI CLI usage, auth/context problems, reports, queries, and cost analysis.
-- It teaches both `dci query` modes.
+- It teaches the JSON query model, redirects SQL prompts, and never produces `body.query` commands.
 - It prefers safe, read-only exploration first.
 - It keeps examples anonymized.
 - It does not leak tenant-specific IDs, customer contexts, emails, or report URLs.

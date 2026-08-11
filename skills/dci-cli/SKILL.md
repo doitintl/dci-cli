@@ -1,6 +1,6 @@
 ---
 name: dci-cli
-description: Operate the DoiT Cloud Intelligence CLI (`dci`) for DoiT Cloud Intelligence workflows. Use when the agent needs to install or verify the CLI, authenticate, troubleshoot auth or `customerContext`, inspect capabilities, run read-only list/get/report/query commands, compose `dci query` requests in either inline SQL shorthand or stdin JSON, analyze cost/report output, or draft safe create/update/delete commands and payloads.
+description: Operate the DoiT Cloud Intelligence CLI (`dci`) for DoiT Cloud Intelligence workflows. Use when the agent needs to install or verify the CLI, authenticate, troubleshoot auth or `customerContext`, inspect capabilities, run read-only list/get/report/query commands, compose `dci query` JSON payloads, analyze cost/report output, or draft safe create/update/delete commands and payloads.
 ---
 
 # DCI CLI
@@ -26,14 +26,15 @@ Use `--fields id,name` to project list or detail responses before output, and us
 
 Use `dci skill list` to inspect the files embedded in the installed CLI. Use `dci skill update <agent>` to refresh one installed copy, or omit the agent to update every detected installation; locally edited managed files require an explicit `--force` overwrite and are saved in a uniquely named sibling backup directory first.
 
-## Query Modes
+## Queries
 
-Use `dci query` in two modes:
+`dci query` runs a Cloud Analytics report query from a JSON `config` containing metrics, grouping, time ranges, filters, and display options. The API does not expose a SQL request field.
 
-- Use inline SQL shorthand for quick exploration or when the user explicitly asks for SQL, for example `dci query body.query:"SELECT * FROM <billing-table> LIMIT 10"`.
-- Use stdin JSON for structured Cloud Analytics report-style queries with metrics, grouping, time ranges, and display options.
+```bash
+dci query < query.json
+```
 
-Load [query-patterns.md](references/query-patterns.md) when you need query examples or need to choose between SQL shorthand and JSON input.
+Load [query-patterns.md](references/query-patterns.md) for payload examples.
 
 ## Safety
 
@@ -49,6 +50,6 @@ Load [query-patterns.md](references/query-patterns.md) when you need query examp
 
 - Load [capabilities.md](references/capabilities.md) for the capability tree, command families, and invocation patterns.
 - Load [examples.md](references/examples.md) for generalized install/auth, discovery, report, query, and mutation examples.
-- Load [query-patterns.md](references/query-patterns.md) for SQL shorthand and stdin JSON query workflows.
+- Load [query-patterns.md](references/query-patterns.md) for JSON query workflows.
 - Load [cost-optimization.md](references/cost-optimization.md) for an anonymized 30-day cost analysis example.
 - Load [evals.md](references/evals.md) to validate the skill against realistic user prompts.

@@ -2,46 +2,13 @@
 
 Use this file when the task centers on `dci query`.
 
-## Choose the Query Mode
+## Query Model
 
-Use inline SQL shorthand when:
+`dci query` runs a Cloud Analytics report query without persisting it. Its request body contains a `config` object with metrics, grouping, time ranges, filters, and display options. It does not accept SQL strings.
 
-- the user explicitly asks for SQL
-- the user wants a quick inspection of billing rows
-- the user references examples like `SELECT * FROM aws_cur_2_0 LIMIT 10`
-
-Use stdin JSON when:
-
-- the query needs Cloud Analytics-native metrics, grouping, time ranges, filters, or display options
-- the query should be portable and easy to version
-- the user is asking for a structured report rather than a raw table query
-
-## SQL Shorthand
-
-Quick inspection:
-
-```bash
-dci query body.query:"SELECT * FROM <billing-table> LIMIT 10" --output toon
-```
-
-Top services by spend:
-
-```bash
-dci query body.query:"SELECT service_description, SUM(cost) AS total_cost FROM <billing-table> GROUP BY 1 ORDER BY 2 DESC LIMIT 10" --output toon
-```
-
-Practical notes:
-
-- Keep SQL examples short and copyable.
-- Use placeholders such as `<billing-table>` in shared docs.
-- Explain that actual table names are tenant- and data-source-dependent.
-- If quoting becomes messy, switch to a file or shell variable instead of inventing escaping tricks inline.
+When a user asks for SQL or references an old `body.query:"SELECT ..."` example, translate the intent into a report `config` instead.
 
 ## Structured JSON Query
-
-Use JSON when the request is really a Cloud Analytics report query.
-
-Example:
 
 ```bash
 dci query < query.json
@@ -85,7 +52,7 @@ dci query < query.json
 
 ## Recommended Agent Behavior
 
-- Offer SQL shorthand first only when the user asks for SQL or wants a very quick billing-table check.
-- Offer JSON first for reusable cost reports, dashboards, or 30-day optimization workflows.
+- Translate SQL-oriented prompts into Cloud Analytics report configs.
+- Use JSON for reusable cost reports, dashboards, and 30-day optimization workflows.
 - Prefer `--output toon` (compact, token-efficient; the agent-mode default). Use `--output json` when you need standard JSON, e.g. to pipe into `jq`.
 - Use env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context>` if a customer switch is needed temporarily.

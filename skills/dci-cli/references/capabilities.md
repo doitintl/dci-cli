@@ -7,7 +7,6 @@ Use this file when you need the command map, not the procedural guidance.
 - Flags-only read commands: `dci list-alerts --output toon`
 - Positional-ID read commands: `dci get-alert <alert-id> --output toon`
 - Inline shorthand bodies: `dci invite-user email: user@example.com, organizationId: <org-id>, roleId: <role-id>`
-- Inline SQL shorthand with `query`: `dci query body.query:"SELECT * FROM <billing-table> LIMIT 10"`
 - Stdin JSON bodies: `dci query < query.json`
 
 ## Capability Tree

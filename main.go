@@ -831,7 +831,7 @@ var rootExamples = []string{
 var apiExamples = []string{
 	"  dci list-budgets",
 	"  dci list-reports --output table",
-	"  dci query body.query:\"SELECT * FROM aws_cur_2_0 LIMIT 10\"",
+	"  dci query <query.json",
 }
 
 func findDCICommand() *cobra.Command {
