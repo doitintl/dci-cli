@@ -108,18 +108,39 @@ func TestConsoleResourcePaths(t *testing.T) {
 	}
 }
 
+func TestConsoleURLForArgsDoesNotResolveHome(t *testing.T) {
+	oldResolver := consoleCustomerIDResolver
+	consoleCustomerIDResolver = func(context string) (string, error) {
+		t.Fatalf("customer resolver called with context %q", context)
+		return "", nil
+	}
+	t.Cleanup(func() { consoleCustomerIDResolver = oldResolver })
+
+	consoleURL, err := consoleURLForArgs(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consoleURL != consoleBaseURL {
+		t.Errorf("console URL = %q, want %q", consoleURL, consoleBaseURL)
+	}
+}
+
 func TestResolveConsoleCustomerID(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/auth/v1/validate" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
 		if request.Header.Get("Authorization") != "Bearer oauth-token" {
 			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
 		}
 		if request.Header.Get("X-Tenant-Id") != "acme.com" {
 			t.Errorf("tenant header = %q", request.Header.Get("X-Tenant-Id"))
 		}
-		if request.URL.Query().Get("customerContext") != "acme.com" || request.URL.Query().Get("maxResults") != "1" {
+		if request.URL.Query().Get("customerContext") != "acme.com" {
 			t.Errorf("query = %v", request.URL.Query())
 		}
-		_, _ = fmt.Fprint(writer, `{"reports":[{"urlUI":"https://console.doit.com/customers/ResolvedCustomerID123/analyze/reports/report-id"}]}`)
+		writer.Header().Set("X-DoiT-Customer-ID", "ResolvedCustomerID123")
+		_, _ = fmt.Fprint(writer, `{}`)
 	}))
 	t.Cleanup(server.Close)
 	t.Setenv("DCI_API_BASE_URL", server.URL)
@@ -135,5 +156,43 @@ func TestResolveConsoleCustomerID(t *testing.T) {
 	}
 	if customerID != "ResolvedCustomerID123" {
 		t.Errorf("customer ID = %q", customerID)
+	}
+}
+
+func TestResolveConsoleCustomerIDPreservesHTTPClassification(t *testing.T) {
+	tests := []struct {
+		status    int
+		exitCode  int
+		errorCode string
+	}{
+		{status: http.StatusUnauthorized, exitCode: exitAuthentication, errorCode: "AUTHENTICATION_FAILED"},
+		{status: http.StatusForbidden, exitCode: exitAuthorization, errorCode: "PERMISSION_DENIED"},
+		{status: http.StatusInternalServerError, exitCode: exitServer, errorCode: "API_SERVER_ERROR"},
+	}
+
+	for _, test := range tests {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.WriteHeader(test.status)
+			}))
+			t.Cleanup(server.Close)
+			t.Setenv("DCI_API_BASE_URL", server.URL)
+			t.Setenv("DCI_API_KEY", "oauth-token")
+
+			oldClient := consoleHTTPClient
+			consoleHTTPClient = server.Client()
+			t.Cleanup(func() { consoleHTTPClient = oldClient })
+
+			_, err := resolveConsoleCustomerID("")
+			if err == nil {
+				t.Fatal("expected HTTP error")
+			}
+			if got := exitCodeForExecutionError(err, 0); got != test.exitCode {
+				t.Errorf("exit code = %d, want %d", got, test.exitCode)
+			}
+			if got := structuredErrorForExecution(err, 0).Code; got != test.errorCode {
+				t.Errorf("error code = %q, want %q", got, test.errorCode)
+			}
+		})
 	}
 }
