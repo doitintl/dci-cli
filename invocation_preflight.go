@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/rest-sh/restish/cli"
-	"github.com/spf13/pflag"
 	"golang.org/x/term"
 )
 
@@ -33,11 +32,15 @@ var loadInvocationAPI = loadDCIOperationAPI
 var invocationCredentialsAvailable = credentialsAvailableForInvocation
 var invocationCachedSpecAvailable = cachedSpecAvailableForInvocation
 var invocationInteractive = func() bool {
-	return !agentMode && term.IsTerminal(int(os.Stdout.Fd()))
+	return invocationCanAuthenticateInteractively(term.IsTerminal(int(os.Stdin.Fd())))
+}
+
+func invocationCanAuthenticateInteractively(stdinTTY bool) bool {
+	return agentUAMode != uaModeAgent && stdinTTY
 }
 
 func preflightAPIInvocation(args []string) error {
-	if len(args) < 3 || args[1] != "dci" || invocationRequestsHelp(args) {
+	if len(args) < 3 || args[1] != "dci" || invocationSkipsPreflight(args) {
 		return nil
 	}
 	commandName := apiInvocationCommandName(args)
@@ -58,6 +61,7 @@ func preflightAPIInvocation(args []string) error {
 		}
 		return nil
 	}
+	setDestructiveOperations(api.Operations)
 
 	operation := invocationOperation(api, commandName)
 	if operation == nil {
@@ -69,7 +73,10 @@ func preflightAPIInvocation(args []string) error {
 	return authenticationRequiredPreflightError()
 }
 
-func invocationRequestsHelp(args []string) bool {
+func invocationSkipsPreflight(args []string) bool {
+	if invocationHasFlag(args, "--dry-run") {
+		return true
+	}
 	for _, argument := range args[2:] {
 		if argument == "--help" || argument == "-h" {
 			return true
@@ -79,65 +86,15 @@ func invocationRequestsHelp(args []string) bool {
 }
 
 func apiInvocationCommandName(args []string) string {
-	for index := 2; index < len(args); index++ {
-		argument := args[index]
-		if argument == "--" {
-			if index+1 < len(args) {
-				return args[index+1]
-			}
-			return ""
-		}
-		if strings.HasPrefix(argument, "-") && argument != "-" {
-			known, takesValue := invocationFlag(argument)
-			if !known {
-				return ""
-			}
-			if takesValue && !strings.Contains(argument, "=") {
-				index++
-			}
-			continue
-		}
-		return argument
+	if cli.Root == nil {
+		return commandArg(args, 2)
 	}
-	return ""
-}
-
-func invocationFlag(argument string) (bool, bool) {
 	rootFlags := cli.Root.PersistentFlags()
 	dciCommand := findDCICommand()
-	var dciFlags *pflag.FlagSet
 	if dciCommand != nil {
-		dciFlags = dciCommand.PersistentFlags()
+		return commandArg(args, 2, rootFlags, dciCommand.PersistentFlags())
 	}
-
-	if strings.HasPrefix(argument, "--") {
-		name := strings.TrimPrefix(argument, "--")
-		name, _, _ = strings.Cut(name, "=")
-		flag := rootFlags.Lookup(name)
-		if flag == nil && dciFlags != nil {
-			flag = dciFlags.Lookup(name)
-		}
-		if flag == nil {
-			return false, false
-		}
-		return true, !isBoolFlag(flag)
-	}
-
-	shortNames := strings.TrimPrefix(argument, "-")
-	for index := 0; index < len(shortNames); index++ {
-		shortName := string(shortNames[index])
-		flag := rootFlags.ShorthandLookup(shortName)
-		if flag == nil && dciFlags != nil {
-			flag = dciFlags.ShorthandLookup(shortName)
-		}
-		if flag == nil {
-			return false, false
-		}
-		if !isBoolFlag(flag) {
-			return true, index == len(shortNames)-1
-		}
-	}
-	return true, false
+	return commandArg(args, 2, rootFlags)
 }
 
 func invocationOperation(api cli.API, name string) *cli.Operation {
@@ -172,15 +129,21 @@ func unknownAPICommandPreflightError(api cli.API, name string) error {
 func closestAPICommand(api cli.API, name string) string {
 	closest := ""
 	closestDistance := 3
+	prefix := ""
 	for _, operation := range api.Operations {
-		if strings.HasPrefix(operation.Name, name) {
-			return operation.Name
+		for _, candidate := range append([]string{operation.Name}, operation.Aliases...) {
+			if prefix == "" && strings.HasPrefix(candidate, name) {
+				prefix = candidate
+			}
+			distance := editDistance(name, candidate)
+			if distance < closestDistance {
+				closestDistance = distance
+				closest = candidate
+			}
 		}
-		distance := editDistance(name, operation.Name)
-		if distance < closestDistance {
-			closestDistance = distance
-			closest = operation.Name
-		}
+	}
+	if closest == "" {
+		return prefix
 	}
 	return closest
 }
@@ -200,7 +163,7 @@ func editDistance(left, right string) int {
 			if leftRunes[leftIndex-1] == rightRunes[rightIndex-1] {
 				changeCost = 0
 			}
-			current[rightIndex] = minimumInteger(
+			current[rightIndex] = min(
 				previous[rightIndex]+1,
 				current[rightIndex-1]+1,
 				previous[rightIndex-1]+changeCost,
@@ -211,21 +174,15 @@ func editDistance(left, right string) int {
 	return previous[len(rightRunes)]
 }
 
-func minimumInteger(values ...int) int {
-	minimum := values[0]
-	for _, value := range values[1:] {
-		if value < minimum {
-			minimum = value
-		}
-	}
-	return minimum
-}
-
 func credentialsAvailableForInvocation() bool {
 	if os.Getenv("DCI_API_KEY") != "" {
 		return true
 	}
-	return cli.Cache != nil && cli.Cache.GetString("dci:default.token") != ""
+	if cli.Cache == nil || cli.Cache.GetString("dci:default.token") == "" {
+		return false
+	}
+	expiresAt := cli.Cache.GetTime("dci:default.expires")
+	return expiresAt.IsZero() || expiresAt.After(time.Now()) || cli.Cache.GetString("dci:default.refresh") != ""
 }
 
 func cachedSpecAvailableForInvocation() bool {
