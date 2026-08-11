@@ -321,6 +321,9 @@ func run() (exitCode int) {
 	lockToDCI()
 	setupCompletion()
 	os.Args = normalizeArgs(os.Args)
+	if err := preflightAPIInvocation(os.Args); err != nil {
+		return reportExecutionError(err, 0, configDir)
+	}
 
 	if err := executeCLI(); err != nil {
 		return reportExecutionError(err, cli.GetLastStatus(), configDir)

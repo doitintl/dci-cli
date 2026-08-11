@@ -66,6 +66,7 @@ func TestDestructiveMetadataReusesWarmRestishDiskCacheOffline(t *testing.T) {
 
 	environment := []string{
 		"DCI_AGENT_MODE=1",
+		"DCI_API_KEY=test-token",
 		"DCI_API_BASE_URL=" + server.URL,
 		"DCI_CACHE_DIR=" + cacheDir,
 		"DCI_CONFIG_DIR=" + configDir,
