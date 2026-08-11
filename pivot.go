@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -111,6 +112,7 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 			row[p] = values[key][p]
 		}
 		row["total"] = rowTotals[key]
+		row["trend"] = trendLabel(values[key][periods[0]], values[key][periods[len(periods)-1]])
 		out = append(out, row)
 	}
 
@@ -124,6 +126,7 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 			totals[p] = periodTotals[metric][p]
 		}
 		totals["total"] = metricTotals[metric]
+		totals["trend"] = trendLabel(periodTotals[metric][periods[0]], periodTotals[metric][periods[len(periods)-1]])
 		out = append(out, totals)
 	}
 
@@ -139,7 +142,7 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 			order = append(order, "metric")
 		}
 		order = append(order, periods...)
-		order = append(order, "total")
+		order = append(order, "total", "trend")
 		viper.Set("table-columns", strings.Join(order, ","))
 		viper.Set("pivot-columns-auto", true)
 	}
@@ -151,6 +154,23 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 	}
 
 	return out, true
+}
+
+// trendLabel summarizes first→last period movement per row — the textual
+// counterpart of the heatmap: humans scan it, and agents (which never receive
+// color) get the derived signal without recomputing it.
+func trendLabel(first, last float64) string {
+	if first == 0 {
+		if last == 0 {
+			return ""
+		}
+		return "new"
+	}
+	change := (last - first) / first * 100
+	if math.Abs(change) < 0.5 {
+		return "flat"
+	}
+	return fmt.Sprintf("%+.0f%%", change)
 }
 
 func allMetricsMoney(metricIdx []int, schema []reportColumn) bool {

@@ -709,6 +709,10 @@ func stdoutIsTTY() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
 }
 
+func heatmapEnabled(requested, agent, terminal, noColor bool) bool {
+	return requested && !agent && terminal && !noColor
+}
+
 // agentFlagOverride scans args for the explicit --agent / --no-agent flags and
 // returns +1 for agent mode, -1 for human mode, or 0 for no override. These are
 // two independent pflag bool flags, so this scan mirrors pflag's own semantics:
@@ -1525,7 +1529,8 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("pivot", false, "Force the pivot report view (groups as rows, time periods as columns, with totals) for any output format or mode")
 	dciCmd.PersistentFlags().Bool("flat", false, "Render report results as flat rows instead of the default interactive pivot view")
 	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
-	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Print numbers unformatted in table output (no digit grouping or rounding)")
+	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
+	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
 
 	// Bind table flags into viper so the renderer can pick them up.
 	prev := dciCmd.PersistentPreRunE
@@ -1576,6 +1581,12 @@ func addOutputFlag() {
 		viper.Set("money-columns", "")
 		viper.Set("report-hourly", false)
 		viper.Set("pivot-columns-auto", false)
+
+		heatmapRequested := true
+		if flag := cmd.Flags().Lookup("heatmap"); flag != nil {
+			heatmapRequested = flag.Value.String() == "true"
+		}
+		viper.Set("heatmap", heatmapEnabled(heatmapRequested, agentMode, stdoutIsTTY(), os.Getenv("NO_COLOR") != ""))
 
 		for flagName, configName := range map[string]string{
 			"pivot":              "pivot-rows",
@@ -2687,8 +2698,12 @@ func schemaColumnType(schema []reportColumn, i int) string {
 
 // displayTimestampCell converts schema-declared timestamp cells (epoch
 // seconds) to ISO 8601 for the human-facing table/TOON renderers. Machine
-// formats (json, yaml, csv via raw rows) keep the raw epoch values.
+// formats (json, yaml, csv via raw rows) keep the raw epoch values, and
+// --raw-numbers opts TOON/table consumers back into raw epochs too.
 func displayTimestampCell(cell interface{}, colType string) interface{} {
+	if viper.GetBool("raw-numbers") {
+		return cell
+	}
 	if colType != "timestamp" && colType != "datetime" {
 		return cell
 	}
@@ -2811,12 +2826,16 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 	}
 	table.Header = &simpletable.Header{Cells: header}
 
-	for _, row := range rows {
+	heat := newHeatmap(rows, keys)
+	for rowIndex, row := range rows {
 		body := make([]*simpletable.Cell, 0, len(keys))
 		for i, k := range keys {
 			val := row[k]
 			cellText := renderCellText(row, k)
 			cellText = formatCell(cellText, colWidths[i], mode)
+			if heat != nil {
+				cellText = heat.colorize(rowIndex, k, val, cellText)
+			}
 			// Numbers align right for magnitude comparison; text reads left.
 			align := simpletable.AlignLeft
 			if _, isNumeric := numericCell(val); isNumeric {
@@ -2832,6 +2851,62 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 	// Replace the U+2800 padding placeholder with real spaces.
 	out = strings.ReplaceAll(out, "\u2800", " ")
 	return out, nil
+}
+
+type tableHeatmap struct {
+	max       float64
+	totalsRow int
+	periodSet map[string]bool
+}
+
+var heatRamp = []int{22, 28, 100, 166, 124}
+
+func newHeatmap(rows []map[string]interface{}, keys []string) *tableHeatmap {
+	if !viper.GetBool("heatmap") || !viper.GetBool("pivot-columns-auto") || len(rows) < 2 {
+		return nil
+	}
+	periodSet := map[string]bool{}
+	for _, k := range keys {
+		// Period columns are the date-shaped ones ("2026-05", "2026-08-09 01:00").
+		if len(k) >= 7 && k[4] == '-' {
+			periodSet[k] = true
+		}
+	}
+	if len(periodSet) == 0 {
+		return nil
+	}
+	heat := &tableHeatmap{totalsRow: len(rows) - 1, periodSet: periodSet}
+	for rowIndex, row := range rows {
+		if rowIndex == heat.totalsRow {
+			continue // the totals row would dominate the scale
+		}
+		for k := range periodSet {
+			if v, ok := numericCell(row[k]); ok && v > heat.max {
+				heat.max = v
+			}
+		}
+	}
+	if heat.max <= 0 {
+		return nil
+	}
+	return heat
+}
+
+func (h *tableHeatmap) colorize(rowIndex int, key string, val interface{}, cellText string) string {
+	if rowIndex == h.totalsRow || !h.periodSet[key] {
+		return cellText
+	}
+	v, ok := numericCell(val)
+	if !ok || v <= 0 {
+		return cellText
+	}
+	// Square-root scaling keeps skewed cost distributions from washing out
+	// the lower buckets.
+	bucket := int(math.Sqrt(v/h.max) * float64(len(heatRamp)))
+	if bucket >= len(heatRamp) {
+		bucket = len(heatRamp) - 1
+	}
+	return fmt.Sprintf("\x1b[48;5;%d;38;5;231m%s\x1b[0m", heatRamp[bucket], cellText)
 }
 
 func padCell(s string, width int) string {

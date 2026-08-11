@@ -112,6 +112,47 @@ func TestPivotReportBodyKeepsMetricTotalsSeparate(t *testing.T) {
 	}
 }
 
+func TestTrendLabel(t *testing.T) {
+	cases := []struct {
+		first, last float64
+		want        string
+	}{
+		{239927, 345927, "+44%"},
+		{83219, 53925, "-35%"},
+		{100, 100.2, "flat"},
+		{0, 500, "new"},
+		{0, 0, ""},
+	}
+	for _, c := range cases {
+		if got := trendLabel(c.first, c.last); got != c.want {
+			t.Errorf("trendLabel(%v, %v) = %q, want %q", c.first, c.last, got, c.want)
+		}
+	}
+}
+
+func TestPivotRowsCarryTrend(t *testing.T) {
+	viper.Set("table-columns", "")
+	t.Cleanup(func() {
+		viper.Set("table-columns", nil)
+		viper.Set("pivot-columns-auto", nil)
+	})
+	rows := []interface{}{
+		[]interface{}{"svc-a", "2026", "06", 100.0, float64(1780272000)},
+		[]interface{}{"svc-a", "2026", "07", 200.0, float64(1782864000)},
+	}
+	result, ok := pivotReportBody(rows, pivotSchema(), true)
+	if !ok {
+		t.Fatal("pivot not applied")
+	}
+	first := result.([]interface{})[0].(map[string]interface{})
+	if first["trend"] != "+100%" {
+		t.Errorf("trend = %v, want +100%%", first["trend"])
+	}
+	if !strings.HasSuffix(viper.GetString("table-columns"), ",total,trend") {
+		t.Errorf("column order = %q, want trend last", viper.GetString("table-columns"))
+	}
+}
+
 func TestPivotDefaultFallsBackOnManyPeriods(t *testing.T) {
 	viper.Set("table-columns", "")
 	t.Cleanup(func() {
