@@ -25,7 +25,11 @@ func (t dciCSVContentType) Marshal(value interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("response is not table-shaped; use --output json instead: %w", err)
 	}
 
-	keys := collectKeys(rows, getTableOptions().columns)
+	columns := getTableOptions().columns
+	keys := collectKeys(rows, columns)
+	if len(keys) == 0 && len(columns) == 0 {
+		keys = reportSchemaColumnNames(jsonSafe)
+	}
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
 	if err := writer.Write(keys); err != nil {
@@ -45,6 +49,18 @@ func (t dciCSVContentType) Marshal(value interface{}) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func reportSchemaColumnNames(value interface{}) []string {
+	_, _, schema, ok := reportResultContainer(value)
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(schema))
+	for _, column := range schema {
+		names = append(names, column.Name)
+	}
+	return names
 }
 
 func (t dciCSVContentType) Unmarshal(data []byte, value interface{}) error {

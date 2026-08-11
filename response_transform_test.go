@@ -81,11 +81,14 @@ func TestNormalizeIntegralNumbersConvertsWholeFloats(t *testing.T) {
 }
 
 func TestNullListsToEmptyOnListResponses(t *testing.T) {
-	body := map[string]interface{}{"budgets": nil, "rowCount": float64(0)}
+	body := map[string]interface{}{"budgets": nil, "rowCount": float64(0), "nextPageToken": nil}
 	result := nullListsToEmpty(body).(map[string]interface{})
 	arr, ok := result["budgets"].([]interface{})
 	if !ok || len(arr) != 0 {
 		t.Errorf("budgets = %#v, want empty array", result["budgets"])
+	}
+	if result["nextPageToken"] != nil {
+		t.Errorf("nextPageToken = %#v, want nil preserved", result["nextPageToken"])
 	}
 }
 
@@ -175,6 +178,22 @@ func TestTransformCapsRowsInAgentMode(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "omitted") {
 		t.Errorf("stderr = %q, want omission notice", stderr.String())
+	}
+}
+
+func TestTransformPivotsCompleteRowsInAgentMode(t *testing.T) {
+	resetTransformConfig(t)
+	agentMode = true
+	viper.Set("pivot-rows", true)
+
+	rows := make([][]interface{}, defaultAgentMaxRows+100)
+	for i := range rows {
+		rows[i] = []interface{}{"svc", "2026", fmt.Sprintf("%02d", i%12+1), float64(1), float64(1782864000)}
+	}
+	result := transformSuccessBody(reportBody(rows...)).([]interface{})
+	totals := result[len(result)-1].(map[string]interface{})
+	if totals["total"] != float64(defaultAgentMaxRows+100) {
+		t.Fatalf("pivot total = %v, want %d", totals["total"], defaultAgentMaxRows+100)
 	}
 }
 

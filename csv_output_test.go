@@ -79,3 +79,29 @@ func TestCSVMarshalReportRowsUseSchemaHeader(t *testing.T) {
 		t.Errorf("header = %q, want schema column names", header)
 	}
 }
+
+func TestCSVMarshalEmptyReportUsesSchemaHeader(t *testing.T) {
+	viper.Set("table-columns", "")
+	t.Cleanup(func() { viper.Set("table-columns", nil) })
+
+	body := map[string]interface{}{
+		"result": map[string]interface{}{
+			"rows": []interface{}{},
+			"schema": []interface{}{
+				map[string]interface{}{"name": "service_description", "type": "string"},
+				map[string]interface{}{"name": "cost", "type": "float"},
+			},
+		},
+	}
+	out, err := dciCSVContentType{}.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(strings.NewReader(string(out))).ReadAll()
+	if err != nil {
+		t.Fatalf("output is not valid CSV: %v\n%s", err, out)
+	}
+	if len(records) != 1 || strings.Join(records[0], ",") != "service_description,cost" {
+		t.Fatalf("records = %#v, want schema header", records)
+	}
+}
