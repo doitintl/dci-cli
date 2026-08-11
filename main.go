@@ -1425,6 +1425,9 @@ func addOutputFlag() {
 				viper.Set("table-columns", fields)
 			}
 		}
+		if err := validateRequestBody(cmd, args); err != nil {
+			return err
+		}
 
 		// If --customer-context / -D was explicitly passed, override whatever
 		// applyCustomerContext() injected from the file or env var.
