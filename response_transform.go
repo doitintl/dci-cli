@@ -33,6 +33,24 @@ func transformSuccessBody(body interface{}) interface{} {
 		return body
 	}
 
+	// Hourly reports must keep the time-of-day everywhere: without this flag
+	// the table renderer would collapse the midnight row to a bare date while
+	// its siblings show hours.
+	viper.Set("report-hourly", hasHourColumn(schema))
+
+	// Currency context travels with the result: agents reading TOON/JSON get
+	// an explicit `currency` field, and the table renderer knows which
+	// symbol to print. Resolved from the query request config (the response
+	// itself carries no currency — an API gap tracked in the improvement
+	// plan).
+	if currency := requestCurrencyContext(); currency != "" {
+		if _, present := container["currency"]; !present {
+			container["currency"] = currency
+		}
+		viper.Set("report-currency", currency)
+		viper.Set("money-columns", strings.Join(moneyMetricColumns(schema), ","))
+	}
+
 	sortReportRows(rows, schema)
 
 	if !viper.GetBool("include-empty-rows") {
@@ -44,8 +62,9 @@ func transformSuccessBody(body interface{}) interface{} {
 		}
 	}
 
-	if viper.GetBool("pivot-rows") {
-		if pivoted, ok := pivotReportBody(rows, schema); ok {
+	if shouldPivotReportRows() {
+		forced := viper.GetBool("pivot-rows")
+		if pivoted, ok := pivotReportBody(rows, schema, forced); ok {
 			return pivoted
 		}
 	}
@@ -66,6 +85,71 @@ func transformSuccessBody(body interface{}) interface{} {
 	}
 
 	return body
+}
+
+// requestReportCurrency is the currency resolved from the request body of the
+// current invocation (set by preflight for query-style commands; "" when the
+// command carries no report config).
+var requestReportCurrency string
+
+func requestCurrencyContext() string {
+	return requestReportCurrency
+}
+
+// moneyMetricColumns returns the schema columns that carry monetary values —
+// float metrics whose name denotes money (cost, amortized_cost, amount, …);
+// "usage" and other unit metrics stay plain numbers.
+func moneyMetricColumns(schema []reportColumn) []string {
+	money := []string{}
+	for _, col := range schema {
+		if col.Type != "float" && col.Type != "number" {
+			continue
+		}
+		if moneyNamedColumn(col.Name) {
+			money = append(money, col.Name)
+		}
+	}
+	return money
+}
+
+func hasHourColumn(schema []reportColumn) bool {
+	for _, col := range schema {
+		if strings.EqualFold(col.Name, "hour") {
+			return true
+		}
+	}
+	return false
+}
+
+func moneyNamedColumn(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.Contains(lower, "cost") || lower == "amount" || strings.Contains(lower, "spend") || strings.Contains(lower, "savings")
+}
+
+// shouldPivotReportRows decides whether report rows render as a pivot.
+// Explicit flags always win (--pivot forces it anywhere, --flat disables).
+// Otherwise the pivot is the default *human* report view: table output in
+// human mode with no explicit column selection (a -C selection addresses the
+// flat columns, so it keeps the flat layout). Machine formats (json, yaml,
+// csv, toon) and agent mode stay flat.
+func shouldPivotReportRows() bool {
+	if viper.GetBool("pivot-rows") {
+		return true
+	}
+	if viper.GetBool("flat-rows") {
+		return false
+	}
+	if agentMode {
+		return false
+	}
+	// PreRun always resolves the output format; an empty value means the
+	// pipeline is running outside a normal command (tests, internal calls)
+	// where surprising a consumer with a pivot is worse than staying flat.
+	output := strings.TrimSpace(viper.GetString("rsh-output-format"))
+	if output != "table" && output != "auto" {
+		return false
+	}
+	return strings.TrimSpace(viper.GetString("table-columns")) == ""
 }
 
 // effectiveMaxRows resolves the report-row cap: an explicit --max-rows wins

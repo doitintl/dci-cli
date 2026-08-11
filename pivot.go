@@ -5,14 +5,20 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/viper"
 )
+
+// maxDefaultPivotPeriods bounds the default pivot: beyond two weeks of daily
+// (or a day of hourly) periods the matrix stops being scannable, so the
+// default view stays flat and only an explicit --pivot forces the matrix.
+const maxDefaultPivotPeriods = 14
 
 // pivotReportBody reshapes flat report rows (one row per group × time period)
 // into a report-style pivot: groups as rows, time periods as columns, with a
 // row total column and a per-period totals row — the way the DoiT console
 // presents a report table.
-func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bool) {
+func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (interface{}, bool) {
 	if len(schema) == 0 || len(rows) == 0 {
 		return nil, false
 	}
@@ -28,10 +34,10 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 	}
 	values := map[pivotKey]map[string]float64{}
 	rowTotals := map[pivotKey]float64{}
-	periodTotals := map[string]float64{}
+	periodTotals := map[string]map[string]float64{}
+	metricTotals := map[string]float64{}
 	periodSet := map[string]bool{}
 	groupOrder := []pivotKey{}
-	grandTotal := 0.0
 	multiMetric := len(metricIdx) > 1
 
 	for _, raw := range rows {
@@ -52,9 +58,10 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 			if !ok {
 				continue
 			}
+			metric := schema[mi].Name
 			key := pivotKey{group: group}
 			if multiMetric {
-				key.metric = schema[mi].Name
+				key.metric = metric
 			}
 			if values[key] == nil {
 				values[key] = map[string]float64{}
@@ -62,8 +69,11 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 			}
 			values[key][period] += n
 			rowTotals[key] += n
-			periodTotals[period] += n
-			grandTotal += n
+			if periodTotals[metric] == nil {
+				periodTotals[metric] = map[string]float64{}
+			}
+			periodTotals[metric][period] += n
+			metricTotals[metric] += n
 			periodSet[period] = true
 		}
 	}
@@ -78,13 +88,20 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 	}
 	sort.Strings(periods)
 
+	if !forced && len(periods) > maxDefaultPivotPeriods {
+		if cli.Stderr != nil {
+			_, _ = fmt.Fprintf(cli.Stderr, "note: %d time periods — showing flat rows (pass --pivot to force the pivot view)\n", len(periods))
+		}
+		return nil, false
+	}
+
 	// Highest row total first, matching how report tables rank groups.
 	sort.SliceStable(groupOrder, func(i, j int) bool {
 		return rowTotals[groupOrder[i]] > rowTotals[groupOrder[j]]
 	})
 
 	groupHeader := pivotGroupHeader(groupIdx, schema)
-	out := make([]interface{}, 0, len(groupOrder)+1)
+	out := make([]interface{}, 0, len(groupOrder)+len(metricIdx))
 	for _, key := range groupOrder {
 		row := map[string]interface{}{groupHeader: key.group}
 		if multiMetric {
@@ -97,18 +114,25 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 		out = append(out, row)
 	}
 
-	totals := map[string]interface{}{groupHeader: "TOTAL"}
-	if multiMetric {
-		totals["metric"] = ""
+	for _, mi := range metricIdx {
+		metric := schema[mi].Name
+		totals := map[string]interface{}{groupHeader: "TOTAL"}
+		if multiMetric {
+			totals["metric"] = metric
+		}
+		for _, p := range periods {
+			totals[p] = periodTotals[metric][p]
+		}
+		totals["total"] = metricTotals[metric]
+		out = append(out, totals)
 	}
-	for _, p := range periods {
-		totals[p] = periodTotals[p]
-	}
-	totals["total"] = grandTotal
-	out = append(out, totals)
 
 	// Give the renderer an explicit column order (group, periods, total) —
 	// alphabetical ordering would sort the group column after the periods.
+	// Marked as auto-set so the width fit still applies (unlike a user's -C,
+	// this is not an explicit selection): a forced pivot over many periods
+	// keeps the group, the leading periods, and the total, with the rest
+	// reported through the hidden-columns hint.
 	if strings.TrimSpace(viper.GetString("table-columns")) == "" {
 		order := []string{groupHeader}
 		if multiMetric {
@@ -117,9 +141,25 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 		order = append(order, periods...)
 		order = append(order, "total")
 		viper.Set("table-columns", strings.Join(order, ","))
+		viper.Set("pivot-columns-auto", true)
+	}
+
+	// When the pivoted metric is monetary and the currency is known, the
+	// period and total cells are money for the renderer.
+	if requestCurrencyContext() != "" && allMetricsMoney(metricIdx, schema) {
+		viper.Set("money-columns", strings.Join(append(append([]string{}, periods...), "total"), ","))
 	}
 
 	return out, true
+}
+
+func allMetricsMoney(metricIdx []int, schema []reportColumn) bool {
+	for _, i := range metricIdx {
+		if !moneyNamedColumn(schema[i].Name) {
+			return false
+		}
+	}
+	return len(metricIdx) > 0
 }
 
 // pivotTimeParts orders the recognized time dimensions from coarse to fine so
@@ -150,14 +190,29 @@ func classifyPivotColumns(schema []reportColumn) (timeIdx map[string]int, groupI
 
 func pivotPeriod(cells []interface{}, timeIdx map[string]int, schema []reportColumn) string {
 	parts := []string{}
+	hourPart := ""
 	for _, name := range pivotTimeParts {
 		i, ok := timeIdx[name]
 		if !ok || i >= len(cells) || cells[i] == nil {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%v", cells[i]))
+		value := fmt.Sprintf("%v", cells[i])
+		if name == "hour" {
+			// The API delivers hours as zero-padded "HH:MM" strings; a space
+			// separator reads as a time, a dash would read as another date part.
+			if n, ok := numericCell(cells[i]); ok {
+				value = fmt.Sprintf("%02d:00", int(n))
+			}
+			hourPart = value
+			continue
+		}
+		parts = append(parts, value)
 	}
-	return strings.Join(parts, "-")
+	period := strings.Join(parts, "-")
+	if hourPart != "" {
+		period += " " + hourPart
+	}
+	return period
 }
 
 func pivotGroup(cells []interface{}, groupIdx []int) string {

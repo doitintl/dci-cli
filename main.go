@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -207,7 +208,7 @@ func printFirstRunOnboarding(configured bool) {
 		return
 	}
 
-	fmt.Fprintln(os.Stderr, "DoiT Cloud Intelligence CLI is ready.")
+	fmt.Fprintln(os.Stderr, "Cloud Intelligence™ CLI is ready.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Next steps:")
 	fmt.Fprintln(os.Stderr, "  dci status")
@@ -224,6 +225,8 @@ func run() (exitCode int) {
 	// Reset per-invocation state so repeated calls (e.g. in tests) start clean.
 	customerContextFlagValue = ""
 	resolvedCustomerContext = ""
+	requestReportCurrency = ""
+	bufferedRequestBody = nil
 	nonJSONErrorResponse = false
 	resetErrorContractState()
 	resetDestructiveContractState()
@@ -356,7 +359,7 @@ func reportExecutionError(err error, status int, configDir string) int {
 		if code == exitSuccess && isSilentExecutionError(err) {
 			return exitSuccess
 		}
-		fmt.Fprintf(os.Stderr, "%v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		maybeHintDoerContext(code, status, configDir)
 		return code
 	}
@@ -818,7 +821,7 @@ Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
   {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}
 `
 
-const dciLongDescription = "Command-line interface for the DoiT Cloud Intelligence API.\n\n" +
+const dciLongDescription = "Command-line interface for the Cloud Intelligence™ API.\n\n" +
 	"Documentation: https://help.doit.com/docs/cli or run `dci docs` for every entry point."
 
 var rootExamples = []string{
@@ -877,7 +880,7 @@ func applyCommandBranding(cmd *cobra.Command, short string, examples []string) {
 }
 
 func brandRootCommand() {
-	applyCommandBranding(cli.Root, "DoiT Cloud Intelligence CLI", rootExamples)
+	applyCommandBranding(cli.Root, "Cloud Intelligence™ CLI", rootExamples)
 	cli.Root.SetUsageTemplate(dciUsageTemplate)
 }
 
@@ -1115,7 +1118,7 @@ func validateCustomerContextValue(token string) error {
 }
 
 func brandDCIRootCommand() {
-	applyCommandBranding(findDCICommand(), "DoiT Cloud Intelligence API CLI", apiExamples)
+	applyCommandBranding(findDCICommand(), "Cloud Intelligence™ API CLI", apiExamples)
 }
 
 func registerStatusCommands(configDir string) {
@@ -1135,7 +1138,7 @@ func registerStatusCommands(configDir string) {
 			return err
 		}
 
-		fmt.Fprintln(os.Stdout, "DoiT Cloud Intelligence")
+		_, _ = fmt.Fprintln(os.Stdout, "Cloud Intelligence™")
 		if os.Getenv("DCI_API_BASE_URL") != "" {
 			fmt.Fprintf(os.Stdout, "API Base: %s (DCI_API_BASE_URL)\n", base)
 		} else {
@@ -1455,7 +1458,8 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("dry-run", false, "Preview a destructive operation without executing it")
 	dciCmd.PersistentFlags().Int("max-rows", -1, "Maximum report result rows to output (default: 500 in agent mode, unlimited otherwise; 0 = unlimited)")
 	dciCmd.PersistentFlags().String("rows", "", "Report row encoding: positional (default) or keyed (schema-named objects)")
-	dciCmd.PersistentFlags().Bool("pivot", false, "Pivot report results: groups as rows, time periods as columns, with totals")
+	dciCmd.PersistentFlags().Bool("pivot", false, "Force the pivot report view (groups as rows, time periods as columns, with totals) for any output format or mode")
+	dciCmd.PersistentFlags().Bool("flat", false, "Render report results as flat rows instead of the default interactive pivot view")
 	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Print numbers unformatted in table output (no digit grouping or rounding)")
 
@@ -1504,9 +1508,14 @@ func addOutputFlag() {
 			}
 		}
 		viper.Set("rows-mode", rowsMode)
+		viper.Set("report-currency", "")
+		viper.Set("money-columns", "")
+		viper.Set("report-hourly", false)
+		viper.Set("pivot-columns-auto", false)
 
 		for flagName, configName := range map[string]string{
 			"pivot":              "pivot-rows",
+			"flat":               "flat-rows",
 			"include-empty-rows": "include-empty-rows",
 			"raw-numbers":        "raw-numbers",
 		} {
@@ -2297,6 +2306,19 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 	}
 
 	terminalWidth := detectTerminalWidth(opts.width)
+
+	// Wide responses (e.g. anomalies with 16 columns) would otherwise squeeze
+	// every column into unreadable "…" stubs. Keep only as many columns as
+	// render readably and report the rest through the same hidden-columns
+	// hint used for object columns. An explicit -C selection or wrap mode
+	// keeps every requested column; the pivot's auto-generated column order
+	// is not a user selection, so it stays fit-eligible.
+	if (len(opts.columns) == 0 || viper.GetBool("pivot-columns-auto")) && opts.mode == "fit" {
+		var hiddenForWidth []string
+		keys, hiddenForWidth = fitColumnsToTerminal(rows, keys, terminalWidth)
+		hidden = append(hidden, hiddenForWidth...)
+	}
+
 	contentW := measureContentWidths(rows, keys)
 
 	colWidths := computeColumnWidths(contentW, terminalWidth, maxColWidth)
@@ -2306,8 +2328,8 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 	}
 
 	if len(hidden) > 0 {
-		out += fmt.Sprintf("\nHidden columns (object values): %s\n", strings.Join(hidden, ", "))
-		out += fmt.Sprintf("Use -C to include them, e.g.: -C %s\n", strings.Join(append(keys, hidden...), ","))
+		out += fmt.Sprintf("\nHidden columns (nested objects, or too many to fit): %s\n", strings.Join(hidden, ", "))
+		out += fmt.Sprintf("Use -C to choose columns (e.g.: -C %s), -M wrap to wrap, or -W to widen\n", strings.Join(append(keys, hidden...), ","))
 	}
 	return []byte(out), nil
 }
@@ -2386,7 +2408,7 @@ func measureContentWidths(rows []map[string]interface{}, keys []string) []int {
 	}
 	for _, row := range rows {
 		for i, k := range keys {
-			w := runewidth.StringWidth(tableCellText(row[k]))
+			w := runewidth.StringWidth(renderCellText(row, k))
 			if w > widths[i] {
 				widths[i] = w
 			}
@@ -2395,9 +2417,65 @@ func measureContentWidths(rows []map[string]interface{}, keys []string) []int {
 	return widths
 }
 
+// renderCellText renders a cell with full row context: monetary cells get the
+// currency symbol and whole-unit rounding when the currency is known (from
+// the row itself, e.g. budgets, or from the report request config).
+func renderCellText(row map[string]interface{}, key string) string {
+	val := row[key]
+	if !viper.GetBool("raw-numbers") {
+		if amount, ok := numericCell(val); ok {
+			if currency := cellCurrency(row, key); currency != "" {
+				return formatMoney(amount, currency)
+			}
+		}
+	}
+	return tableCellText(key, val)
+}
+
+// cellCurrency decides whether a cell is monetary and in which currency:
+// either the transform marked the column (report metrics, pivot periods), or
+// the row itself carries a currency field next to a money-named column.
+func cellCurrency(row map[string]interface{}, key string) string {
+	reportCurrency := strings.TrimSpace(viper.GetString("report-currency"))
+	for _, column := range strings.Split(viper.GetString("money-columns"), ",") {
+		if column != "" && column == key {
+			return reportCurrency
+		}
+	}
+	if rowCurrency, ok := row["currency"].(string); ok && rowCurrency != "" && moneyNamedColumn(key) {
+		return rowCurrency
+	}
+	return ""
+}
+
+// currencySymbols maps ISO codes to their conventional signs; unknown codes
+// prefix the code itself ("SEK 1,234").
+var currencySymbols = map[string]string{
+	"USD": "$", "EUR": "€", "GBP": "£", "ILS": "₪", "JPY": "¥",
+	"AUD": "A$", "CAD": "C$", "BRL": "R$", "MXN": "MX$", "SGD": "S$", "TWD": "NT$",
+}
+
+// formatMoney renders a monetary amount for humans: currency sign, digit
+// grouping, rounded to whole units (cents are noise at cloud-bill scale).
+func formatMoney(amount float64, currency string) string {
+	rounded := int64(math.Round(math.Abs(amount)))
+	grouped := groupDigits(strconv.FormatInt(rounded, 10))
+	sign := ""
+	if amount < 0 && rounded != 0 {
+		sign = "-"
+	}
+	if symbol, ok := currencySymbols[strings.ToUpper(currency)]; ok {
+		return sign + symbol + grouped
+	}
+	return sign + strings.ToUpper(currency) + " " + grouped
+}
+
 // tableCellText renders a raw row value as table cell text, joining arrays
-// the same way toon cells do.
-func tableCellText(val interface{}) string {
+// the same way toon cells do. The column name lets epoch-second values in
+// time-named columns render as dates (millisecond epochs are recognized by
+// magnitude alone; second epochs overlap plausible numeric data, so they
+// convert only when the column name says "time").
+func tableCellText(key string, val interface{}) string {
 	if s, ok := val.([]interface{}); ok {
 		converted := make([]string, len(s))
 		for j := range s {
@@ -2405,7 +2483,17 @@ func tableCellText(val interface{}) string {
 		}
 		return strings.Join(converted, ", ")
 	}
+	if !viper.GetBool("raw-numbers") && timeNamedColumn(key) {
+		if sec, ok := numericCell(val); ok && sec >= 1e9 && sec < 4.1e9 {
+			return prettifyTimestamp(time.Unix(int64(sec), 0).UTC().Format(time.RFC3339))
+		}
+	}
 	return formatTableValue(val)
+}
+
+func timeNamedColumn(key string) bool {
+	lower := strings.ToLower(key)
+	return strings.Contains(lower, "time") || strings.Contains(lower, "date")
 }
 
 // computeColumnWidths distributes terminal width across columns. Columns that
@@ -2514,6 +2602,9 @@ func tableOverhead(cols int) int {
 // 2001–2099) are formatted as ISO 8601 in UTC. Both float64 and int64 are
 // handled: integral response numbers are normalized to int64.
 func formatValue(val interface{}) string {
+	if val == nil {
+		return "" // an empty cell, not a literal "<nil>"
+	}
 	if ms, ok := numericCell(val); ok && ms >= 1e12 && ms < 4.1e12 {
 		sec := int64(ms) / 1000
 		rem := int64(ms) % 1000
@@ -2561,15 +2652,50 @@ func displayTimestampFields(row map[string]interface{}, schema []reportColumn) m
 	return out
 }
 
-// formatTableValue renders a cell for table output: floats get digit grouping
-// and two decimals (unless --raw-numbers), everything else follows
-// formatValue.
+// formatTableValue renders a cell for table output: decimal numbers get digit
+// grouping and two decimals, integral numbers group without decimals, and
+// epoch-millisecond timestamps become ISO dates (the table pipeline
+// roundtrips through JSON, so int64 normalization does not survive here).
+// --raw-numbers disables all of it.
 func formatTableValue(val interface{}) string {
-	f, ok := val.(float64)
-	if !ok || viper.GetBool("raw-numbers") {
+	if viper.GetBool("raw-numbers") {
 		return formatValue(val)
 	}
-	return groupDigits(fmt.Sprintf("%.2f", f))
+	switch v := val.(type) {
+	case string:
+		return prettifyTimestamp(v)
+	case float64:
+		if v >= 1e12 && v < 4.1e12 {
+			return prettifyTimestamp(formatValue(v)) // epoch milliseconds
+		}
+		if v == math.Trunc(v) && math.Abs(v) < 1<<53 {
+			return groupDigits(strconv.FormatInt(int64(v), 10))
+		}
+		return groupDigits(fmt.Sprintf("%.2f", v))
+	default:
+		return prettifyTimestamp(formatValue(val))
+	}
+}
+
+// prettifyTimestamp renders RFC3339 strings for human eyes: midnight UTC
+// becomes a bare date (daily/monthly report grain carries no time
+// information), anything else keeps minute precision. Hourly report results
+// keep the time even at midnight — the resolution is part of the data.
+// Non-timestamp strings pass through untouched; machine formats (json, yaml,
+// csv, toon) never see this — they keep full RFC3339.
+func prettifyTimestamp(s string) string {
+	if len(s) < 20 || s[4] != '-' || s[10] != 'T' {
+		return s // cheap pre-check before parsing
+	}
+	parsed, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	utc := parsed.UTC()
+	if !viper.GetBool("report-hourly") && utc.Hour() == 0 && utc.Minute() == 0 && utc.Second() == 0 {
+		return utc.Format("2006-01-02")
+	}
+	return utc.Format("2006-01-02 15:04")
 }
 
 // groupDigits inserts thousands separators into the integer part of a
@@ -2625,7 +2751,7 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 		body := make([]*simpletable.Cell, 0, len(keys))
 		for i, k := range keys {
 			val := row[k]
-			cellText := tableCellText(val)
+			cellText := renderCellText(row, k)
 			cellText = formatCell(cellText, colWidths[i], mode)
 			// Numbers align right for magnitude comparison; text reads left.
 			align := simpletable.AlignLeft
@@ -2658,6 +2784,62 @@ func padCell(s string, width int) string {
 	// considered whitespace by Go's unicode.IsSpace, so it survives the trim.
 	// buildTableString replaces U+2800 back to spaces in the final output.
 	return s + strings.Repeat("\u2800", width-cur)
+}
+
+// fitColumnsToTerminal keeps the leading columns that can render at a
+// readable width within the terminal, hiding the rest. Column content width
+// is capped for the fit decision so one very wide column (a URL, a long
+// name) doesn't evict everything after it.
+const fitColumnContentCap = 28
+
+// fitPriorityColumns always survive the fit before other columns are
+// considered — hiding what a row is (id, name) or when it happened
+// (startTime, createTime) helps nobody.
+var fitPriorityColumns = map[string]bool{"id": true, "name": true, "startTime": true, "createTime": true, "total": true}
+
+func fitColumnsToTerminal(rows []map[string]interface{}, keys []string, terminalWidth int) (visible, hidden []string) {
+	if terminalWidth <= 0 {
+		terminalWidth = 120
+	}
+	contentW := measureContentWidths(rows, keys)
+	cappedWidth := func(i int) int {
+		if contentW[i] > fitColumnContentCap {
+			return fitColumnContentCap
+		}
+		return contentW[i]
+	}
+
+	kept := map[string]bool{}
+	used := 0
+	count := 0
+	allocate := func(i int, key string) {
+		width := cappedWidth(i)
+		if count > 0 && used+width+tableOverhead(count+1) > terminalWidth {
+			return
+		}
+		kept[key] = true
+		used += width
+		count++
+	}
+	for i, key := range keys {
+		if fitPriorityColumns[key] {
+			allocate(i, key)
+		}
+	}
+	for i, key := range keys {
+		if !fitPriorityColumns[key] {
+			allocate(i, key)
+		}
+	}
+
+	for _, key := range keys {
+		if kept[key] {
+			visible = append(visible, key)
+		} else {
+			hidden = append(hidden, key)
+		}
+	}
+	return visible, hidden
 }
 
 // filterObjectColumns splits keys into visible and hidden. A column is hidden

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -197,6 +198,45 @@ func TestExecuteCLISuppressesFrameworkErrorsInAgentMode(t *testing.T) {
 	}
 	if !cli.Root.SilenceErrors || !cli.Root.SilenceUsage {
 		t.Fatal("cobra errors and usage remain enabled")
+	}
+}
+
+func TestInteractiveExecutionPrintsErrorOnce(t *testing.T) {
+	oldAgentMode := agentMode
+	oldAgentUAMode := agentUAMode
+	oldStderr := cli.Stderr
+	oldRoot := cli.Root
+	agentMode = false
+	agentUAMode = uaModeInteractive
+	cli.Root = &cobra.Command{}
+	var stderr bytes.Buffer
+	cli.Stderr = &stderr
+	t.Cleanup(func() {
+		agentMode = oldAgentMode
+		agentUAMode = oldAgentUAMode
+		cli.Stderr = oldStderr
+		cli.Root = oldRoot
+	})
+
+	bootErr := errors.New(`customerContext "foo" does not look like a customer domain`)
+	err := executeCLIWith(func() error {
+		// restish logs the error itself (with color codes) before returning it.
+		_, _ = fmt.Fprintf(cli.Stderr, "\x1b[48;5;204mERROR:\x1b[0m Error: %v\n", bootErr)
+		_, _ = fmt.Fprintln(cli.Stderr, "warning: something unrelated")
+		return bootErr
+	})
+	if err != bootErr {
+		t.Fatalf("err = %v, want the original error", err)
+	}
+	output := stderr.String()
+	if strings.Contains(output, "customerContext") {
+		t.Errorf("duplicate error line re-emitted: %q", output)
+	}
+	if !strings.Contains(output, "warning: something unrelated") {
+		t.Errorf("unrelated stderr content dropped: %q", output)
+	}
+	if !cli.Root.SilenceErrors || !cli.Root.SilenceUsage {
+		t.Error("cobra error/usage output not silenced in interactive mode")
 	}
 }
 

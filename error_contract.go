@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/rest-sh/restish/cli"
@@ -311,22 +312,84 @@ func executeCLI() error {
 }
 
 func executeCLIWith(run func() error) error {
-	if !agentErrorContractEnabled() {
-		return run()
+	if agentErrorContractEnabled() {
+		cli.Root.SilenceErrors = true
+		cli.Root.SilenceUsage = true
+
+		originalStderr := cli.Stderr
+		var capturedStderr bytes.Buffer
+		cli.Stderr = &capturedStderr
+		err := run()
+		cli.Stderr = originalStderr
+
+		if err == nil || agentErrorWritten {
+			_, _ = io.Copy(originalStderr, &capturedStderr)
+		}
+
+		return err
 	}
 
-	cli.Root.SilenceErrors = true
-	cli.Root.SilenceUsage = true
+	if agentUAMode == uaModeInteractive {
+		// Human at a terminal: without this, a failed command prints the same
+		// error three times (cobra's "Error:" + usage dump, restish's
+		// "ERROR:" log line, and the final reporter). Silence cobra, capture
+		// restish's stderr, and drop lines duplicating the returned error —
+		// reportExecutionError then prints it exactly once.
+		cli.Root.SilenceErrors = true
+		cli.Root.SilenceUsage = true
 
-	originalStderr := cli.Stderr
-	var capturedStderr bytes.Buffer
-	cli.Stderr = &capturedStderr
-	err := run()
-	cli.Stderr = originalStderr
+		originalStderr := cli.Stderr
+		var capturedStderr bytes.Buffer
+		cli.Stderr = &capturedStderr
+		err := run()
+		cli.Stderr = originalStderr
 
-	if err == nil || agentErrorWritten {
-		_, _ = io.Copy(originalStderr, &capturedStderr)
+		emitStderrWithoutDuplicateError(originalStderr, capturedStderr.String(), err)
+		return err
 	}
 
-	return err
+	// Non-interactive without the agent contract (pipes, CI): preserve the
+	// framework output untouched.
+	return run()
+}
+
+// emitStderrWithoutDuplicateError re-emits captured stderr, skipping lines
+// that merely repeat the returned error (restish logs "ERROR: Error: <msg>"
+// for every failed run). Other stderr content — warnings, API error details —
+// passes through unchanged.
+func emitStderrWithoutDuplicateError(writer io.Writer, captured string, err error) {
+	if captured == "" {
+		return
+	}
+	if err == nil {
+		_, _ = io.WriteString(writer, captured)
+		return
+	}
+	message := err.Error()
+	for _, line := range strings.Split(strings.TrimRight(captured, "\n"), "\n") {
+		trimmed := strings.TrimSpace(stripANSI(line))
+		if trimmed != "" && strings.HasSuffix(trimmed, message) {
+			if rest := strings.TrimSuffix(trimmed, message); strings.TrimSpace(rest) == "" || isErrorPrefix(rest) {
+				continue
+			}
+		}
+		_, _ = io.WriteString(writer, line+"\n")
+	}
+}
+
+func isErrorPrefix(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	for _, prefix := range []string{"error:", "error: error:", "!"} {
+		if s == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+// ansiPattern matches terminal escape sequences (restish colors its log tags).
+var ansiPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func stripANSI(s string) string {
+	return ansiPattern.ReplaceAllString(s, "")
 }

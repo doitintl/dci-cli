@@ -1,8 +1,8 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/doitintl/dci-cli)
 
-# DoiT Cloud Intelligence CLI
+# Cloud Intelligence™ CLI
 
-`dci` is the command-line interface for the [DoiT Cloud Intelligence](https://www.doit.com/) API. Manage budgets, reports, alerts, and run analytics queries directly from your terminal.
+`dci` is the command-line interface for the [Cloud Intelligence™](https://www.doit.com/) API. Manage budgets, reports, alerts, and run analytics queries directly from your terminal.
 
 ## Installation
 
