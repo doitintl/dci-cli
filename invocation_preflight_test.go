@@ -84,7 +84,7 @@ func TestPreflightAPIInvocationFailsBeforeLoadingWithoutCredentialsOrCache(t *te
 	}
 }
 
-func TestPreflightAPIInvocationAllowsHelpAndDryRunWithoutCredentials(t *testing.T) {
+func TestPreflightAPIInvocationAllowsHelpWithoutCredentialsOrCache(t *testing.T) {
 	api := cli.API{Operations: []cli.Operation{{Name: "delete-report"}}}
 	loadCount := configureInvocationPreflightTest(t, api, false, false, false)
 
@@ -94,14 +94,50 @@ func TestPreflightAPIInvocationAllowsHelpAndDryRunWithoutCredentials(t *testing.
 	if *loadCount != 0 {
 		t.Fatalf("help loaded operation metadata %d times", *loadCount)
 	}
-	if err := preflightAPIInvocation([]string{"dci", "dci", "delete-report", "report-1", "--dry-run"}); err != nil {
-		t.Fatalf("dry run rejected: %v", err)
-	}
-	if err := preflightAPIInvocation([]string{"dci", "dci", "delete-report", "report-1", "--dry-run=true"}); err != nil {
-		t.Fatalf("explicit dry run rejected: %v", err)
+}
+
+func TestPreflightAPIInvocationRejectsColdCacheDryRunWithoutCredentials(t *testing.T) {
+	api := cli.API{Operations: []cli.Operation{{Name: "delete-report"}}}
+	loadCount := configureInvocationPreflightTest(t, api, false, false, false)
+
+	for _, args := range [][]string{
+		{"dci", "dci", "delete-report", "report-1", "--dry-run"},
+		{"dci", "dci", "delete-report", "report-1", "--dry-run=true"},
+	} {
+		err := preflightAPIInvocation(args)
+		if err == nil || err.(invocationPreflightError).ExitCode() != exitAuthentication {
+			t.Fatalf("args = %v, error = %#v", args, err)
+		}
 	}
 	if *loadCount != 0 {
-		t.Fatalf("local-only invocation loaded operation metadata %d times", *loadCount)
+		t.Fatalf("cold-cache dry runs loaded operation metadata %d times", *loadCount)
+	}
+}
+
+func TestPreflightAPIInvocationAllowsWarmCacheDryRunWithoutCredentials(t *testing.T) {
+	api := cli.API{Operations: []cli.Operation{{Name: "delete-report"}}}
+	loadCount := configureInvocationPreflightTest(t, api, false, true, false)
+
+	for _, args := range [][]string{
+		{"dci", "dci", "delete-report", "report-1", "--dry-run"},
+		{"dci", "dci", "delete-report", "report-1", "--dry-run=true"},
+	} {
+		if err := preflightAPIInvocation(args); err != nil {
+			t.Fatalf("args = %v, error = %v", args, err)
+		}
+	}
+	if *loadCount != 2 {
+		t.Fatalf("warm-cache dry runs loaded operation metadata %d times", *loadCount)
+	}
+}
+
+func TestPreflightAPIInvocationRejectsUnknownDryRunCommand(t *testing.T) {
+	api := cli.API{Operations: []cli.Operation{{Name: "delete-report"}}}
+	configureInvocationPreflightTest(t, api, false, true, false)
+
+	err := preflightAPIInvocation([]string{"dci", "dci", "delete-repot", "report-1", "--dry-run"})
+	if err == nil || err.(invocationPreflightError).ExitCode() != exitUsage || !strings.Contains(err.Error(), "delete-report") {
+		t.Fatalf("error = %#v", err)
 	}
 }
 

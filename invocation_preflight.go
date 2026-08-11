@@ -74,9 +74,6 @@ func preflightAPIInvocation(args []string) error {
 }
 
 func invocationSkipsPreflight(args []string) bool {
-	if invocationHasFlag(args, "--dry-run") {
-		return true
-	}
 	for _, argument := range args[2:] {
 		if argument == "--help" || argument == "-h" {
 			return true
