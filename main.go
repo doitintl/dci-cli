@@ -1581,6 +1581,7 @@ func addOutputFlag() {
 		viper.Set("money-columns", "")
 		viper.Set("report-hourly", false)
 		viper.Set("pivot-columns-auto", false)
+		viper.Set("pivot-active", false)
 
 		heatmapRequested := true
 		if flag := cmd.Flags().Lookup("heatmap"); flag != nil {
@@ -2854,15 +2855,15 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 }
 
 type tableHeatmap struct {
-	max       float64
-	totalsRow int
-	periodSet map[string]bool
+	max        float64
+	totalsRows map[int]bool
+	periodSet  map[string]bool
 }
 
 var heatRamp = []int{22, 28, 100, 166, 124}
 
 func newHeatmap(rows []map[string]interface{}, keys []string) *tableHeatmap {
-	if !viper.GetBool("heatmap") || !viper.GetBool("pivot-columns-auto") || len(rows) < 2 {
+	if !viper.GetBool("heatmap") || !viper.GetBool("pivot-active") || len(rows) < 2 {
 		return nil
 	}
 	periodSet := map[string]bool{}
@@ -2875,14 +2876,20 @@ func newHeatmap(rows []map[string]interface{}, keys []string) *tableHeatmap {
 	if len(periodSet) == 0 {
 		return nil
 	}
-	heat := &tableHeatmap{totalsRow: len(rows) - 1, periodSet: periodSet}
+	heat := &tableHeatmap{totalsRows: map[int]bool{}, periodSet: periodSet}
 	for rowIndex, row := range rows {
-		if rowIndex == heat.totalsRow {
-			continue // the totals row would dominate the scale
+		for _, value := range row {
+			if text, ok := value.(string); ok && text == "TOTAL" {
+				heat.totalsRows[rowIndex] = true
+				break
+			}
+		}
+		if heat.totalsRows[rowIndex] {
+			continue
 		}
 		for k := range periodSet {
-			if v, ok := numericCell(row[k]); ok && v > heat.max {
-				heat.max = v
+			if v, ok := numericCell(row[k]); ok && math.Abs(v) > heat.max {
+				heat.max = math.Abs(v)
 			}
 		}
 	}
@@ -2893,16 +2900,16 @@ func newHeatmap(rows []map[string]interface{}, keys []string) *tableHeatmap {
 }
 
 func (h *tableHeatmap) colorize(rowIndex int, key string, val interface{}, cellText string) string {
-	if rowIndex == h.totalsRow || !h.periodSet[key] {
+	if h.totalsRows[rowIndex] || !h.periodSet[key] {
 		return cellText
 	}
 	v, ok := numericCell(val)
-	if !ok || v <= 0 {
+	if !ok || v == 0 {
 		return cellText
 	}
 	// Square-root scaling keeps skewed cost distributions from washing out
 	// the lower buckets.
-	bucket := int(math.Sqrt(v/h.max) * float64(len(heatRamp)))
+	bucket := int(math.Sqrt(math.Abs(v)/h.max) * float64(len(heatRamp)))
 	if bucket >= len(heatRamp) {
 		bucket = len(heatRamp) - 1
 	}
@@ -2934,7 +2941,7 @@ const fitColumnContentCap = 28
 // fitPriorityColumns always survive the fit before other columns are
 // considered — hiding what a row is (id, name) or when it happened
 // (startTime, createTime) helps nobody.
-var fitPriorityColumns = map[string]bool{"id": true, "name": true, "startTime": true, "createTime": true, "total": true}
+var fitPriorityColumns = map[string]bool{"id": true, "name": true, "startTime": true, "createTime": true, "total": true, "trend": true}
 
 func fitColumnsToTerminal(rows []map[string]interface{}, keys []string, terminalWidth int) (visible, hidden []string) {
 	if terminalWidth <= 0 {
