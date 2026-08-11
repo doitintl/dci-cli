@@ -1331,6 +1331,34 @@ func TestBuildTableStringWithHiddenColumnsIncluded(t *testing.T) {
 	}
 }
 
+func TestTerseHelpText(t *testing.T) {
+	long := "Runs a report query.\n## Input Example\n```json\n{}\n```\n## Request Schema\n..."
+	terse, truncated := terseHelpText(long)
+	if !truncated {
+		t.Fatal("schema-bearing help not truncated")
+	}
+	if strings.Contains(terse, "## ") || !strings.Contains(terse, "--help-full") {
+		t.Errorf("terse = %q, want schemas stripped and --help-full pointer", terse)
+	}
+	if _, truncated := terseHelpText("plain description"); truncated {
+		t.Error("plain help truncated")
+	}
+}
+
+func TestRewriteHelpFullFlag(t *testing.T) {
+	oldRequested := helpFullRequested
+	helpFullRequested = false
+	t.Cleanup(func() { helpFullRequested = oldRequested })
+
+	args := rewriteHelpFullFlag([]string{"dci", "query", "--help-full"})
+	if !helpFullRequested {
+		t.Error("--help-full not detected")
+	}
+	if args[2] != "--help" {
+		t.Errorf("args = %v, want --help substituted", args)
+	}
+}
+
 func TestFormatValueNilIsEmptyCell(t *testing.T) {
 	if got := formatValue(nil); got != "" {
 		t.Errorf("formatValue(nil) = %q, want empty", got)
@@ -1945,6 +1973,7 @@ var expectedSkillFiles = []string{
 	"skills/dci-cli/references/cost-optimization.md",
 	"skills/dci-cli/references/evals.md",
 	"skills/dci-cli/references/examples.md",
+	"skills/dci-cli/references/finops-baseline.md",
 	"skills/dci-cli/references/query-patterns.md",
 }
 

@@ -33,7 +33,7 @@ Use `--fields id,name` to project list or detail responses before output, and us
 
 1. Confirm the CLI exists and is runnable: `dci --version`
 2. Check session and active context: `dci status`; confirm identity and permissions with `dci validate`
-3. Discover command shape before drafting or running commands: `dci --help` and `dci <command> --help`
+3. Discover command shape before drafting or running commands: `dci --help` and `dci <command> --help` (terse; add `--help-full` when you need the request/response schemas)
 4. Prefer `list-*`, `get-*`, `get-report`, and `query` before `create-*`, `update-*`, or `delete-*`
 
 Use `dci skill list` to inspect the files embedded in the installed CLI. Use `dci skill update <agent>` to refresh one installed copy, or omit the agent to update every detected installation; locally edited managed files require an explicit `--force` overwrite and are saved in a uniquely named sibling backup directory first.
@@ -59,10 +59,18 @@ Load [query-patterns.md](references/query-patterns.md) for payload examples.
 - When a command may fail because of permissions or context, explain that `dci login` proves authentication but not authorization; `dci validate` confirms both identity and access.
 - In CI or headless environments, always set `DCI_API_KEY`: without credentials the CLI fails fast with `AUTHENTICATION_REQUIRED` instead of opening a browser.
 
+## Documentation
+
+- CLI guide: https://help.doit.com/docs/cli (append `.md` to any Help Center URL for plain Markdown, e.g. https://help.doit.com/docs/cli.md)
+- Machine-readable Help Center index: https://help.doit.com/llms.txt (full corpus: https://help.doit.com/llms-full.txt)
+- API reference: https://developer.doit.com/
+- From the terminal: `dci docs` prints these entry points; `dci <command> --help` is terse by default (`--help-full` adds the complete request/response schemas); `dci commands --json` is the machine-readable catalog.
+
 ## Reference Map
 
 - Load [capabilities.md](references/capabilities.md) for the capability tree, command families, and invocation patterns.
 - Load [examples.md](references/examples.md) for generalized install/auth, discovery, report, query, and mutation examples.
 - Load [query-patterns.md](references/query-patterns.md) for JSON query workflows.
 - Load [cost-optimization.md](references/cost-optimization.md) for an anonymized 30-day cost analysis example.
+- Load [finops-baseline.md](references/finops-baseline.md) for the greenfield workflow: bring an account from unmanaged spend to budgets, alerts, and allocations in one session.
 - Load [evals.md](references/evals.md) to validate the skill against realistic user prompts.
