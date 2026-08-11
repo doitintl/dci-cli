@@ -122,6 +122,8 @@ func TestTrendLabel(t *testing.T) {
 		{100, 100.2, "flat"},
 		{0, 500, "new"},
 		{0, 0, ""},
+		{-100, -50, "+50%"},
+		{-100, -200, "-100%"},
 	}
 	for _, c := range cases {
 		if got := trendLabel(c.first, c.last); got != c.want {

@@ -95,6 +95,7 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 		}
 		return nil, false
 	}
+	viper.Set("pivot-active", true)
 
 	// Highest row total first, matching how report tables rank groups.
 	sort.SliceStable(groupOrder, func(i, j int) bool {
@@ -166,7 +167,7 @@ func trendLabel(first, last float64) string {
 		}
 		return "new"
 	}
-	change := (last - first) / first * 100
+	change := (last - first) / math.Abs(first) * 100
 	if math.Abs(change) < 0.5 {
 		return "flat"
 	}

@@ -1443,8 +1443,9 @@ func TestFitColumnsToTerminalKeepsPriorityAndHidesOverflow(t *testing.T) {
 		"delta":  strings.Repeat("d", 28),
 		"id":     "b0f3c260-3df3-4270-b946-df31ddee6a92",
 		"status": "active",
+		"trend":  "+25%",
 	}}
-	keys := []string{"alpha", "beta", "gamma", "delta", "id", "status"}
+	keys := []string{"alpha", "beta", "gamma", "delta", "id", "status", "trend"}
 	visible, hidden := fitColumnsToTerminal(rows, keys, 80)
 	if len(hidden) == 0 {
 		t.Fatal("expected overflow columns to be hidden at width 80")
@@ -1457,6 +1458,15 @@ func TestFitColumnsToTerminalKeepsPriorityAndHidesOverflow(t *testing.T) {
 	}
 	if !foundID {
 		t.Errorf("id column not kept: visible=%v hidden=%v", visible, hidden)
+	}
+	foundTrend := false
+	for _, key := range visible {
+		if key == "trend" {
+			foundTrend = true
+		}
+	}
+	if !foundTrend {
+		t.Errorf("trend column not kept: visible=%v hidden=%v", visible, hidden)
 	}
 	if len(visible)+len(hidden) != len(keys) {
 		t.Errorf("columns lost: visible=%v hidden=%v", visible, hidden)
@@ -1524,9 +1534,11 @@ func TestRenderCellTextCurrency(t *testing.T) {
 
 func TestHeatmapColorizesPivotPeriodCells(t *testing.T) {
 	viper.Set("heatmap", true)
-	viper.Set("pivot-columns-auto", true)
+	viper.Set("pivot-active", true)
+	viper.Set("pivot-columns-auto", false)
 	t.Cleanup(func() {
 		viper.Set("heatmap", nil)
+		viper.Set("pivot-active", nil)
 		viper.Set("pivot-columns-auto", nil)
 	})
 
@@ -1562,9 +1574,39 @@ func TestHeatmapColorizesPivotPeriodCells(t *testing.T) {
 		t.Error("heatmap built while disabled")
 	}
 	viper.Set("heatmap", true)
-	viper.Set("pivot-columns-auto", false)
+	viper.Set("pivot-active", false)
 	if newHeatmap(rows, keys) != nil {
 		t.Error("heatmap built outside pivot view")
+	}
+}
+
+func TestHeatmapUsesAbsoluteMagnitudes(t *testing.T) {
+	viper.Set("heatmap", true)
+	viper.Set("pivot-active", true)
+	t.Cleanup(func() {
+		viper.Set("heatmap", nil)
+		viper.Set("pivot-active", nil)
+	})
+
+	for _, rows := range [][]map[string]interface{}{
+		{
+			{"group": "a", "2026-06": -100.0},
+			{"group": "b", "2026-06": -900.0},
+			{"group": "TOTAL", "2026-06": -1000.0},
+		},
+		{
+			{"group": "a", "2026-06": -900.0},
+			{"group": "b", "2026-06": 100.0},
+			{"group": "TOTAL", "2026-06": -800.0},
+		},
+	} {
+		heat := newHeatmap(rows, []string{"group", "2026-06"})
+		if heat == nil || heat.max != 900 {
+			t.Fatalf("heatmap max = %v, want 900", heat)
+		}
+		if shaded := heat.colorize(0, "2026-06", rows[0]["2026-06"], "-900"); !strings.Contains(shaded, "\x1b[") {
+			t.Errorf("negative cell not shaded: %q", shaded)
+		}
 	}
 }
 
