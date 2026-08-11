@@ -44,6 +44,12 @@ func transformSuccessBody(body interface{}) interface{} {
 		}
 	}
 
+	if viper.GetBool("pivot-rows") {
+		if pivoted, ok := pivotReportBody(rows, schema); ok {
+			return pivoted
+		}
+	}
+
 	if limit := effectiveMaxRows(); limit > 0 && len(rows) > limit {
 		total := len(rows)
 		rows = rows[:limit]
@@ -52,12 +58,6 @@ func transformSuccessBody(body interface{}) interface{} {
 		container["rowsOmitted"] = int64(total - limit)
 		if cli.Stderr != nil {
 			_, _ = fmt.Fprintf(cli.Stderr, "note: %d of %d rows omitted; narrow the query (group limit, metricFilter) or pass --max-rows to adjust\n", total-limit, total)
-		}
-	}
-
-	if viper.GetBool("pivot-rows") {
-		if pivoted, ok := pivotReportBody(rows, schema); ok {
-			return pivoted
 		}
 	}
 
@@ -168,12 +168,29 @@ func nullListsToEmpty(body interface{}) interface{} {
 	if !ok || !hasListMetadata(root) {
 		return body
 	}
+	collectionKey := ""
 	for k, v := range root {
-		if v == nil {
-			root[k] = []interface{}{}
+		if v != nil || isListMetadataKey(k) {
+			continue
 		}
+		if collectionKey != "" {
+			return body
+		}
+		collectionKey = k
+	}
+	if collectionKey != "" {
+		root[collectionKey] = []interface{}{}
 	}
 	return body
+}
+
+func isListMetadataKey(key string) bool {
+	switch key {
+	case "count", "rowCount", "total", "totalCount", "pageToken", "nextPageToken", "cursor", "nextCursor", "hasMore":
+		return true
+	default:
+		return false
+	}
 }
 
 // sortReportRows stable-sorts positional report rows cell-by-cell (numbers
