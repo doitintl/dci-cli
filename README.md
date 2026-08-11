@@ -43,8 +43,8 @@ dci list-budgets
 # List reports as a table
 dci list-reports
 
-# Run an analytics query
-dci query body.query:"SELECT * FROM aws_cur_2_0 LIMIT 10"
+# Run an analytics query from a Cloud Analytics report config
+dci query < query.json
 ```
 
 ## Usage
