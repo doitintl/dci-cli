@@ -152,13 +152,13 @@ func TestAgentResponseGuardWritesOneStructuredError(t *testing.T) {
 }
 
 func TestAuthenticationFailureHintMatchesCredentialSource(t *testing.T) {
-	t.Setenv("DCI_API_KEY", "")
+	t.Setenv(apiKeyEnvName, "")
 	loginError := structuredErrorForStatus(401, "unauthorized", nil)
 	if loginError.Hint != "Run: dci login" {
 		t.Fatalf("OAuth hint = %q", loginError.Hint)
 	}
 
-	t.Setenv("DCI_API_KEY", "invalid-token")
+	t.Setenv(apiKeyEnvName, "invalid-token")
 	apiKeyError := structuredErrorForStatus(401, "unauthorized", nil)
 	if !strings.Contains(apiKeyError.Hint, "DCI_API_KEY") {
 		t.Fatalf("API key hint = %q", apiKeyError.Hint)

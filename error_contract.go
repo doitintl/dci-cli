@@ -216,8 +216,8 @@ func structuredErrorForStatus(status int, message string, headers map[string]str
 }
 
 func authenticationFailureHint() string {
-	if strings.TrimSpace(os.Getenv("DCI_API_KEY")) != "" {
-		return "Check DCI_API_KEY: the token may be malformed, expired, or revoked"
+	if strings.TrimSpace(os.Getenv(apiKeyEnvName)) != "" {
+		return fmt.Sprintf("Check %s: the token may be malformed, expired, or revoked", apiKeyEnvName)
 	}
 	return "Run: dci login"
 }

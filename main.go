@@ -30,7 +30,10 @@ import (
 
 var version string = "dev"
 
-const defaultAPIBase = "https://api.doit.com"
+const (
+	defaultAPIBase = "https://api.doit.com"
+	apiKeyEnvName  = "DCI_API_KEY"
+)
 
 // apiBase returns the API base URL, allowing override via DCI_API_BASE_URL.
 func apiBase() (string, error) {
@@ -1108,7 +1111,7 @@ func registerVersionCommand() {
 // cli.Cache (an exported *viper.Viper) because restish does not export its
 // config internals (the configs map and apis viper instance are private).
 func applyAPIKeyAuth() {
-	apiKey := os.Getenv("DCI_API_KEY")
+	apiKey := os.Getenv(apiKeyEnvName)
 	if apiKey == "" {
 		return
 	}
@@ -1122,7 +1125,7 @@ func applyAPIKeyAuth() {
 }
 
 func authSource() string {
-	if os.Getenv("DCI_API_KEY") != "" {
+	if os.Getenv(apiKeyEnvName) != "" {
 		return "API key (DCI_API_KEY)"
 	}
 	return "OAuth (DoiT Console)"
@@ -1215,7 +1218,7 @@ func registerAuthCommands(configDir string) {
 		Long:    "Opens a browser window to sign in via the DoiT Console. Credentials are cached locally for subsequent commands.",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if os.Getenv("DCI_API_KEY") != "" {
+			if os.Getenv(apiKeyEnvName) != "" {
 				return fmt.Errorf("login is not needed when DCI_API_KEY is set")
 			}
 			// Trigger the OAuth flow via validate. This call is internal (login
@@ -1252,7 +1255,7 @@ func registerAuthCommands(configDir string) {
 		Long:  "Removes cached OAuth tokens. You will need to sign in again on the next API call.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if os.Getenv("DCI_API_KEY") != "" {
+			if os.Getenv(apiKeyEnvName) != "" {
 				return fmt.Errorf("logout has no effect when DCI_API_KEY is set; unset the environment variable instead")
 			}
 			profile := viper.GetString("rsh-profile")
