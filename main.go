@@ -347,6 +347,15 @@ func run() (exitCode int) {
 }
 
 func reportExecutionError(err error, status int, configDir string) int {
+	if preflightError, ok := err.(invocationPreflightError); ok {
+		if agentMode {
+			writeStructuredError(os.Stderr, preflightError.StructuredError())
+		} else {
+			fmt.Fprintln(os.Stderr, preflightError.Error())
+		}
+		maybeHintDoerContext(preflightError.ExitCode(), status, configDir)
+		return preflightError.ExitCode()
+	}
 	if !agentErrorContractEnabled() {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		maybeHintDoerContext(1, status, configDir)
@@ -468,9 +477,35 @@ func normalizeCompletionArgs(args []string, completionCmd string) []string {
 }
 
 func firstCommandArg(args []string) string {
-	flags := cli.Root.PersistentFlags()
+	if cli.Root == nil {
+		return commandArg(args, 1)
+	}
+	return commandArg(args, 1, cli.Root.PersistentFlags())
+}
 
-	for i := 1; i < len(args); i++ {
+func commandArg(args []string, start int, flagSets ...*pflag.FlagSet) string {
+	lookupFlag := func(name string) *pflag.Flag {
+		for _, flags := range flagSets {
+			if flags != nil {
+				if flag := flags.Lookup(name); flag != nil {
+					return flag
+				}
+			}
+		}
+		return nil
+	}
+	lookupShorthand := func(name string) *pflag.Flag {
+		for _, flags := range flagSets {
+			if flags != nil {
+				if flag := flags.ShorthandLookup(name); flag != nil {
+					return flag
+				}
+			}
+		}
+		return nil
+	}
+
+	for i := start; i < len(args); i++ {
 		arg := args[i]
 
 		if arg == "--" {
@@ -492,7 +527,7 @@ func firstCommandArg(args []string) string {
 			if hasValue {
 				continue
 			}
-			flag := flags.Lookup(name)
+			flag := lookupFlag(name)
 			if flag != nil && !isBoolFlag(flag) && i+1 < len(args) {
 				i++
 			}
@@ -502,7 +537,7 @@ func firstCommandArg(args []string) string {
 		// Short flag(s), including compact values (e.g. -pfoo).
 		shorts := arg[1:]
 		for j := 0; j < len(shorts); j++ {
-			flag := flags.ShorthandLookup(string(shorts[j]))
+			flag := lookupShorthand(string(shorts[j]))
 			if flag == nil {
 				continue
 			}
