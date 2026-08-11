@@ -299,6 +299,7 @@ func run() (exitCode int) {
 	registerCustomerContextCommands(configDir)
 	registerUpgradeCommand(configDir)
 	registerVersionCommand()
+	registerDocsCommand()
 	registerSkillCommands()
 	registerCommandCatalog()
 	// Unhide the customer-context command for DoiT employees so it appears in help.
@@ -777,7 +778,8 @@ Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
   {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}
 `
 
-const dciLongDescription = "Command-line interface for the DoiT Cloud Intelligence API."
+const dciLongDescription = "Command-line interface for the DoiT Cloud Intelligence API.\n\n" +
+	"Documentation: https://help.doit.com/docs/cli or run `dci docs` for every entry point."
 
 var rootExamples = []string{
 	"  dci status",
