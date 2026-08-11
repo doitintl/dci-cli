@@ -35,19 +35,7 @@ dci list-platforms --output toon
 
 ## Query Examples
 
-Quick SQL shorthand:
-
-```bash
-dci query body.query:"SELECT * FROM <billing-table> LIMIT 10" --output toon
-```
-
-Service aggregation with SQL shorthand:
-
-```bash
-dci query body.query:"SELECT service_description, SUM(cost) AS total_cost FROM <billing-table> GROUP BY 1 ORDER BY 2 DESC LIMIT 10" --output toon
-```
-
-Structured JSON query:
+Queries use a Cloud Analytics JSON `config`:
 
 ```bash
 dci query < query.json
