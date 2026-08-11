@@ -1500,6 +1500,9 @@ type dciResponseGuard struct {
 }
 
 func (g dciResponseGuard) Format(resp cli.Response) error {
+	if resp.Status >= 200 && resp.Status < 300 && responseBodyIsEmpty(resp.Body) {
+		return nil
+	}
 	if isHTMLErrorPage(resp) {
 		nonJSONErrorResponse = true
 		if agentErrorContractEnabled() {
@@ -1538,6 +1541,19 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 		return g.next.Format(resp)
 	}
 	return g.next.Format(resp)
+}
+
+func responseBodyIsEmpty(body interface{}) bool {
+	switch value := body.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(value) == ""
+	case []byte:
+		return strings.TrimSpace(string(value)) == ""
+	default:
+		return false
+	}
 }
 
 // installResponseGuard wraps the active restish formatter. It must run after
