@@ -56,8 +56,13 @@ func validateRequestBody(command *cobra.Command, args []string) error {
 		return nil
 	}
 
+	bodyArguments := args
+	pathParameterCount := len(strings.Fields(command.Use)) - 1
+	if pathParameterCount > 0 && pathParameterCount <= len(args) {
+		bodyArguments = args[pathParameterCount:]
+	}
 	unknownFields := make([]string, 0)
-	for _, argument := range args {
+	for _, argument := range bodyArguments {
 		if strings.HasPrefix(argument, "@") || strings.HasPrefix(argument, "<") {
 			continue
 		}
