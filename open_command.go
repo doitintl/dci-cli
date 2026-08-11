@@ -33,12 +33,6 @@ var consoleCustomerIDResolver = resolveConsoleCustomerID
 var consoleHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 func registerOpenCommand(configDir string) {
-	resources := make([]string, 0, len(consoleResourcePaths))
-	for r := range consoleResourcePaths {
-		resources = append(resources, r)
-	}
-	sort.Strings(resources)
-
 	cmd := &cobra.Command{
 		Use:   "open [resource] [id]",
 		Short: "Open the DoiT console (optionally a specific report, budget, or allocation)",
@@ -47,21 +41,9 @@ func registerOpenCommand(configDir string) {
 			"Opens a browser in interactive use; prints the URL in agent or non-interactive mode.",
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			customerID, err := consoleCustomerID(configDir)
+			consoleURL, err := consoleURLForArgs(configDir, args)
 			if err != nil {
 				return err
-			}
-
-			consoleURL := fmt.Sprintf("%s/customers/%s", consoleBaseURL, customerID)
-			switch len(args) {
-			case 1:
-				return fmt.Errorf("usage: dci open <%s> <id>", strings.Join(resources, "|"))
-			case 2:
-				resourceURL, ok := consoleResourceURL(customerID, args[0], args[1])
-				if !ok {
-					return fmt.Errorf("unknown resource %q (supported: %s)", args[0], strings.Join(resources, ", "))
-				}
-				consoleURL = resourceURL
 			}
 
 			if agentMode || !term.IsTerminal(int(os.Stdout.Fd())) {
@@ -76,6 +58,29 @@ func registerOpenCommand(configDir string) {
 		},
 	}
 	cli.Root.AddCommand(cmd)
+}
+
+func consoleURLForArgs(configDir string, args []string) (string, error) {
+	if len(args) == 0 {
+		return consoleBaseURL, nil
+	}
+	resources := make([]string, 0, len(consoleResourcePaths))
+	for resource := range consoleResourcePaths {
+		resources = append(resources, resource)
+	}
+	sort.Strings(resources)
+	if len(args) == 1 {
+		return "", fmt.Errorf("usage: dci open <%s> <id>", strings.Join(resources, "|"))
+	}
+	customerID, err := consoleCustomerID(configDir)
+	if err != nil {
+		return "", err
+	}
+	resourceURL, ok := consoleResourceURL(customerID, args[0], args[1])
+	if !ok {
+		return "", fmt.Errorf("unknown resource %q (supported: %s)", args[0], strings.Join(resources, ", "))
+	}
+	return resourceURL, nil
 }
 
 func consoleResourceURL(customerID, resource, resourceID string) (string, bool) {
@@ -149,12 +154,11 @@ func resolveConsoleCustomerID(context string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	requestURL, err := url.Parse(base + "/analytics/v1/reports")
+	requestURL, err := url.Parse(base + "/auth/v1/validate")
 	if err != nil {
 		return "", err
 	}
 	query := requestURL.Query()
-	query.Set("maxResults", "1")
 	if context != "" {
 		query.Set("customerContext", context)
 	}
@@ -175,36 +179,44 @@ func resolveConsoleCustomerID(context string) (string, error) {
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("cannot resolve the active customer: API returned %s", response.Status)
+		return "", consoleCustomerResolutionError(response)
 	}
-	var body struct {
-		Reports []struct {
-			URLUI string `json:"urlUI"`
-		} `json:"reports"`
+	if customerID := strings.TrimSpace(response.Header.Get("X-DoiT-Customer-ID")); looksLikeCustomerID(customerID) {
+		return customerID, nil
 	}
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("cannot resolve the active customer: %w", err)
-	}
-	for _, report := range body.Reports {
-		if customerID := customerIDFromConsoleURL(report.URLUI); customerID != "" {
-			return customerID, nil
-		}
-	}
-	return "", fmt.Errorf("cannot resolve the active customer: no report console URL was returned; set a customer-ID context with dci customer-context set <customer-id>")
+	return "", fmt.Errorf("cannot resolve the active customer: the API did not return a customer ID; set a customer-ID context with dci customer-context set <customer-id>")
 }
 
-func customerIDFromConsoleURL(rawURL string) string {
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	parts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
-	for index := 0; index+1 < len(parts); index++ {
-		if parts[index] == "customers" && looksLikeCustomerID(parts[index+1]) {
-			return parts[index+1]
+type consoleAPIError struct {
+	status  int
+	message string
+	headers map[string]string
+}
+
+func (err consoleAPIError) Error() string {
+	return err.message
+}
+
+func (err consoleAPIError) ExitCode() int {
+	return exitCodeForHTTPStatus(err.status)
+}
+
+func (err consoleAPIError) StructuredError() structuredError {
+	return structuredErrorForStatus(err.status, err.message, err.headers)
+}
+
+func consoleCustomerResolutionError(response *http.Response) error {
+	headers := make(map[string]string)
+	for _, name := range []string{"X-Request-Id", "X-Doit-Trace", "Cf-Ray", "X-Cloud-Trace-Context", "Traceparent", "Retry-After", "X-Retry-In"} {
+		if value := response.Header.Get(name); value != "" {
+			headers[name] = value
 		}
 	}
-	return ""
+	return consoleAPIError{
+		status:  response.StatusCode,
+		message: fmt.Sprintf("cannot resolve the active customer: API returned %s", response.Status),
+		headers: headers,
+	}
 }
 
 func openInBrowser(url string) error {
