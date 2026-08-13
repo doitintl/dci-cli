@@ -27,9 +27,12 @@ type pathParameterCheck struct {
 // start rejecting values for a parameter the spec leaves untyped.
 var pathParameterChecks = map[string]pathParameterCheck{
 	"integer": {"an integer", "integers", func(value string) bool {
-		// ParseInt bounds to 64 bits, matching the spec's format: int64.
-		_, err := strconv.ParseInt(value, 10, 64)
-		return err == nil
+		// ParseInt bounds to 64 bits, matching the spec's format: int64. The
+		// argument reaches the API exactly as written, so a form ParseInt
+		// normalizes away — a leading + or 0 — has to be rejected here too:
+		// it parses cleanly and then 404s as an unknown identifier.
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		return err == nil && strconv.FormatInt(parsed, 10) == value
 	}},
 	"number": {"a number", "numbers", func(value string) bool {
 		_, err := strconv.ParseFloat(value, 64)
@@ -42,8 +45,10 @@ var pathParameterChecks = map[string]pathParameterCheck{
 }
 
 // embeddedIntegerPattern recovers the identifier from a value that carries the
-// argument name alongside it, e.g. `ticket-id: 318240`.
-var embeddedIntegerPattern = regexp.MustCompile(`-?\d+`)
+// argument name alongside it, e.g. `ticket-id: 318240`. Digits only: a hyphen
+// here belongs to the label, not to the number, and a suggestion starting with
+// one would be parsed as a flag and fail all over again.
+var embeddedIntegerPattern = regexp.MustCompile(`\d+`)
 
 type pathParameterValidationError struct {
 	argumentName string
@@ -160,10 +165,12 @@ func recoveredIntegerValue(elementType string, isList bool, value string) string
 	if len(candidates) != 1 {
 		return ""
 	}
-	if _, err := strconv.ParseInt(candidates[0], 10, 64); err != nil {
+	parsed, err := strconv.ParseInt(candidates[0], 10, 64)
+	if err != nil {
 		return ""
 	}
-	return candidates[0]
+	// Canonical form, so the suggestion cannot be rejected a second time.
+	return strconv.FormatInt(parsed, 10)
 }
 
 func correctedInvocationExample(commandName string, args []string, index int, recovered string) string {
