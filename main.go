@@ -130,12 +130,13 @@ func ensureConfig(configDir string) (bool, error) {
 			return false, nil
 		}
 		base, err := readConfigBase(configFile)
-		if err != nil {
-			return false, err
+		if err == nil {
+			configuredAPIBase = base
+			_, err = apiBase()
 		}
-		configuredAPIBase = base
-		if _, err := apiBase(); err != nil {
-			return false, err
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: unable to use API base from %s (%v); using %s\n", configFile, err, defaultAPIBase)
+			configuredAPIBase = defaultAPIBase
 		}
 		return false, nil
 	} else if !os.IsNotExist(err) {
