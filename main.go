@@ -300,6 +300,7 @@ func run() (exitCode int) {
 	nonJSONErrorResponse = false
 	resetErrorContractState()
 	resetDestructiveContractState()
+	resetPathValidationState()
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
 	// output format, stderr routing, and the User-Agent mode token — all key off
@@ -1699,6 +1700,12 @@ func addOutputFlag() {
 			if flag := cmd.Flags().Lookup("table-columns"); flag == nil || !flag.Changed {
 				viper.Set("table-columns", fields)
 			}
+		}
+		// Path parameters first: a bad identifier is rejected before stdin is
+		// buffered for body validation, and before the destructive check below,
+		// so --dry-run validates too and no request is ever built.
+		if err := validatePathParameters(cmd, args); err != nil {
+			return err
 		}
 		if err := validateRequestBody(cmd, args); err != nil {
 			return err
