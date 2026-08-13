@@ -61,7 +61,7 @@ func preflightAPIInvocation(args []string) error {
 		}
 		return nil
 	}
-	setDestructiveOperations(api.Operations)
+	setOperationMetadata(api.Operations)
 
 	operation := invocationOperation(api, commandName)
 	if operation == nil {

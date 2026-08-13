@@ -131,6 +131,14 @@ func setDestructiveOperations(operations []cli.Operation) {
 	destructiveMetadataErr = nil
 }
 
+// setOperationMetadata records everything the pre-run hooks need from a loaded
+// API: which commands are destructive, and the declared type of each path
+// parameter. Both are keyed by operation name and read back by command name.
+func setOperationMetadata(operations []cli.Operation) {
+	setDestructiveOperations(operations)
+	setOperationPathParameters(operations)
+}
+
 func ensureDestructiveOperations() error {
 	if destructiveMetadataRead {
 		return destructiveMetadataErr
@@ -144,7 +152,7 @@ func ensureDestructiveOperations() error {
 		destructiveMetadataErr = errors.New("DCI operation metadata is unavailable")
 		return destructiveMetadataErr
 	}
-	setDestructiveOperations(api.Operations)
+	setOperationMetadata(api.Operations)
 	return nil
 }
 
