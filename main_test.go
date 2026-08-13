@@ -307,6 +307,9 @@ func TestCustomizeDCIUsageAppliesTemplateRecursively(t *testing.T) {
 }
 
 func TestEnsureConfigPermissions(t *testing.T) {
+	previousConfiguredAPIBase := configuredAPIBase
+	configuredAPIBase = ""
+	t.Cleanup(func() { configuredAPIBase = previousConfiguredAPIBase })
 	dir := t.TempDir()
 	configured, err := ensureConfig(dir)
 	if err != nil {
@@ -334,6 +337,9 @@ func TestEnsureConfigPermissions(t *testing.T) {
 }
 
 func TestApiBase(t *testing.T) {
+	previousConfiguredAPIBase := configuredAPIBase
+	configuredAPIBase = ""
+	t.Cleanup(func() { configuredAPIBase = previousConfiguredAPIBase })
 	tests := []struct {
 		name    string
 		env     string
@@ -373,7 +379,36 @@ func TestApiBase(t *testing.T) {
 	}
 }
 
+func TestEnsureConfigLoadsSavedAPIBase(t *testing.T) {
+	previousConfiguredAPIBase := configuredAPIBase
+	configuredAPIBase = ""
+	t.Cleanup(func() { configuredAPIBase = previousConfiguredAPIBase })
+
+	dir := t.TempDir()
+	if _, err := ensureConfig(dir); err != nil {
+		t.Fatalf("ensureConfig(create) error: %v", err)
+	}
+	configPath := filepath.Join(dir, "apis.json")
+	if err := updateConfigBase(configPath, "https://api-dev.doit.com"); err != nil {
+		t.Fatalf("updateConfigBase() error: %v", err)
+	}
+	configuredAPIBase = ""
+	if _, err := ensureConfig(dir); err != nil {
+		t.Fatalf("ensureConfig(existing) error: %v", err)
+	}
+	base, err := apiBase()
+	if err != nil {
+		t.Fatalf("apiBase() error: %v", err)
+	}
+	if base != "https://api-dev.doit.com" {
+		t.Fatalf("apiBase() = %q, want saved dev base", base)
+	}
+}
+
 func TestEnsureConfigUpdatesBaseURL(t *testing.T) {
+	previousConfiguredAPIBase := configuredAPIBase
+	configuredAPIBase = ""
+	t.Cleanup(func() { configuredAPIBase = previousConfiguredAPIBase })
 	dir := t.TempDir()
 
 	// First run: create config with default base.
@@ -711,6 +746,21 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		}
 		if !strings.Contains(res.output, "API Base: https://dev-app.doit.com (DCI_API_BASE_URL)") {
 			t.Fatalf("expected DCI_API_BASE_URL annotation in status:\n%s", res.output)
+		}
+	})
+
+	t.Run("status keeps configured API base without env override", func(t *testing.T) {
+		home := t.TempDir()
+		first := runCLIWithEnv(t, bin, home, []string{"DCI_API_BASE_URL=https://api-dev.doit.com"}, "status")
+		if first.exitCode != 0 {
+			t.Fatalf("initial status exit code = %d; output:\n%s", first.exitCode, first.output)
+		}
+		second := runCLIWithHome(t, bin, home, "status")
+		if second.exitCode != 0 {
+			t.Fatalf("saved-base status exit code = %d; output:\n%s", second.exitCode, second.output)
+		}
+		if !strings.Contains(second.output, "API Base: https://api-dev.doit.com") {
+			t.Fatalf("saved API base missing from status:\n%s", second.output)
 		}
 	})
 
