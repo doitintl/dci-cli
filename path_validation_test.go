@@ -37,9 +37,13 @@ var pathParameterIntegerCases = []struct {
 	{`{"ticket-id": 310201}`, false},
 	{"ticket-id", false},
 	{"ticketid", false},
+	{"ticket-id-318240", false},
 	{"", false},
 	{"99999999999999999999", false},
 	{"318240.0", false},
+	// Parse cleanly but reach the API as written, where they 404.
+	{"+318240", false},
+	{"0318240", false},
 }
 
 func TestValidatePathParametersRejectsNonIntegerValues(t *testing.T) {
@@ -197,13 +201,22 @@ func TestPathParameterValidationSuggestsCorrectedInvocation(t *testing.T) {
 		{"ticket-id: 318240", "dci get-ticket 318240"},
 		{"ticketId:309353", "dci get-ticket 309353"},
 		{`{"ticket-id": 310201}`, "dci get-ticket 310201"},
+		// A hyphen before the digits belongs to the label. Suggesting
+		// "-318240" would be parsed as a flag and fail a second time.
+		{"ticket-id-318240", "dci get-ticket 318240"},
+		{"+318240", "dci get-ticket 318240"},
+		{"0318240", "dci get-ticket 318240"},
 	} {
 		err := validatePathParameters(ticketCommand(), []string{testCase.value})
 		if err == nil {
 			t.Fatalf("%q accepted", testCase.value)
 		}
-		if hint := err.(pathParameterValidationError).AgentErrorHint(); !strings.Contains(hint, testCase.want) {
+		hint := err.(pathParameterValidationError).AgentErrorHint()
+		if !strings.Contains(hint, testCase.want) {
 			t.Errorf("hint for %q = %q, want it to suggest %q", testCase.value, hint, testCase.want)
+		}
+		if strings.Contains(hint, "dci get-ticket -") {
+			t.Errorf("hint for %q suggests a value pflag would read as a flag: %q", testCase.value, hint)
 		}
 	}
 
