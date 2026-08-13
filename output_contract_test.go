@@ -142,29 +142,46 @@ func TestExcludeHonorsReportContainerFields(t *testing.T) {
 	}
 }
 
-func TestUnknownProjectionFieldsWriteWarning(t *testing.T) {
+func TestUnknownProjectionFieldsReturnUsageError(t *testing.T) {
 	viper.Set("agent-fields", "id,nosuchfield")
-	oldStderr := cli.Stderr
-	var stderr bytes.Buffer
-	cli.Stderr = &stderr
-	t.Cleanup(func() {
-		cli.Stderr = oldStderr
-		viper.Reset()
-	})
+	t.Cleanup(viper.Reset)
 
 	input := map[string]interface{}{
 		"budgets":  []interface{}{map[string]interface{}{"id": "budget-1"}},
 		"rowCount": 1,
 	}
-	shaped := shapeResponseBody(input).(map[string]interface{})
-	if !strings.Contains(stderr.String(), "requested fields not present in the response: nosuchfield") {
-		t.Fatalf("stderr = %q", stderr.String())
+	guard := dciOutputGuard{next: &recordingFormatter{}}
+	err := guard.Format(cli.Response{Status: 200, Body: input})
+	if err == nil {
+		t.Fatal("expected invalid field error")
 	}
-	if strings.Contains(stderr.String(), "response: id") {
-		t.Fatalf("matched field was reported missing: %q", stderr.String())
+	if !strings.Contains(err.Error(), "requested fields not present in the response: nosuchfield") {
+		t.Fatalf("error = %q", err)
 	}
-	if shaped["rowCount"] != 1 {
-		t.Fatalf("rowCount = %#v", shaped["rowCount"])
+	if !strings.Contains(err.Error(), "available fields: id") {
+		t.Fatalf("error does not list available fields: %q", err)
+	}
+	if coded, ok := err.(interface{ ExitCode() int }); !ok || coded.ExitCode() != exitUsage {
+		t.Fatalf("error exit code = %#v, want %d", err, exitUsage)
+	}
+}
+
+func TestProjectionFieldsUseReportSchemaWhenRowsAreEmpty(t *testing.T) {
+	input := map[string]interface{}{
+		"result": map[string]interface{}{
+			"schema": []interface{}{
+				map[string]interface{}{"name": "service"},
+				map[string]interface{}{"name": "cost"},
+			},
+			"rows": []interface{}{},
+		},
+	}
+	if err := validateResponseFields(input, []string{"service"}); err != nil {
+		t.Fatalf("valid field rejected: %v", err)
+	}
+	err := validateResponseFields(input, []string{"missing"})
+	if err == nil || !strings.Contains(err.Error(), "available fields: cost, service") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

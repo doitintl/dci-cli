@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/rest-sh/restish/cli"
@@ -13,17 +14,7 @@ func shapeResponseBody(body interface{}) interface{} {
 	excluded := commaSeparatedValues(viper.GetString("agent-exclude"))
 	if len(fields) > 0 {
 		matchedFields := make(map[string]bool, len(fields))
-		var hasComparableRows bool
-		body, hasComparableRows = projectResponseValue(body, fields, matchedFields)
-		missingFields := make([]string, 0, len(fields))
-		for _, field := range fields {
-			if !matchedFields[field] {
-				missingFields = append(missingFields, field)
-			}
-		}
-		if hasComparableRows && len(missingFields) > 0 && cli.Stderr != nil {
-			fmt.Fprintf(cli.Stderr, "warning: requested fields not present in the response: %s\n", strings.Join(missingFields, ", "))
-		}
+		body, _ = projectResponseValue(body, fields, matchedFields)
 	}
 	if len(excluded) > 0 {
 		body = excludeResponseValue(body, excluded)
@@ -40,9 +31,124 @@ type dciOutputGuard struct {
 
 func (guard dciOutputGuard) Format(response cli.Response) error {
 	if response.Status >= 200 && response.Status < 300 {
+		if !isErrorResponseBody(response) {
+			if err := validateResponseFields(response.Body, commaSeparatedValues(viper.GetString("agent-fields"))); err != nil {
+				return err
+			}
+		}
 		response.Body = shapeResponseBody(response.Body)
 	}
 	return guard.next.Format(response)
+}
+
+type responseFieldValidationError struct {
+	missingFields   []string
+	availableFields []string
+}
+
+func (validationError responseFieldValidationError) Error() string {
+	return fmt.Sprintf(
+		"requested fields not present in the response: %s; available fields: %s",
+		strings.Join(validationError.missingFields, ", "),
+		strings.Join(validationError.availableFields, ", "),
+	)
+}
+
+func (validationError responseFieldValidationError) ExitCode() int {
+	return exitUsage
+}
+
+func (validationError responseFieldValidationError) AgentErrorCode() string {
+	return "USAGE_ERROR"
+}
+
+func (validationError responseFieldValidationError) AgentErrorHint() string {
+	return fmt.Sprintf("Choose one or more available fields: %s", strings.Join(validationError.availableFields, ", "))
+}
+
+func (validationError responseFieldValidationError) AgentErrorRetryable() bool {
+	return false
+}
+
+func validateResponseFields(body interface{}, requestedFields []string) error {
+	if len(requestedFields) == 0 {
+		return nil
+	}
+	availableFields, comparable := availableResponseFields(body)
+	if !comparable {
+		return nil
+	}
+	availableSet := make(map[string]bool, len(availableFields))
+	for _, field := range availableFields {
+		availableSet[field] = true
+	}
+	missingFields := make([]string, 0)
+	for _, field := range requestedFields {
+		if !availableSet[field] {
+			missingFields = append(missingFields, field)
+		}
+	}
+	if len(missingFields) == 0 {
+		return nil
+	}
+	return responseFieldValidationError{missingFields: missingFields, availableFields: availableFields}
+}
+
+func availableResponseFields(value interface{}) ([]string, bool) {
+	fields := map[string]bool{}
+	comparable := collectAvailableResponseFields(value, fields)
+	names := make([]string, 0, len(fields))
+	for field := range fields {
+		names = append(names, field)
+	}
+	sort.Strings(names)
+	return names, comparable
+}
+
+func collectAvailableResponseFields(value interface{}, fields map[string]bool) bool {
+	switch item := value.(type) {
+	case []interface{}:
+		return collectRowFields(item, fields)
+	case map[string]interface{}:
+		for _, key := range []string{"result", "results"} {
+			container, ok := item[key].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			rows, ok := container["rows"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, field := range readReportSchemaColumnNames(container["schema"]) {
+				fields[field] = true
+			}
+			return len(fields) > 0 || collectRowFields(rows, fields)
+		}
+		if _, rows, ok := listWrapperRows(item); ok {
+			return collectRowFields(rows, fields)
+		}
+		for field := range item {
+			fields[field] = true
+		}
+		return len(item) > 0
+	default:
+		return false
+	}
+}
+
+func collectRowFields(rows []interface{}, fields map[string]bool) bool {
+	comparable := false
+	for _, row := range rows {
+		object, ok := row.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		comparable = comparable || len(object) > 0
+		for field := range object {
+			fields[field] = true
+		}
+	}
+	return comparable
 }
 
 func installOutputGuard() {
