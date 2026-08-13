@@ -41,21 +41,31 @@ var configuredAPIBase string
 
 // apiBase returns the API base URL, allowing override via DCI_API_BASE_URL.
 func apiBase() (string, error) {
-	v := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL"))
-	if v == "" {
-		v = configuredAPIBase
+	environmentBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL"))
+	if environmentBase != "" {
+		base, err := normalizeAPIBase(environmentBase)
+		if err != nil {
+			return "", fmt.Errorf("invalid DCI_API_BASE_URL: %w", err)
+		}
+		return base, nil
 	}
-	if v == "" {
-		v = defaultAPIBase
+	base := configuredAPIBase
+	if base == "" {
+		base = defaultAPIBase
 	}
-	u, err := url.Parse(v)
+	return normalizeAPIBase(base)
+}
+
+func normalizeAPIBase(base string) (string, error) {
+	base = strings.TrimSpace(base)
+	u, err := url.Parse(base)
 	if err != nil {
-		return "", fmt.Errorf("invalid DCI_API_BASE_URL: %w", err)
+		return "", fmt.Errorf("invalid API base: %w", err)
 	}
 	if u.Scheme != "https" {
-		return "", fmt.Errorf("DCI_API_BASE_URL must use https:// scheme (got %q)", u.Scheme)
+		return "", fmt.Errorf("API base must use https:// scheme (got %q)", u.Scheme)
 	}
-	return strings.TrimRight(v, "/"), nil
+	return strings.TrimRight(base, "/"), nil
 }
 
 //go:embed skills/dci-cli
@@ -123,7 +133,7 @@ func ensureConfig(configDir string) (bool, error) {
 			if err != nil {
 				return false, err
 			}
-			if err := updateConfigBase(configFile, base); err != nil {
+			if err := persistConfigBase(configFile, base); err != nil {
 				return false, err
 			}
 			configuredAPIBase = base
@@ -131,13 +141,16 @@ func ensureConfig(configDir string) (bool, error) {
 		}
 		base, err := readConfigBase(configFile)
 		if err == nil {
-			configuredAPIBase = base
-			_, err = apiBase()
+			base, err = normalizeAPIBase(base)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: unable to use API base from %s (%v); using %s\n", configFile, err, defaultAPIBase)
-			configuredAPIBase = defaultAPIBase
+			base = defaultAPIBase
+			if err := writeConfig(configFile, base); err != nil {
+				return false, fmt.Errorf("unable to repair %s: %w", configFile, err)
+			}
 		}
+		configuredAPIBase = base
 		return false, nil
 	} else if !os.IsNotExist(err) {
 		return false, err
@@ -152,6 +165,15 @@ func ensureConfig(configDir string) (bool, error) {
 		return false, err
 	}
 
+	if err := writeConfig(configFile, base); err != nil {
+		return false, err
+	}
+	configuredAPIBase = base
+
+	return true, nil
+}
+
+func writeConfig(configFile, base string) error {
 	config := map[string]interface{}{
 		"$schema": "https://rest.sh/schemas/apis.json",
 		"dci": map[string]interface{}{
@@ -174,14 +196,12 @@ func ensureConfig(configDir string) (bool, error) {
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return false, err
+		return err
 	}
 	if err := os.WriteFile(configFile, data, 0o600); err != nil {
-		return false, err
+		return err
 	}
-	configuredAPIBase = base
-
-	return true, nil
+	return nil
 }
 
 func readConfigBase(configFile string) (string, error) {
@@ -216,7 +236,7 @@ func updateConfigBase(configFile, base string) error {
 	}
 	dci, ok := config["dci"].(map[string]interface{})
 	if !ok {
-		return nil // unexpected structure, leave as-is
+		return errors.New("dci configuration is missing")
 	}
 	if dci["base"] == base {
 		return nil // already up to date
@@ -227,6 +247,13 @@ func updateConfigBase(configFile, base string) error {
 		return err
 	}
 	return os.WriteFile(configFile, out, 0o600)
+}
+
+func persistConfigBase(configFile, base string) error {
+	if _, err := readConfigBase(configFile); err != nil {
+		return writeConfig(configFile, base)
+	}
+	return updateConfigBase(configFile, base)
 }
 
 func tightenFilePermissions(path string, desired os.FileMode) error {

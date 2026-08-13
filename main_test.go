@@ -466,6 +466,34 @@ func assertConfigBase(t *testing.T, configPath, wantBase string) {
 	}
 }
 
+func assertConfigOAuthProfile(t *testing.T, configPath string) {
+	t.Helper()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	dci, ok := config["dci"].(map[string]interface{})
+	if !ok {
+		t.Fatal("config missing dci key")
+	}
+	profiles, ok := dci["profiles"].(map[string]interface{})
+	if !ok {
+		t.Fatal("config missing profiles")
+	}
+	profile, ok := profiles["default"].(map[string]interface{})
+	if !ok {
+		t.Fatal("config missing default profile")
+	}
+	auth, ok := profile["auth"].(map[string]interface{})
+	if !ok || auth["name"] != "oauth-authorization-code" {
+		t.Fatalf("default auth = %#v", auth)
+	}
+}
+
 func TestWrapTextDisplayWidth(t *testing.T) {
 	got := wrapText("你好a", 2)
 	want := "你\n好\na"
@@ -764,27 +792,46 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		}
 	})
 
-	t.Run("status recovers from malformed API config", func(t *testing.T) {
-		home := t.TempDir()
-		first := runCLIWithHome(t, bin, home, "status")
-		if first.exitCode != 0 {
-			t.Fatalf("initial status exit code = %d; output:\n%s", first.exitCode, first.output)
+	t.Run("status repairs unusable API config", func(t *testing.T) {
+		cases := map[string]string{
+			"missing base": `{"$schema":"x","dci":{"profiles":{}}}`,
+			"malformed":    `{`,
+			"invalid base": `{"dci":{"base":"http://api-dev.doit.com","profiles":{}}}`,
 		}
-		configDir := extractConfigDirFromStatus(first.output)
-		configPath := filepath.Join(configDir, "apis.json")
-		if err := os.WriteFile(configPath, []byte(`{"$schema":"x","dci":{"profiles":{}}}`), 0o600); err != nil {
-			t.Fatalf("write malformed config: %v", err)
-		}
+		for name, contents := range cases {
+			t.Run(name, func(t *testing.T) {
+				home := t.TempDir()
+				first := runCLIWithHome(t, bin, home, "status")
+				if first.exitCode != 0 {
+					t.Fatalf("initial status exit code = %d; output:\n%s", first.exitCode, first.output)
+				}
+				configDir := extractConfigDirFromStatus(first.output)
+				configPath := filepath.Join(configDir, "apis.json")
+				if err := os.WriteFile(configPath, []byte(contents), 0o600); err != nil {
+					t.Fatalf("write unusable config: %v", err)
+				}
 
-		second := runCLIWithHome(t, bin, home, "status")
-		if second.exitCode != 0 {
-			t.Fatalf("recovery status exit code = %d; output:\n%s", second.exitCode, second.output)
-		}
-		if !strings.Contains(second.output, "warning: unable to use API base from ") {
-			t.Fatalf("recovery warning missing:\n%s", second.output)
-		}
-		if !strings.Contains(second.output, "API Base: "+defaultAPIBase) {
-			t.Fatalf("production fallback missing:\n%s", second.output)
+				second := runCLIWithHome(t, bin, home, "status")
+				if second.exitCode != 0 {
+					t.Fatalf("recovery status exit code = %d; output:\n%s", second.exitCode, second.output)
+				}
+				if !strings.Contains(second.output, "warning: unable to use API base from ") {
+					t.Fatalf("recovery warning missing:\n%s", second.output)
+				}
+				if strings.Contains(second.output, "DCI_API_BASE_URL must") {
+					t.Fatalf("warning identifies the wrong source:\n%s", second.output)
+				}
+				if !strings.Contains(second.output, "API Base: "+defaultAPIBase) {
+					t.Fatalf("production fallback missing:\n%s", second.output)
+				}
+				assertConfigBase(t, configPath, defaultAPIBase)
+				assertConfigOAuthProfile(t, configPath)
+
+				third := runCLIWithHome(t, bin, home, "status")
+				if third.exitCode != 0 || strings.Contains(third.output, "warning: unable to use API base") {
+					t.Fatalf("repaired config was not reusable:\n%s", third.output)
+				}
+			})
 		}
 	})
 
