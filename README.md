@@ -166,6 +166,8 @@ Configuration is stored in your OS user config directory:
 
 The config file is created automatically on first run. Delete it to reset to defaults.
 
+`DCI_API_BASE_URL` updates the saved API base. Unsetting the variable keeps that saved value; run `DCI_API_BASE_URL=https://api.doit.com dci status` to restore the production API.
+
 ## AI Agent Skill
 
 This repo ships a reusable agent skill at `skills/dci-cli` that teaches AI coding agents how to operate the `dci` CLI safely and effectively.

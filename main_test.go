@@ -764,6 +764,30 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		}
 	})
 
+	t.Run("status recovers from malformed API config", func(t *testing.T) {
+		home := t.TempDir()
+		first := runCLIWithHome(t, bin, home, "status")
+		if first.exitCode != 0 {
+			t.Fatalf("initial status exit code = %d; output:\n%s", first.exitCode, first.output)
+		}
+		configDir := extractConfigDirFromStatus(first.output)
+		configPath := filepath.Join(configDir, "apis.json")
+		if err := os.WriteFile(configPath, []byte(`{"$schema":"x","dci":{"profiles":{}}}`), 0o600); err != nil {
+			t.Fatalf("write malformed config: %v", err)
+		}
+
+		second := runCLIWithHome(t, bin, home, "status")
+		if second.exitCode != 0 {
+			t.Fatalf("recovery status exit code = %d; output:\n%s", second.exitCode, second.output)
+		}
+		if !strings.Contains(second.output, "warning: unable to use API base from ") {
+			t.Fatalf("recovery warning missing:\n%s", second.output)
+		}
+		if !strings.Contains(second.output, "API Base: "+defaultAPIBase) {
+			t.Fatalf("production fallback missing:\n%s", second.output)
+		}
+	})
+
 	t.Run("login rejected when DCI_API_KEY set", func(t *testing.T) {
 		home := t.TempDir()
 		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_KEY=test-key"}, "login")
