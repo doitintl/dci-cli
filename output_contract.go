@@ -13,8 +13,7 @@ func shapeResponseBody(body interface{}) interface{} {
 	fields := commaSeparatedValues(viper.GetString("agent-fields"))
 	excluded := commaSeparatedValues(viper.GetString("agent-exclude"))
 	if len(fields) > 0 {
-		matchedFields := make(map[string]bool, len(fields))
-		body, _ = projectResponseValue(body, fields, matchedFields)
+		body = projectResponseValue(body, fields)
 	}
 	if len(excluded) > 0 {
 		body = excludeResponseValue(body, excluded)
@@ -48,7 +47,7 @@ type responseFieldValidationError struct {
 
 func (validationError responseFieldValidationError) Error() string {
 	return fmt.Sprintf(
-		"requested fields not present in the response: %s; available fields: %s",
+		"requested fields are not projectable row fields: %s; available fields: %s",
 		strings.Join(validationError.missingFields, ", "),
 		strings.Join(validationError.availableFields, ", "),
 	)
@@ -110,19 +109,12 @@ func collectAvailableResponseFields(value interface{}, fields map[string]bool) b
 	case []interface{}:
 		return collectRowFields(item, fields)
 	case map[string]interface{}:
-		for _, key := range []string{"result", "results"} {
-			container, ok := item[key].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			rows, ok := container["rows"].([]interface{})
-			if !ok {
-				continue
-			}
+		if _, container, rows, ok := nestedReportRows(item); ok {
 			for _, field := range readReportSchemaColumnNames(container["schema"]) {
 				fields[field] = true
 			}
-			return len(fields) > 0 || collectRowFields(rows, fields)
+			hasRows := collectRowFields(rows, fields)
+			return len(fields) > 0 || hasRows
 		}
 		if _, rows, ok := listWrapperRows(item); ok {
 			return collectRowFields(rows, fields)
@@ -171,75 +163,73 @@ func commaSeparatedValues(value string) []string {
 	return result
 }
 
-func projectResponseValue(value interface{}, fields []string, matchedFields map[string]bool) (interface{}, bool) {
+func projectResponseValue(value interface{}, fields []string) interface{} {
 	switch item := value.(type) {
 	case []interface{}:
-		return projectRows(item, fields, matchedFields)
+		return projectRows(item, fields)
 	case map[string]interface{}:
-		if result, hasComparableRows, ok := projectNestedRows(item, fields, matchedFields); ok {
-			return result, hasComparableRows
+		if result, ok := projectNestedRows(item, fields); ok {
+			return result
 		}
 		if key, rows, ok := listWrapperRows(item); ok {
 			result := copyObject(item)
-			projectedRows, hasComparableRows := projectRows(rows, fields, matchedFields)
-			result[key] = projectedRows
-			return result, hasComparableRows
+			result[key] = projectRows(rows, fields)
+			return result
 		}
-		return projectObject(item, fields, matchedFields)
+		return projectObject(item, fields)
 	default:
-		return value, false
+		return value
 	}
 }
 
-func projectRows(rows []interface{}, fields []string, matchedFields map[string]bool) ([]interface{}, bool) {
+func projectRows(rows []interface{}, fields []string) []interface{} {
 	result := make([]interface{}, len(rows))
-	hasComparableRows := false
 	for index, row := range rows {
-		var rowComparable bool
-		result[index], rowComparable = projectObject(row, fields, matchedFields)
-		hasComparableRows = hasComparableRows || rowComparable
+		result[index] = projectObject(row, fields)
 	}
-	return result, hasComparableRows
+	return result
 }
 
-func projectNestedRows(root map[string]interface{}, fields []string, matchedFields map[string]bool) (map[string]interface{}, bool, bool) {
+func nestedReportRows(root map[string]interface{}) (string, map[string]interface{}, []interface{}, bool) {
 	for _, key := range []string{"result", "results"} {
 		container, ok := root[key].(map[string]interface{})
 		if !ok {
 			continue
 		}
 		rows, ok := container["rows"].([]interface{})
-		if !ok {
-			continue
+		if ok {
+			return key, container, rows, true
 		}
-		result := copyObject(root)
-		projectedContainer := copyObject(container)
-		projectedRows, hasComparableRows := projectSchemaRows(rows, readReportSchemaColumnNames(container["schema"]), fields, matchedFields)
-		projectedContainer["rows"] = projectedRows
-		result[key] = projectedContainer
-		return result, hasComparableRows, true
 	}
-	return nil, false, false
+	return "", nil, nil, false
 }
 
-func projectSchemaRows(rows []interface{}, schema []string, fields []string, matchedFields map[string]bool) ([]interface{}, bool) {
+func projectNestedRows(root map[string]interface{}, fields []string) (map[string]interface{}, bool) {
+	key, container, rows, ok := nestedReportRows(root)
+	if !ok {
+		return nil, false
+	}
+	result := copyObject(root)
+	projectedContainer := copyObject(container)
+	projectedContainer["rows"] = projectSchemaRows(rows, readReportSchemaColumnNames(container["schema"]), fields)
+	result[key] = projectedContainer
+	return result, true
+}
+
+func projectSchemaRows(rows []interface{}, schema []string, fields []string) []interface{} {
 	result := make([]interface{}, len(rows))
-	hasComparableRows := false
 	for index, row := range rows {
 		if cells, ok := row.([]interface{}); ok {
 			object := make(map[string]interface{}, len(cells))
 			for cellIndex, cell := range cells {
 				object[reportColumnName(schema, cellIndex)] = cell
 			}
-			result[index], _ = projectObject(object, fields, matchedFields)
-			hasComparableRows = true
+			result[index] = projectObject(object, fields)
 			continue
 		}
-		var rowComparable bool
-		result[index], rowComparable = projectObject(row, fields, matchedFields)
-		hasComparableRows = hasComparableRows || rowComparable
+		result[index] = projectObject(row, fields)
 	}
-	return result, hasComparableRows
+	return result
 }
 
 func listWrapperRows(object map[string]interface{}) (string, []interface{}, bool) {
@@ -285,19 +275,18 @@ func copyObject(object map[string]interface{}) map[string]interface{} {
 	return result
 }
 
-func projectObject(value interface{}, fields []string, matchedFields map[string]bool) (interface{}, bool) {
+func projectObject(value interface{}, fields []string) interface{} {
 	object, ok := value.(map[string]interface{})
 	if !ok {
-		return value, false
+		return value
 	}
 	result := make(map[string]interface{}, len(fields))
 	for _, field := range fields {
 		if child, exists := object[field]; exists {
 			result[field] = child
-			matchedFields[field] = true
 		}
 	}
-	return result, len(object) > 0
+	return result
 }
 
 func excludeResponseValue(value interface{}, excluded []string) interface{} {

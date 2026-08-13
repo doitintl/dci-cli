@@ -155,7 +155,7 @@ func TestUnknownProjectionFieldsReturnUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid field error")
 	}
-	if !strings.Contains(err.Error(), "requested fields not present in the response: nosuchfield") {
+	if !strings.Contains(err.Error(), "requested fields are not projectable row fields: nosuchfield") {
 		t.Fatalf("error = %q", err)
 	}
 	if !strings.Contains(err.Error(), "available fields: id") {
@@ -181,6 +181,39 @@ func TestProjectionFieldsUseReportSchemaWhenRowsAreEmpty(t *testing.T) {
 	}
 	err := validateResponseFields(input, []string{"missing"})
 	if err == nil || !strings.Contains(err.Error(), "available fields: cost, service") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestProjectionFieldsIncludeSchemaAndObjectRowFields(t *testing.T) {
+	input := map[string]interface{}{
+		"result": map[string]interface{}{
+			"schema": []interface{}{map[string]interface{}{"name": "service"}},
+			"rows": []interface{}{
+				map[string]interface{}{"service": "BigQuery", "cost": 12.5},
+			},
+		},
+	}
+	if err := validateResponseFields(input, []string{"cost"}); err != nil {
+		t.Fatalf("object row field rejected: %v", err)
+	}
+
+	viper.Set("agent-fields", "cost")
+	t.Cleanup(viper.Reset)
+	rows := shapeResponseBody(input).(map[string]interface{})["result"].(map[string]interface{})["rows"].([]interface{})
+	want := []interface{}{map[string]interface{}{"cost": 12.5}}
+	if !reflect.DeepEqual(rows, want) {
+		t.Fatalf("projected rows = %#v, want %#v", rows, want)
+	}
+}
+
+func TestProjectionErrorDistinguishesWrapperMetadata(t *testing.T) {
+	input := map[string]interface{}{
+		"budgets":  []interface{}{map[string]interface{}{"id": "budget-1"}},
+		"rowCount": 1,
+	}
+	err := validateResponseFields(input, []string{"rowCount"})
+	if err == nil || !strings.Contains(err.Error(), "not projectable row fields: rowCount") {
 		t.Fatalf("error = %v", err)
 	}
 }
