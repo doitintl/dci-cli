@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -36,11 +37,16 @@ const (
 	apiKeyEnvName  = "DCI_API_KEY"
 )
 
+var configuredAPIBase string
+
 // apiBase returns the API base URL, allowing override via DCI_API_BASE_URL.
 func apiBase() (string, error) {
 	v := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL"))
 	if v == "" {
-		return defaultAPIBase, nil
+		v = configuredAPIBase
+	}
+	if v == "" {
+		v = defaultAPIBase
 	}
 	u, err := url.Parse(v)
 	if err != nil {
@@ -108,23 +114,36 @@ func dciConfigDir() string {
 func ensureConfig(configDir string) (bool, error) {
 	configFile := filepath.Join(configDir, "apis.json")
 
-	base, err := apiBase()
-	if err != nil {
-		return false, err
-	}
-
 	if _, err := os.Stat(configFile); err == nil {
 		if err := tightenFilePermissions(configFile, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: unable to tighten config permissions for %s: %v\n", configFile, err)
 		}
-		// When DCI_API_BASE_URL is set, update the base URL in the existing config.
 		if os.Getenv("DCI_API_BASE_URL") != "" {
+			base, err := apiBase()
+			if err != nil {
+				return false, err
+			}
 			if err := updateConfigBase(configFile, base); err != nil {
 				return false, err
 			}
+			configuredAPIBase = base
+			return false, nil
+		}
+		base, err := readConfigBase(configFile)
+		if err != nil {
+			return false, err
+		}
+		configuredAPIBase = base
+		if _, err := apiBase(); err != nil {
+			return false, err
 		}
 		return false, nil
 	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+
+	base, err := apiBase()
+	if err != nil {
 		return false, err
 	}
 
@@ -159,8 +178,29 @@ func ensureConfig(configDir string) (bool, error) {
 	if err := os.WriteFile(configFile, data, 0o600); err != nil {
 		return false, err
 	}
+	configuredAPIBase = base
 
 	return true, nil
+}
+
+func readConfigBase(configFile string) (string, error) {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return "", err
+	}
+	var config struct {
+		DCI struct {
+			Base string `json:"base"`
+		} `json:"dci"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return "", err
+	}
+	base := strings.TrimSpace(config.DCI.Base)
+	if base == "" {
+		return "", errors.New("dci.base is missing from apis.json")
+	}
+	return strings.TrimRight(base, "/"), nil
 }
 
 // updateConfigBase reads apis.json, updates the dci.base field, and rewrites the file.
@@ -228,6 +268,7 @@ func run() (exitCode int) {
 	helpFullRequested = false
 	requestReportCurrency = ""
 	bufferedRequestBody = nil
+	configuredAPIBase = ""
 	nonJSONErrorResponse = false
 	resetErrorContractState()
 	resetDestructiveContractState()
