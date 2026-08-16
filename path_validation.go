@@ -131,7 +131,7 @@ func validatePathParameters(command *cobra.Command, args []string) error {
 			argumentName: parameter.OptionName(),
 			value:        value,
 			expectation:  expectation,
-			example:      correctedInvocationExample(command.Name(), args, index, recoveredIntegerValue(elementType, isList, value)),
+			example:      correctedInvocationExample(command, args, index, recoveredIntegerValue(elementType, isList, value)),
 		}
 	}
 	return nil
@@ -173,12 +173,12 @@ func recoveredIntegerValue(elementType string, isList bool, value string) string
 	return strconv.FormatInt(parsed, 10)
 }
 
-func correctedInvocationExample(commandName string, args []string, index int, recovered string) string {
-	if recovered == "" {
+func correctedInvocationExample(command *cobra.Command, args []string, index int, recovered string) string {
+	if recovered == "" || command.Flags().NFlag() > 0 {
 		return ""
 	}
 	tokens := make([]string, 0, len(args)+2)
-	tokens = append(tokens, "dci", commandName)
+	tokens = append(tokens, "dci", command.Name())
 	for position, argument := range args {
 		if position == index {
 			argument = recovered

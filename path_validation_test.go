@@ -236,6 +236,29 @@ func TestPathParameterValidationSuggestsCorrectedInvocation(t *testing.T) {
 	}
 }
 
+func TestPathParameterValidationOmitsRunnableRetryWhenFlagsChanged(t *testing.T) {
+	t.Cleanup(resetPathValidationState)
+	setOperationPathParameters(ticketOperations("integer"))
+	command := ticketCommand()
+	command.Flags().Bool("dry-run", false, "")
+	command.Flags().StringP("customer-context", "D", "", "")
+	if err := command.Flags().Parse([]string{"--dry-run", "-D", "acme.com"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := validatePathParameters(command, []string{"ticket-id: 318240"})
+	if err == nil {
+		t.Fatal("malformed ticket ID accepted")
+	}
+	hint := err.(pathParameterValidationError).AgentErrorHint()
+	if strings.Contains(hint, "dci get-ticket") {
+		t.Fatalf("hint dropped changed flags from a runnable retry: %q", hint)
+	}
+	if !strings.Contains(hint, `Pass an integer as the "ticket-id" argument`) {
+		t.Fatalf("hint = %q", hint)
+	}
+}
+
 // Drives the real PersistentPreRunE wired by addOutputFlag, so the validator
 // cannot be silently disconnected from the command tree. The operation's RunE is
 // what would build the request, so it must not be reached.
