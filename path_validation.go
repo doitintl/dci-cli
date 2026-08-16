@@ -8,6 +8,7 @@ import (
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // operationPathParameters maps an operation name to its declared path
@@ -54,8 +55,8 @@ type pathParameterValidationError struct {
 	argumentName string
 	value        string
 	expectation  string
-	// example is a corrected invocation, empty when no value could be recovered.
-	example string
+	recovered    string
+	example      string
 }
 
 func (validationError pathParameterValidationError) Error() string {
@@ -78,6 +79,13 @@ func (validationError pathParameterValidationError) AgentErrorCode() string {
 func (validationError pathParameterValidationError) AgentErrorHint() string {
 	if validationError.example != "" {
 		return "Pass only the value, not the argument name — e.g. " + validationError.example
+	}
+	if validationError.recovered != "" {
+		return fmt.Sprintf(
+			"Pass only the value, not the argument name — use %s for %q",
+			validationError.recovered,
+			validationError.argumentName,
+		)
 	}
 	return fmt.Sprintf(
 		"Pass %s as the %q argument; run the command with --help to inspect its arguments",
@@ -127,11 +135,13 @@ func validatePathParameters(command *cobra.Command, args []string) error {
 		if allPathParameterElementsValid(elements, check) {
 			continue
 		}
+		recovered := recoveredIntegerValue(elementType, isList, value)
 		return pathParameterValidationError{
 			argumentName: parameter.OptionName(),
 			value:        value,
 			expectation:  expectation,
-			example:      correctedInvocationExample(command, args, index, recoveredIntegerValue(elementType, isList, value)),
+			recovered:    recovered,
+			example:      correctedInvocationExample(command, args, index, recovered),
 		}
 	}
 	return nil
@@ -174,10 +184,10 @@ func recoveredIntegerValue(elementType string, isList bool, value string) string
 }
 
 func correctedInvocationExample(command *cobra.Command, args []string, index int, recovered string) string {
-	if recovered == "" || command.Flags().NFlag() > 0 {
+	if recovered == "" {
 		return ""
 	}
-	tokens := make([]string, 0, len(args)+2)
+	tokens := make([]string, 0, len(args)+(command.Flags().NFlag()*2)+2)
 	tokens = append(tokens, "dci", command.Name())
 	for position, argument := range args {
 		if position == index {
@@ -185,6 +195,19 @@ func correctedInvocationExample(command *cobra.Command, args []string, index int
 		}
 		tokens = append(tokens, shellQuoteArgument(argument))
 	}
+	command.Flags().Visit(func(flag *pflag.Flag) {
+		name := "--" + flag.Name
+		value := flag.Value.String()
+		if flag.Value.Type() == "bool" {
+			if value == "true" {
+				tokens = append(tokens, name)
+				return
+			}
+			tokens = append(tokens, name+"="+value)
+			return
+		}
+		tokens = append(tokens, name, shellQuoteArgument(value))
+	})
 	return strings.Join(tokens, " ")
 }
 

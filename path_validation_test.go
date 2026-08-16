@@ -188,6 +188,15 @@ func TestPathParameterValidationErrorContract(t *testing.T) {
 	if exitCodeForExecutionError(err, 0) != exitUsage {
 		t.Errorf("execution exit code = %d", exitCodeForExecutionError(err, 0))
 	}
+
+	fallback := pathParameterValidationError{
+		argumentName: "ticket-id",
+		expectation:  "an integer",
+		recovered:    "318240",
+	}
+	if got := fallback.AgentErrorHint(); got != `Pass only the value, not the argument name — use 318240 for "ticket-id"` {
+		t.Fatalf("recovered-value hint = %q", got)
+	}
 }
 
 func TestPathParameterValidationSuggestsCorrectedInvocation(t *testing.T) {
@@ -236,13 +245,15 @@ func TestPathParameterValidationSuggestsCorrectedInvocation(t *testing.T) {
 	}
 }
 
-func TestPathParameterValidationOmitsRunnableRetryWhenFlagsChanged(t *testing.T) {
+func TestPathParameterValidationPreservesChangedFlagsInRunnableRetry(t *testing.T) {
 	t.Cleanup(resetPathValidationState)
 	setOperationPathParameters(ticketOperations("integer"))
 	command := ticketCommand()
 	command.Flags().Bool("dry-run", false, "")
 	command.Flags().StringP("customer-context", "D", "", "")
-	if err := command.Flags().Parse([]string{"--dry-run", "-D", "acme.com"}); err != nil {
+	command.Flags().String("output", "table", "")
+	command.Flags().Bool("heatmap", true, "")
+	if err := command.Flags().Parse([]string{"--dry-run", "-D", "acme.com", "--output", "json", "--heatmap=false"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -251,11 +262,19 @@ func TestPathParameterValidationOmitsRunnableRetryWhenFlagsChanged(t *testing.T)
 		t.Fatal("malformed ticket ID accepted")
 	}
 	hint := err.(pathParameterValidationError).AgentErrorHint()
-	if strings.Contains(hint, "dci get-ticket") {
-		t.Fatalf("hint dropped changed flags from a runnable retry: %q", hint)
+	for _, expected := range []string{
+		"dci get-ticket 318240",
+		"--customer-context acme.com",
+		"--dry-run",
+		"--heatmap=false",
+		"--output json",
+	} {
+		if !strings.Contains(hint, expected) {
+			t.Errorf("hint = %q, missing %q", hint, expected)
+		}
 	}
-	if !strings.Contains(hint, `Pass an integer as the "ticket-id" argument`) {
-		t.Fatalf("hint = %q", hint)
+	if strings.Contains(hint, "ticket-id: 318240") {
+		t.Errorf("hint kept malformed value: %q", hint)
 	}
 }
 
@@ -275,10 +294,11 @@ func TestPathParameterValidationBlocksExecution(t *testing.T) {
 		name        string
 		args        []string
 		wantBlocked bool
+		wantExample string
 	}{
-		{"malformed", []string{"dci", "get-ticket", "ticket-id: 318240"}, true},
-		{"malformed with dry run", []string{"dci", "get-ticket", "ticket-id: 318240", "--dry-run"}, true},
-		{"valid", []string{"dci", "get-ticket", "318240"}, false},
+		{"malformed", []string{"dci", "get-ticket", "ticket-id: 318240"}, true, "dci get-ticket 318240"},
+		{"malformed with dry run", []string{"dci", "get-ticket", "ticket-id: 318240", "--dry-run"}, true, "dci get-ticket 318240 --dry-run"},
+		{"valid", []string{"dci", "get-ticket", "318240"}, false, ""},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			viper.Reset()
@@ -311,6 +331,9 @@ func TestPathParameterValidationBlocksExecution(t *testing.T) {
 				var validationError pathParameterValidationError
 				if !errors.As(err, &validationError) {
 					t.Fatalf("error = %v (%T)", err, err)
+				}
+				if !strings.Contains(validationError.AgentErrorHint(), testCase.wantExample) {
+					t.Fatalf("hint = %q, want %q", validationError.AgentErrorHint(), testCase.wantExample)
 				}
 				return
 			}
