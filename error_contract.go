@@ -44,13 +44,14 @@ type structuredErrorEnvelope struct {
 }
 
 type structuredError struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	Hint       string `json:"hint,omitempty"`
-	Retryable  bool   `json:"retryable"`
-	HTTPStatus int    `json:"http_status,omitempty"`
-	RequestID  string `json:"request_id,omitempty"`
-	RetryAfter string `json:"retry_after,omitempty"`
+	Code       string                 `json:"code"`
+	Message    string                 `json:"message"`
+	Hint       string                 `json:"hint,omitempty"`
+	Retryable  bool                   `json:"retryable"`
+	HTTPStatus int                    `json:"http_status,omitempty"`
+	RequestID  string                 `json:"request_id,omitempty"`
+	RetryAfter string                 `json:"retry_after,omitempty"`
+	Resolved   *resolvedTargetPayload `json:"resolved,omitempty"`
 }
 
 type agentErrorDescriptor interface {
@@ -199,6 +200,7 @@ func structuredErrorForStatus(status int, message string, headers map[string]str
 		result.Hint = authFailureHint(status)
 	case 404:
 		result.Code = "RESOURCE_NOT_FOUND"
+		result.Hint = idShapedNotFoundHint()
 	case 409:
 		result.Code = "RESOURCE_CONFLICT"
 	case 429:

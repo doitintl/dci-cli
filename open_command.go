@@ -76,7 +76,11 @@ func consoleURLForArgs(configDir string, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resourceURL, ok := consoleResourceURL(customerID, args[0], args[1])
+	resourceID, err := resolveOpenResourceID(args[0], args[1], configDir)
+	if err != nil {
+		return "", err
+	}
+	resourceURL, ok := consoleResourceURL(customerID, args[0], resourceID)
 	if !ok {
 		return "", fmt.Errorf("unknown resource %q (supported: %s)", args[0], strings.Join(resources, ", "))
 	}
@@ -209,17 +213,21 @@ func (err consoleAPIError) StructuredError() structuredError {
 	return structuredErrorForStatus(err.status, err.message, err.headers)
 }
 
-func consoleCustomerResolutionError(response *http.Response) error {
+func diagnosticResponseHeaders(response *http.Response) map[string]string {
 	headers := make(map[string]string)
 	for _, name := range []string{"X-Request-Id", "X-Doit-Trace", "Cf-Ray", "X-Cloud-Trace-Context", "Traceparent", "Retry-After", "X-Retry-In"} {
 		if value := response.Header.Get(name); value != "" {
 			headers[name] = value
 		}
 	}
+	return headers
+}
+
+func consoleCustomerResolutionError(response *http.Response) error {
 	return consoleAPIError{
 		status:  response.StatusCode,
 		message: fmt.Sprintf("cannot resolve the active customer: API returned %s", response.Status),
-		headers: headers,
+		headers: diagnosticResponseHeaders(response),
 	}
 }
 

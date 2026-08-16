@@ -32,6 +32,7 @@ type commandCatalogEntry struct {
 	Flags         []commandCatalogFlag     `json:"flags,omitempty"`
 	OutputShape   string                   `json:"output_shape"`
 	Destructive   bool                     `json:"destructive"`
+	ResolvesNames bool                     `json:"resolvesNames,omitempty"`
 	RequiresAuth  bool                     `json:"requires_auth"`
 	AgentFriendly bool                     `json:"agent_friendly"`
 }
@@ -114,6 +115,7 @@ func loadCatalogAPI(command *cobra.Command) (cli.API, error) {
 }
 
 func buildCommandCatalog(api cli.API) commandCatalog {
+	resolutionTargets := buildResolutionIndex(api.Operations)
 	entries := make([]commandCatalogEntry, 0, len(api.Operations)+len(cli.Root.Commands()))
 	for _, operation := range api.Operations {
 		if operation.Hidden {
@@ -132,6 +134,7 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 		}
 		flags = appendUniqueCatalogFlags(flags, agentContractCatalogFlags())
 		sort.Slice(flags, func(i, j int) bool { return flags[i].Name < flags[j].Name })
+		_, resolvesNames := resolutionTargets[operation.Name]
 		entries = append(entries, commandCatalogEntry{
 			Path:          []string{operation.Name},
 			Summary:       operation.Short,
@@ -139,6 +142,7 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 			Flags:         flags,
 			OutputShape:   "api_response",
 			Destructive:   isDestructiveOperation(operation),
+			ResolvesNames: resolvesNames,
 			RequiresAuth:  true,
 			AgentFriendly: true,
 		})
