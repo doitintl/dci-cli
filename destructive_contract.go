@@ -51,10 +51,17 @@ func resetDestructiveContractState() {
 }
 
 type destructiveConfirmationError struct {
-	Command string
+	Command  string
+	Resolved *resolvedTarget
 }
 
 func (e destructiveConfirmationError) Error() string {
+	if e.Resolved != nil {
+		return fmt.Sprintf(
+			"%s targets %s %q (%s); re-run with --yes or set DCI_CONFIRM_DESTRUCTIVE=1",
+			e.Command, e.Resolved.resource, e.Resolved.name, e.Resolved.id,
+		)
+	}
 	return fmt.Sprintf("%s requires confirmation; re-run with --yes or set DCI_CONFIRM_DESTRUCTIVE=1", e.Command)
 }
 
@@ -67,11 +74,29 @@ func (e destructiveConfirmationError) AgentErrorCode() string {
 }
 
 func (e destructiveConfirmationError) AgentErrorHint() string {
+	if e.Resolved != nil {
+		// The suggested re-run uses the resolved ID, not the fuzzy input, so
+		// the retry stays deterministic even if names change in between.
+		return fmt.Sprintf("Re-run dci %s %s --yes after reviewing the operation, or use --dry-run first", e.Command, e.Resolved.id)
+	}
 	return "Re-run with --yes after reviewing the operation, or use --dry-run first"
 }
 
 func (e destructiveConfirmationError) AgentErrorRetryable() bool {
 	return false
+}
+
+func (e destructiveConfirmationError) StructuredError() structuredError {
+	detail := structuredError{
+		Code:      e.AgentErrorCode(),
+		Message:   e.Error(),
+		Hint:      e.AgentErrorHint(),
+		Retryable: e.AgentErrorRetryable(),
+	}
+	if e.Resolved != nil {
+		detail.Resolved = &resolvedTargetPayload{Input: e.Resolved.input, Name: e.Resolved.name, ID: e.Resolved.id}
+	}
+	return detail
 }
 
 type dryRunResult struct {
@@ -137,6 +162,7 @@ func setDestructiveOperations(operations []cli.Operation) {
 func setOperationMetadata(operations []cli.Operation) {
 	setDestructiveOperations(operations)
 	setOperationPathParameters(operations)
+	setResolutionIndex(operations)
 }
 
 func ensureDestructiveOperations() error {
@@ -202,7 +228,7 @@ func enforceDestructiveConfirmation(command *cobra.Command, args []string) error
 	}
 	if !confirmed {
 		destructiveActionName = ""
-		return destructiveConfirmationError{Command: command.Name()}
+		return destructiveConfirmationError{Command: command.Name(), Resolved: commandResolvedTarget(command.Name())}
 	}
 	return nil
 }

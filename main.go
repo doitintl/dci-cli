@@ -301,6 +301,7 @@ func run() (exitCode int) {
 	resetErrorContractState()
 	resetDestructiveContractState()
 	resetPathValidationState()
+	resetNameResolutionState()
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
 	// output format, stderr routing, and the User-Agent mode token — all key off
@@ -379,6 +380,7 @@ func run() (exitCode int) {
 	registerVersionCommand()
 	registerDocsCommand()
 	registerOpenCommand(configDir)
+	registerNameRefreshCommand(configDir)
 	registerSkillCommands()
 	registerCommandCatalog()
 	if cachedTokenIsDoer() {
@@ -397,6 +399,9 @@ func run() (exitCode int) {
 	setupCompletion()
 	os.Args = rewriteHelpFullFlag(os.Args)
 	os.Args = normalizeArgs(os.Args)
+	if handled, completionExitCode := completionPreflight(os.Args); handled {
+		return completionExitCode
+	}
 	if err := preflightAPIInvocation(os.Args); err != nil {
 		return reportExecutionError(err, 0, configDir)
 	}
@@ -1489,6 +1494,9 @@ func registerAuthCommands(configDir string) {
 			if err := cli.Cache.WriteConfig(); err != nil {
 				return fmt.Errorf("failed to clear credentials: %w", err)
 			}
+			if err := purgeNameCaches(configDir); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: unable to clear cached resource names: %v\n", err)
+			}
 			fmt.Fprintln(os.Stdout, "Logged out. Credentials cleared.")
 			return nil
 		},
@@ -1601,6 +1609,9 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
 	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
+	dciCmd.PersistentFlags().Bool("id", false, "Treat positional resource arguments as literal IDs and skip name resolution")
+	dciCmd.PersistentFlags().Bool("name", false, "Force name resolution even when an argument matches the resource ID format")
+	registerStaticFlagCompletions(dciCmd)
 
 	// Bind table flags into viper so the renderer can pick them up.
 	prev := dciCmd.PersistentPreRunE
@@ -1700,6 +1711,11 @@ func addOutputFlag() {
 			if flag := cmd.Flags().Lookup("table-columns"); flag == nil || !flag.Changed {
 				viper.Set("table-columns", fields)
 			}
+		}
+		// Resolution first, so typed path-param checks below see the resolved
+		// ID and the destructive gate can display the true target.
+		if err := resolvePathArguments(cmd, args); err != nil {
+			return err
 		}
 		// Path parameters first: a bad identifier is rejected before stdin is
 		// buffered for body validation, and before the destructive check below,
