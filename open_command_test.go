@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/cobra"
 )
 
 func TestLooksLikeCustomerID(t *testing.T) {
@@ -128,6 +131,75 @@ func TestConsoleURLForArgsDoesNotResolveHome(t *testing.T) {
 	}
 	if consoleURL != consoleBaseURL {
 		t.Errorf("console URL = %q, want %q", consoleURL, consoleBaseURL)
+	}
+}
+
+func TestOpenJoinableArgs(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		args []string
+		env  string
+		want bool
+	}{
+		{name: "unquoted multi-word name", args: []string{"report", "New", "SKU", "Changes"}, want: true},
+		{name: "two args keep range validation", args: []string{"report", "Monthly Spend"}, want: false},
+		{name: "unknown resource", args: []string{"widget", "a", "b"}, want: false},
+		{name: "flag-shaped word", args: []string{"report", "a", "--json"}, want: false},
+		{name: "resolution off", args: []string{"report", "a", "b"}, env: "1", want: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("DCI_NO_RESOLVE", testCase.env)
+			if got := openJoinableArgs(testCase.args); got != testCase.want {
+				t.Errorf("openJoinableArgs(%v) = %v, want %v", testCase.args, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestOpenArgsAcceptUnquotedMultiWordName(t *testing.T) {
+	oldRoot := cli.Root
+	cli.Root = &cobra.Command{Use: "dci"}
+	t.Cleanup(func() { cli.Root = oldRoot })
+	registerOpenCommand(t.TempDir())
+
+	var openCommand *cobra.Command
+	for _, command := range cli.Root.Commands() {
+		if command.Name() == "open" {
+			openCommand = command
+		}
+	}
+	if openCommand == nil {
+		t.Fatal("open command not registered")
+	}
+
+	t.Setenv("DCI_NO_RESOLVE", "")
+	if err := openCommand.Args(openCommand, []string{"report", "New", "SKU", "Changes"}); err != nil {
+		t.Errorf("multi-word name rejected: %v", err)
+	}
+	if err := openCommand.Args(openCommand, []string{"report", "a", "b", "--flag"}); err == nil {
+		t.Error("flag-shaped surplus accepted")
+	}
+}
+
+func TestConsoleURLForArgsJoinsSpaceSplitName(t *testing.T) {
+	oldContext := resolvedCustomerContext
+	oldFlag := customerContextFlagValue
+	resolvedCustomerContext = "CustomerIdentifier123"
+	customerContextFlagValue = ""
+	t.Cleanup(func() {
+		resolvedCustomerContext = oldContext
+		customerContextFlagValue = oldFlag
+	})
+	t.Setenv("DCI_NO_RESOLVE", "")
+	stubNameResolution(t, resolverListResult{entries: namedEntries("Monthly Spend")}, nil)
+
+	consoleURL, err := consoleURLForArgs(t.TempDir(), []string{"report", "monthly", "spend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://console.doit.com/customers/CustomerIdentifier123/analyze/reports/id-0"
+	if consoleURL != want {
+		t.Errorf("console URL = %q, want %q", consoleURL, want)
 	}
 }
 

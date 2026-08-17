@@ -659,6 +659,38 @@ var openResourceListPaths = map[string]string{
 	"allocation": "/analytics/v1/allocations",
 }
 
+// openJoinableArgs reports whether surplus `open` positionals are the
+// space-split words of one unquoted resource name, mirroring
+// joinableNameArguments for operation commands: the resource must resolve
+// names, resolution must not be switched off, and no word may look like a
+// flag. Every other surplus keeps open's 0-2 arity error.
+func openJoinableArgs(args []string) bool {
+	if len(args) < 3 {
+		return false
+	}
+	if _, ok := openResourceListPaths[strings.ToLower(args[0])]; !ok {
+		return false
+	}
+	if on, valid := parseBoolish(os.Getenv("DCI_NO_RESOLVE")); valid && on {
+		return false
+	}
+	for _, argument := range args {
+		if strings.HasPrefix(argument, "-") {
+			return false
+		}
+	}
+	return true
+}
+
+// openResourceArgument returns open's name/ID argument, rejoining the words
+// of a shell word-split unquoted multi-word name.
+func openResourceArgument(args []string) string {
+	if openJoinableArgs(args) {
+		return strings.TrimSpace(strings.Join(args[1:], " "))
+	}
+	return args[1]
+}
+
 func resolveOpenResourceID(resource, argument, configDir string) (string, error) {
 	listPath, ok := openResourceListPaths[strings.ToLower(resource)]
 	if !ok {

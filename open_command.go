@@ -39,7 +39,14 @@ func registerOpenCommand(configDir string) {
 		Long: "Deep-links into the DoiT console for the active customer: `dci open` lands on the console home, " +
 			"`dci open report <id>` (also: budget, allocation) opens the resource. " +
 			"Opens a browser in interactive use; prints the URL in agent or non-interactive mode.",
-		Args: cobra.RangeArgs(0, 2),
+		Args: func(cmd *cobra.Command, args []string) error {
+			// An unquoted multi-word resource name arrives word-split by the
+			// shell; accept the surplus words when they can only be a name.
+			if openJoinableArgs(args) {
+				return nil
+			}
+			return cobra.RangeArgs(0, 2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			consoleURL, err := consoleURLForArgs(configDir, args)
 			if err != nil {
@@ -76,7 +83,7 @@ func consoleURLForArgs(configDir string, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resourceID, err := resolveOpenResourceID(args[0], args[1], configDir)
+	resourceID, err := resolveOpenResourceID(args[0], openResourceArgument(args), configDir)
 	if err != nil {
 		return "", err
 	}
