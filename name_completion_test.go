@@ -12,6 +12,7 @@ import (
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 func TestCompletionPositionalWords(t *testing.T) {
@@ -360,21 +361,86 @@ func TestCompletionPreflightStaleCacheServesAndRefreshes(t *testing.T) {
 	}
 }
 
+// setCompletionAuthState pins cli.Cache to a known token state for the
+// cold-cache ActiveHelp message selection.
+func setCompletionAuthState(t *testing.T, token, refresh string, expires time.Time) {
+	t.Helper()
+	previousCache := cli.Cache
+	cli.Cache = viper.New()
+	if token != "" {
+		cli.Cache.Set("dci:default.token", token)
+		cli.Cache.Set("dci:default.refresh", refresh)
+		if !expires.IsZero() {
+			cli.Cache.Set("dci:default.expires", expires.Format(time.RFC3339))
+		}
+	}
+	t.Cleanup(func() { cli.Cache = previousCache })
+}
+
 func TestCompletionPreflightColdCacheArmsRefresh(t *testing.T) {
 	api := cli.API{Operations: resolutionTestOperations()}
-	refreshCount, _ := configureCompletionPreflightTest(t, api, true)
+	for _, testCase := range []struct {
+		name  string
+		setup func(t *testing.T)
+		want  string
+	}{
+		{
+			name:  "valid token promises the fetch",
+			setup: func(t *testing.T) { setCompletionAuthState(t, "token", "refresh", time.Now().Add(time.Hour)) },
+			want:  "_activeHelp_ Fetching resource names in the background; press Tab again in a few seconds\n:4\n",
+		},
+		{
+			name: "api key promises the fetch",
+			setup: func(t *testing.T) {
+				setCompletionAuthState(t, "", "", time.Time{})
+				t.Setenv("DCI_API_KEY", "api-key")
+			},
+			want: "_activeHelp_ Fetching resource names in the background; press Tab again in a few seconds\n:4\n",
+		},
+		{
+			name:  "no credentials points at login",
+			setup: func(t *testing.T) { setCompletionAuthState(t, "", "", time.Time{}) },
+			want:  "_activeHelp_ Not signed in; run dci login, then press Tab again\n:4\n",
+		},
+		{
+			name:  "expired token points at a refreshing command",
+			setup: func(t *testing.T) { setCompletionAuthState(t, "token", "refresh", time.Now().Add(-time.Hour)) },
+			want:  "_activeHelp_ Session expired; run any dci command (e.g. dci validate) to refresh it, then press Tab again\n:4\n",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			refreshCount, _ := configureCompletionPreflightTest(t, api, true)
+			t.Setenv("DCI_ACTIVE_HELP", "")
+			t.Setenv("DCI_API_KEY", "")
+			testCase.setup(t)
+
+			output := captureCompletionOutput(t, func() {
+				handled, _ := completionPreflight([]string{"dci", "__complete", "dci", "get-report", ""})
+				if !handled {
+					t.Error("cold name cache not handled")
+				}
+			})
+			if output != testCase.want {
+				t.Fatalf("output = %q, want %q", output, testCase.want)
+			}
+			if *refreshCount != 1 {
+				t.Fatalf("cold cache spawned %d refreshes", *refreshCount)
+			}
+		})
+	}
+}
+
+func TestCompletionPreflightColdCacheHonorsActiveHelpOptOut(t *testing.T) {
+	api := cli.API{Operations: resolutionTestOperations()}
+	_, _ = configureCompletionPreflightTest(t, api, true)
+	setCompletionAuthState(t, "token", "refresh", time.Now().Add(time.Hour))
+	t.Setenv("DCI_ACTIVE_HELP", "0")
 
 	output := captureCompletionOutput(t, func() {
-		handled, _ := completionPreflight([]string{"dci", "__complete", "dci", "get-report", ""})
-		if !handled {
-			t.Error("cold name cache not handled")
-		}
+		completionPreflight([]string{"dci", "__complete", "dci", "get-report", ""})
 	})
 	if output != ":4\n" {
 		t.Fatalf("output = %q", output)
-	}
-	if *refreshCount != 1 {
-		t.Fatalf("cold cache spawned %d refreshes", *refreshCount)
 	}
 }
 

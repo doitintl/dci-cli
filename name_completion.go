@@ -187,8 +187,38 @@ func completionPreflight(args []string) (handled bool, exitCode int) {
 	if state != nameCacheAbsent {
 		entries = cache.Resources[target.resource]
 	}
+	if state == nameCacheAbsent && os.Getenv("DCI_ACTIVE_HELP") != "0" {
+		// The first Tab on a cold cache has nothing to offer while the
+		// detached refresh runs (which can take >10s against a large tenant);
+		// say so instead of staying silent. cobra's ActiveHelp marker renders
+		// the line as a message the shell displays without inserting it.
+		for _, line := range cobra.AppendActiveHelp(nil, coldCacheActiveHelp()) {
+			fmt.Fprintln(os.Stdout, line)
+		}
+	}
 	printNameCompletions(os.Stdout, entries, positionals, toComplete, args[1] == "__completeNoDesc")
 	return true, 0
+}
+
+// coldCacheActiveHelp picks the ActiveHelp message for a Tab that found no
+// name cache. The detached refresh deliberately never OAuths, so when it is
+// doomed — no credentials at all, or an expired access token it cannot
+// refresh — promising names "in a few seconds" would never come true; point
+// at the actual remedy instead. Any real dci command refreshes an expired
+// session non-interactively via the stored refresh token.
+func coldCacheActiveHelp() string {
+	const fetching = "Fetching resource names in the background; press Tab again in a few seconds"
+	if os.Getenv(apiKeyEnvName) != "" {
+		return fetching
+	}
+	if cli.Cache == nil || cli.Cache.GetString("dci:default.token") == "" {
+		return "Not signed in; run dci login, then press Tab again"
+	}
+	expiresAt := cli.Cache.GetTime("dci:default.expires")
+	if !expiresAt.IsZero() && !expiresAt.After(time.Now()) {
+		return "Session expired; run any dci command (e.g. dci validate) to refresh it, then press Tab again"
+	}
+	return fetching
 }
 
 // printNameCompletions emits candidates relative to the shell's current word.

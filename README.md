@@ -113,8 +113,9 @@ report names, including multi-word ones. Type names bare when completing —
 don't open a quote first. The shell escapes spaces for you
 (`dci get-report Jack\ coach\ mark\ test`), whereas completion inside an
 unclosed quote is not supported by shell completion frameworks. Names come
-from a local cache that refreshes in the background, so the very first Tab in
-a fresh session may come up empty — press Tab again a moment later.
+from a local cache that refreshes in the background: the very first Tab shows
+a short "fetching names" notice while the cache warms — press Tab again a
+moment later. Set `DCI_ACTIVE_HELP=0` to suppress such notices.
 
 ## Output Formats
 
