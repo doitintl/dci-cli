@@ -21,3 +21,6 @@ completions/
 credentials.json
 service-account*.json
 *-credentials.json
+
+# Tool debris
+firebase-debug.log
