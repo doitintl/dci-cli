@@ -138,9 +138,14 @@ func TestPurgeNameCaches(t *testing.T) {
 
 func configureCompletionPreflightTest(t *testing.T, api cli.API, specCached bool) (*int, string) {
 	t.Helper()
-	configDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(configDir, "xdg"))
-	if err := os.MkdirAll(filepath.Join(configDir, "xdg", "dci"), 0o700); err != nil {
+	// Point HOME as well as XDG_CONFIG_HOME at the temp dir: os.UserConfigDir
+	// only honors XDG_CONFIG_HOME on Linux, so dciConfigDir() must be asked for
+	// the effective cache directory rather than assuming the XDG layout.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	configDir := dciConfigDir()
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -165,7 +170,7 @@ func configureCompletionPreflightTest(t *testing.T, api cli.API, specCached bool
 		customerContextFlagValue = previousFlag
 		cli.Root = previousRoot
 	})
-	return &refreshCount, filepath.Join(configDir, "xdg", "dci")
+	return &refreshCount, configDir
 }
 
 func captureCompletionOutput(t *testing.T, run func()) string {
