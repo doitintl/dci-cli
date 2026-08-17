@@ -123,11 +123,15 @@ jobs:
           # Sync the fork with upstream before branching: the release branch is
           # based on upstream/master, and pushing upstream's workflow-file
           # changes to a stale fork is rejected when the PAT lacks the
-          # `workflow` scope. The merge-upstream API (what `gh repo sync`
-          # calls) is server-side and exempt from that scope check. --force
-          # keeps the fork's master a mirror; release branches are unaffected.
-          GH_TOKEN="${WINGET_GH_PAT}" gh repo sync "${WINGET_FORK}" \
-            --source microsoft/winget-pkgs --force
+          # `workflow` scope. GitHub now enforces that scope on the
+          # merge-upstream API too (v2.1.0, 2026-08-17), so WINGET_GH_PAT must
+          # carry `repo` AND `workflow`. --force keeps the fork's master a
+          # mirror; release branches are unaffected.
+          if ! GH_TOKEN="${WINGET_GH_PAT}" gh repo sync "${WINGET_FORK}" \
+            --source microsoft/winget-pkgs --force; then
+            echo "::error::Syncing ${WINGET_FORK} with microsoft/winget-pkgs failed. If the error above mentions workflow changes, reissue the WINGET_GH_PAT secret with both the 'repo' and 'workflow' scopes (its owner must own the ${WINGET_FORK} fork), then re-run this workflow."
+            exit 1
+          fi
 
           git clone --depth 1 \
             "https://x-access-token:${WINGET_GH_PAT}@github.com/${WINGET_FORK}.git" \
