@@ -141,15 +141,23 @@ func spawnDetachedNameRefresh() {
 	_ = command.Process.Release()
 }
 
-// completionPreflight intercepts __complete/__completeNoDesc for resolvable
-// positional arguments before cobra dispatch. It only ever reads the CBOR spec
-// cache and the name cache — a cold spec cache falls through to cobra, and no
-// path here may load the API from the network or trigger OAuth.
+// completionPreflight intercepts __complete/__completeNoDesc before cobra
+// dispatch. It only ever reads the CBOR spec cache and the name cache. When
+// the spec is not locally servable, the request is swallowed with a notice
+// rather than falling through: cobra dispatch hydrates the API, and hydration
+// without a servable spec fetches it over the network through restish's auth
+// middleware — which launches the interactive OAuth flow, opening a browser
+// window from a Tab press. dci login and real commands are the only intended
+// browser-openers.
 func completionPreflight(args []string) (handled bool, exitCode int) {
-	if len(args) < 4 || (args[1] != "__complete" && args[1] != "__completeNoDesc") || args[2] != "dci" {
+	if len(args) < 2 || (args[1] != "__complete" && args[1] != "__completeNoDesc") {
 		return false, 0
 	}
 	if !invocationCachedSpecAvailable() {
+		printCompletionGuardNotice()
+		return true, 0
+	}
+	if len(args) < 4 || args[2] != "dci" {
 		return false, 0
 	}
 	words := args[3:]
@@ -163,7 +171,10 @@ func completionPreflight(args []string) (handled bool, exitCode int) {
 	}
 	api, err := loadDCIOperationAPI()
 	if err != nil || len(api.Operations) == 0 {
-		return false, 0
+		// The spec cache timestamp is valid but the spec itself is unusable:
+		// falling through would make restish re-fetch it — same browser risk.
+		printCompletionGuardNotice()
+		return true, 0
 	}
 	operation := invocationOperation(api, commandName)
 	if operation == nil {
@@ -198,6 +209,18 @@ func completionPreflight(args []string) (handled bool, exitCode int) {
 	}
 	printNameCompletions(os.Stdout, entries, positionals, toComplete, args[1] == "__completeNoDesc")
 	return true, 0
+}
+
+// printCompletionGuardNotice ends a completion request that cannot be served
+// from local caches, with a hint at what initializes them. Any real API
+// command (dci validate is the cheapest) fetches and caches the spec.
+func printCompletionGuardNotice() {
+	if os.Getenv("DCI_ACTIVE_HELP") != "0" {
+		for _, line := range cobra.AppendActiveHelp(nil, "Completion isn't initialized; run dci validate once, then press Tab again") {
+			fmt.Fprintln(os.Stdout, line)
+		}
+	}
+	fmt.Fprintf(os.Stdout, ":%d\n", cobra.ShellCompDirectiveNoFileComp)
 }
 
 // coldCacheActiveHelp picks the ActiveHelp message for a Tab that found no

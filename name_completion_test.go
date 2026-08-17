@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -451,7 +452,6 @@ func TestCompletionPreflightFallsThrough(t *testing.T) {
 		args       []string
 		specCached bool
 	}{
-		{name: "no spec cache", args: []string{"dci", "__complete", "dci", "get-report", ""}, specCached: false},
 		{name: "not a completion invocation", args: []string{"dci", "dci", "get-report", "monthly"}, specCached: true},
 		{name: "root-level completion", args: []string{"dci", "__complete", "status", ""}, specCached: true},
 		{name: "unresolvable operation", args: []string{"dci", "__complete", "dci", "list-reports", ""}, specCached: true},
@@ -467,6 +467,73 @@ func TestCompletionPreflightFallsThrough(t *testing.T) {
 			}
 			if *refreshCount != 0 {
 				t.Fatalf("fall-through spawned %d refreshes", *refreshCount)
+			}
+		})
+	}
+}
+
+// TestCompletionPreflightGuardsUnservableSpec pins the browser guard: a Tab
+// press must never fall through to cobra dispatch when the spec is not
+// locally servable, because hydration would fetch it through restish's auth
+// middleware and open an interactive OAuth browser window.
+func TestCompletionPreflightGuardsUnservableSpec(t *testing.T) {
+	api := cli.API{Operations: resolutionTestOperations()}
+	guardNotice := "_activeHelp_ Completion isn't initialized; run dci validate once, then press Tab again\n:4\n"
+	for _, testCase := range []struct {
+		name  string
+		args  []string
+		setup func(t *testing.T)
+		want  string
+	}{
+		{
+			name: "cold spec cache on a name completion",
+			args: []string{"dci", "__complete", "dci", "get-report", ""},
+			setup: func(t *testing.T) {
+				_, _ = configureCompletionPreflightTest(t, api, false)
+			},
+			want: guardNotice,
+		},
+		{
+			name: "cold spec cache on a root-level completion",
+			args: []string{"dci", "__complete", "status", ""},
+			setup: func(t *testing.T) {
+				_, _ = configureCompletionPreflightTest(t, api, false)
+			},
+			want: guardNotice,
+		},
+		{
+			name: "cold spec cache honors the active-help opt-out",
+			args: []string{"dci", "__complete", "dci", "get-report", ""},
+			setup: func(t *testing.T) {
+				_, _ = configureCompletionPreflightTest(t, api, false)
+				t.Setenv("DCI_ACTIVE_HELP", "0")
+			},
+			want: ":4\n",
+		},
+		{
+			name: "valid spec timestamp but unloadable spec",
+			args: []string{"dci", "__complete", "dci", "get-report", ""},
+			setup: func(t *testing.T) {
+				_, _ = configureCompletionPreflightTest(t, api, true)
+				loadOperationAPI = func(entrypoint string, root *cobra.Command) (cli.API, error) {
+					return cli.API{}, errors.New("corrupt spec cache")
+				}
+			},
+			want: guardNotice,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("DCI_ACTIVE_HELP", "")
+			testCase.setup(t)
+			var handled bool
+			output := captureCompletionOutput(t, func() {
+				handled, _ = completionPreflight(testCase.args)
+			})
+			if !handled {
+				t.Fatal("unservable spec fell through to cobra dispatch")
+			}
+			if output != testCase.want {
+				t.Fatalf("output = %q, want %q", output, testCase.want)
 			}
 		})
 	}
