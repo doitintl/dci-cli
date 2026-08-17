@@ -116,6 +116,32 @@ Override the time range when supported:
 dci get-report <report-id> --time-range P30D --output toon
 ```
 
+## Resource Names
+
+Get a resource by (partial) name instead of an ID:
+
+```bash
+dci get-report "monthly aws" --output toon
+```
+
+An ambiguous name fails with `NAME_AMBIGUOUS` (exit 2) listing candidates — re-run with the intended ID:
+
+```text
+error: "monthly" matches 3 reports: Monthly AWS Spend (<report-id-1>), Monthly GCP Spend (<report-id-2>), Monthly Azure Spend (<report-id-3>)
+```
+
+```bash
+dci get-report <report-id-1> --output toon
+```
+
+Delete by name — preview, confirm the resolved target, then re-run with the ID:
+
+```bash
+dci delete-report "monthly aws" --dry-run
+# confirmation shows: delete-report targets report "Monthly AWS Spend" (<report-id>)
+dci delete-report <report-id> --yes   # only after user approval
+```
+
 ## Safe Mutation Templates
 
 Draft first, then confirm with the user before running live changes.

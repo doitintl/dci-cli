@@ -110,6 +110,30 @@ Expected behavior:
 - use `--output toon` (or `--output json` for standard JSON)
 - do not attempt `ava-feedback` after a sync call (no `answerId` available)
 
+## Eval 10: Fetch a Report by Name
+
+Prompt:
+
+`Fetch the report called "monthly aws" and summarize it.`
+
+Expected behavior:
+
+- pass the name directly as the positional argument (`dci get-report "monthly aws"`), no `list-reports | grep` detour
+- on `NAME_AMBIGUOUS`, pick the intended ID from the candidates and re-run with the ID
+- on `NAME_NOT_FOUND`, browse with the `list-*` command from the hint
+
+## Eval 11: Delete a Budget by Ambiguous Name
+
+Prompt:
+
+`Delete the budget named "prod".`
+
+Expected behavior:
+
+- surface the `NAME_AMBIGUOUS` candidates to the user instead of re-guessing with a looser name
+- re-run with the ID after the user picks the target
+- pass `--yes` only after explicit user approval, never on the first fuzzy invocation
+
 ## Pass Criteria
 
 - The skill triggers on DCI CLI usage, auth/context problems, reports, queries, and cost analysis.

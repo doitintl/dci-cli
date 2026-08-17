@@ -6,6 +6,7 @@ Use this file when you need the command map, not the procedural guidance.
 
 - Flags-only read commands: `dci list-alerts --output toon`
 - Positional-ID read commands: `dci get-alert <alert-id> --output toon`
+- Name-based read commands: `dci get-report "monthly aws spend" --output toon`
 - Inline shorthand bodies: `dci invite-user email: user@example.com, organizationId: <org-id>, roleId: <role-id>`
 - Stdin JSON bodies: `dci query < query.json` (unknown top-level body fields are rejected)
 - Report presentation: `dci query --pivot --output table < query.json`, `--output csv`, `--rows keyed`
@@ -56,3 +57,4 @@ dci
 - Run `dci <command> --help` before drafting complex request bodies.
 - Prefer read-only commands before mutation.
 - Treat auth, permissions, and `customerContext` as separate concerns.
+- Prefer IDs in scripts and repeated calls; names are for exploration. On `NAME_AMBIGUOUS`, select the ID from the candidates — do not retry with a looser name.
