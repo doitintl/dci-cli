@@ -39,6 +39,13 @@ var resolutionExcludedResources = map[string]bool{
 	"attributiongroups": true,
 }
 
+// versionSegmentPattern rejects API version segments masquerading as
+// collection nouns when they immediately precede the path parameter (e.g.
+// /anomalies/v1/{id}): the derived "v1" collection is meaningless, and the
+// real collection's entries carry no resolvable names, so such operations
+// must pass their IDs through untouched.
+var versionSegmentPattern = regexp.MustCompile(`^v\d+$`)
+
 var resolutionIndex = map[string]resolutionListTarget{}
 
 type resolvedTarget struct {
@@ -103,7 +110,7 @@ func buildResolutionIndex(operations []cli.Operation) map[string]resolutionListT
 			continue
 		}
 		resource := segments[len(segments)-2]
-		if resolutionExcludedResources[resource] {
+		if resolutionExcludedResources[resource] || versionSegmentPattern.MatchString(resource) {
 			continue
 		}
 		listOperation, ok := listOperations[parent]

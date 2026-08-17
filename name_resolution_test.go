@@ -33,6 +33,9 @@ func resolutionTestOperations() []cli.Operation {
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
 		{Name: "get-ticket-tag", Method: "GET", URITemplate: "https://api.doit.com/support/v1/tickets/{id}/tags",
 			PathParams: []*cli.Param{{Name: "id", Type: "integer"}}},
+		{Name: "list-anomalies", Method: "GET", URITemplate: "https://api.doit.com/anomalies/v1"},
+		{Name: "get-anomaly", Method: "GET", URITemplate: "https://api.doit.com/anomalies/v1/{id}",
+			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
 	}
 }
 
@@ -55,6 +58,7 @@ func TestBuildResolutionIndex(t *testing.T) {
 		"get-orphan",           // no parent list operation
 		"get-ticket-tag",       // template does not end in the path param
 		"list-reports",         // zero path params
+		"get-anomaly",          // version segment is not a collection noun
 	} {
 		if _, ok := index[excluded]; ok {
 			t.Errorf("index unexpectedly contains %q", excluded)
