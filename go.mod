@@ -6,8 +6,8 @@ require (
 	github.com/alexeyco/simpletable v1.0.0
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/rest-sh/restish v0.21.2
-	github.com/spf13/cobra v1.6.1
-	github.com/spf13/pflag v1.0.5
+	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.9
 	github.com/spf13/viper v1.14.0
 	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c
 	golang.org/x/term v0.43.0
