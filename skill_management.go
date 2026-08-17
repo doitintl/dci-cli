@@ -25,6 +25,7 @@ var releasedSkillFileDigests = map[string]map[string]bool{
 		"70558f9b0181578db580f3dd6556d9f0ee318ddb259244a8da1a1dbf5c7e588a": true,
 		"d444ea090c6822c5b87317630bee3a4acbc04a4aeb2aa237830f645b11e02992": true,
 		"67b73db41a4860739892c4a750cd1a82287f4df19915928e403adfe3509885bf": true,
+		"a95ba3373873770a705369f06ecacc94c4541dbaba5eaf869226ca22e84d50b6": true,
 	},
 	"agents/openai.yaml": {
 		"71d2d01635821bea91a2db815e1699766423c2c1673b25536448f9e0f97ba31e": true,
@@ -32,6 +33,7 @@ var releasedSkillFileDigests = map[string]map[string]bool{
 	"references/capabilities.md": {
 		"d8fd324802123cab31be090f26e75ca79df0ca6f7f3811e74f550e4a7ab79c0f": true,
 		"b1d4c321f88af2d39f30be7951079111d18e9c8618e039b36a2eb640a1c3d3a6": true,
+		"ecbd16be1760348cb821206d328251c46338b4db6efd64a8104b2285aed3150e": true,
 	},
 	"references/cost-optimization.md": {
 		"48fe64d32e6b9769f27afdd24b2a032a3f2d71fb5caa9d3b10e034aa5a6bf583": true,
@@ -40,10 +42,12 @@ var releasedSkillFileDigests = map[string]map[string]bool{
 	"references/evals.md": {
 		"0e2285fb4f0dc2861bcf9e9bf1cbc9c8245a15f941be0ffadba5fb4d5e6fc500": true,
 		"d17a339500cf9c522d4ecbe25b458d11f6c94478709ae0c8ef737876b6051c7c": true,
+		"f46523f01ed48fb508fd3f2a1c7cb72d25531664ec41293ecedf43863fb2d006": true,
 	},
 	"references/examples.md": {
 		"ba70cadac261149b4d9d1f83778045a60861db1a563283268d2de4f7468ae33f": true,
 		"6cabc1c6234315f720757cec0ff222cbc93d470f4dae4528f073d25b2e8fe39b": true,
+		"67e32eb9cc0fe3d8f7072f62b5d22e0bcc7d3811260ecb01f322a307709a1ab8": true,
 	},
 	"references/query-patterns.md": {
 		"5bb6f96b32ef1979a6411010d36ed9b11f14ade8a480685fa1f0a867197b583e": true,

@@ -11,7 +11,7 @@ Use `dci` as the primary interface for Cloud Intelligence™ CLI tasks. Prefer r
 
 Set `DCI_AGENT_MODE=1` (or pass `--agent`) to run in agent mode: output defaults to compact TOON, terminal decoration is disabled, and banners/hints are routed to stderr so stdout stays parseable. `dci` also auto-detects common agent environments, so this is usually already on — run `dci status` to confirm.
 
-In explicit agent mode, failures are written to stderr as a JSON `error` envelope with a stable `code`, `message`, and `retryable` value. Inspect optional `hint`, `http_status`, `request_id`, and `retry_after` fields before deciding whether to correct the request or retry it. Only `retryable: true` failures are worth retrying; a `retryable: false` error means the request itself must change.
+In explicit agent mode, failures are written to stderr as a JSON `error` envelope with a stable `code`, `message`, and `retryable` value. Inspect optional `hint`, `http_status`, `request_id`, `retry_after`, and `resolved` fields before deciding whether to correct the request or retry it. Only `retryable: true` failures are worth retrying; a `retryable: false` error means the request itself must change.
 
 Exit codes are stable across agent and human mode: 0 success, 1 generic, 2 usage error, 10 authentication, 11 permission/context, 20 not found, 21 conflict, 30 validation or unconfirmed destructive command, 40 upstream/server error, 41 network error, 50 rate limited.
 
@@ -28,6 +28,13 @@ Use `--fields id,name` to project list or detail responses before output, and us
 - Use `--output csv` to export list or report results for spreadsheets.
 - Rows with a null group and zero metrics are dropped by default; pass `--include-empty-rows` to keep them (`emptyRowsDropped` marks how many were removed).
 - Report results include a `currency` field when the query config specifies one — always report monetary values with their currency. Human tables render known-currency amounts with the currency sign rounded to whole units; `--raw-numbers` restores exact values.
+
+## Resource Names
+
+- Positional resource arguments accept names, not just IDs: exact match, unique case-insensitive substring, or close-typo fuzzy (`dci get-report "monthly aws"`). Prefer IDs when known — deterministic and no lookup round-trip; use names when exploring or when the user gave one.
+- `NAME_AMBIGUOUS` (exit 2) lists up to 10 `name (id)` candidates in the message: pick the intended ID and re-run. Never re-guess with another fuzzy string. `NAME_NOT_FOUND` (exit 20): browse with the `list-*` command from the hint; the hint says when the client-side scan was truncated (>1500 items).
+- Escape hatches: `--id` treats positionals as literal IDs, `--name` forces a lookup when a real name matches the 20-char ID shape, and `DCI_NO_RESOLVE=1` disables resolution entirely for scripts.
+- `dci commands --json` marks resolvable commands with `resolvesNames: true`.
 
 ## Quick Start
 
@@ -55,6 +62,8 @@ Load [query-patterns.md](references/query-patterns.md) for payload examples.
 - Use `dci commands --json` when you need machine-readable argument, flag, output-shape, authentication, and destructive-operation metadata.
 - Run a side-effectful command with `--dry-run` first. Most commands print a local preview without sending a request; commands with an API-native `dryRun` parameter send a simulation request and return an action marked `"dry_run": true`.
 - Pass `--yes` only after the user has approved a command classified as destructive. Do not set `DCI_CONFIRM_DESTRUCTIVE=1` as a blanket bypass.
+- A destructive command given a name resolves it first: the confirmation names the true target (e.g. `delete-report targets report "Monthly Spend" (<report-id>)`), and the agent-mode error envelope carries `resolved: {input, name, id}`. Re-run with the ID from the hint, never the original fuzzy input.
+- `--dry-run` performs name resolution too (read-only), so the previewed target is the real one.
 - Keep shared examples anonymized. Redact customer IDs, report IDs, emails, and URLs unless the user explicitly asks for live values.
 - When a command may fail because of permissions or context, explain that `dci login` proves authentication but not authorization; `dci validate` confirms both identity and access.
 - In CI or headless environments, always set `DCI_API_KEY`: without credentials the CLI fails fast with `AUTHENTICATION_REQUIRED` instead of opening a browser.
