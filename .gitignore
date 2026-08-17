@@ -3,6 +3,7 @@ dci-cli
 !skills/dci-cli/
 !skills/dci-cli/**
 dist/
+completions/
 *.exe
 *.dll
 *.so

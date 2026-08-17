@@ -5,6 +5,7 @@ project_name: dci
 before:
   hooks:
     - go test ./...
+    - bash packaging/completions.sh
 
 builds:
   - id: dci
@@ -63,6 +64,7 @@ archives:
           - zip
     files:
       - README.md
+      - completions/*
 
 checksum:
   name_template: checksums.txt
@@ -105,3 +107,15 @@ nfpms:
     contents:
       - src: ./README.md
         dst: /usr/share/doc/dci/README.md
+      - src: ./completions/dci.bash
+        dst: /usr/share/bash-completion/completions/dci
+      # Debian's default zsh fpath uses vendor-completions; Fedora/RHEL use
+      # site-functions.
+      - src: ./completions/dci.zsh
+        dst: /usr/share/zsh/vendor-completions/_dci
+        packager: deb
+      - src: ./completions/dci.zsh
+        dst: /usr/share/zsh/site-functions/_dci
+        packager: rpm
+      - src: ./completions/dci.fish
+        dst: /usr/share/fish/vendor_completions.d/dci.fish

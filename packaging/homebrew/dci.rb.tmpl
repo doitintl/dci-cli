@@ -25,6 +25,9 @@ class Dci < Formula
 
   def install
     bin.install "dci"
+    bash_completion.install "completions/dci.bash" => "dci"
+    zsh_completion.install "completions/dci.zsh" => "_dci"
+    fish_completion.install "completions/dci.fish"
   end
 
   test do
