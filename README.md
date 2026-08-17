@@ -60,6 +60,26 @@ dci list-budgets --help
 dci commands --json
 ```
 
+## Resource Names
+
+Commands that take a report, budget, or allocation accept the resource **name** as well as its ID — quoting is optional:
+
+```bash
+dci get-report "Monthly AWS Spend"
+dci get-budget Team Backyard
+dci open report Monthly AWS Spend
+```
+
+Matching is forgiving: exact name first, then case-insensitive, then a unique substring, then close typos. If several resources share the name, the CLI lists the candidates with their IDs so you can re-run with the exact one; if nothing matches, it points you at the right `list-*` command. Destructive commands such as `delete-report` always show the resolved name *and* ID before asking for confirmation, so a fuzzy match can never delete the wrong thing silently.
+
+When you need precise control:
+
+```bash
+dci get-report --id <id>        # treat the argument as a literal ID, skip the lookup
+dci get-report --name <value>   # force a name lookup, even if the value looks like an ID
+DCI_NO_RESOLVE=1 dci ...        # turn name resolution off entirely (for scripts)
+```
+
 ## Shell Completion
 
 Tab completion for commands and flags is installed automatically by Homebrew
@@ -87,6 +107,11 @@ dci completion fish > ~/.config/fish/completions/dci.fish
 ```
 
 Run `dci completion <shell> --help` for shell-specific instructions.
+
+Tab also completes resource names: `dci get-report Mon<TAB>` offers matching
+report names, including multi-word ones. Names come from a local cache that
+refreshes in the background, so the very first Tab in a fresh session may come
+up empty — press Tab again a moment later.
 
 ## Output Formats
 
