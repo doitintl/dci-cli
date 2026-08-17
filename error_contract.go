@@ -15,6 +15,10 @@ import (
 	"github.com/rest-sh/restish/cli"
 )
 
+// The help-center CLI reference documents this exit-code contract and the
+// HTTP-status mapping below (omni: .github/workflows/actions/generate-cli-docs,
+// EXIT_CODE_REFERENCE / cliErrorForStatus). Update that generator when
+// changing either.
 const (
 	exitSuccess        = 0
 	exitGenericFailure = 1
