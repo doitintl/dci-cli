@@ -60,6 +60,34 @@ dci list-budgets --help
 dci commands --json
 ```
 
+## Shell Completion
+
+Tab completion for commands and flags is installed automatically by Homebrew
+and the `.deb`/`.rpm` packages (bash, zsh, and fish). The release archives also
+ship the scripts under `completions/`.
+
+On Windows (WinGet or Scoop), add this line to your PowerShell profile:
+
+```powershell
+dci completion powershell | Out-String | Invoke-Expression
+```
+
+For any other setup, generate the script for your shell and load it from your
+shell profile:
+
+```bash
+# bash (~/.bashrc)
+source <(dci completion bash)
+
+# zsh (~/.zshrc, after compinit)
+source <(dci completion zsh)
+
+# fish
+dci completion fish > ~/.config/fish/completions/dci.fish
+```
+
+Run `dci completion <shell> --help` for shell-specific instructions.
+
 ## Output Formats
 
 The default output format is `table`. Override it with the `--output` flag:
