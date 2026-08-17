@@ -1,15 +1,19 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Cloud Intelligence™ CLI",
   "homepage": "https://github.com/doitintl/dci-cli",
   "license": "SEE REPOSITORY",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/doitintl/dci-cli/releases/download/v2.0.0/dci_2.0.0_windows_amd64.zip",
-      "hash": "b70af0e2b1085206f8d74633f3a38d9589c4214b92581980948a17378679ef96"
+      "url": "https://github.com/doitintl/dci-cli/releases/download/v2.1.0/dci_2.1.0_windows_amd64.zip",
+      "hash": "bd7ed10c91623fbc4d13d3fc28680f0b90ae1eef0458de7c6d3e191f4e49cb97"
     }
   },
   "bin": "dci.exe",
+  "notes": [
+    "To enable tab completion, add this line to your PowerShell profile:",
+    "  dci completion powershell | Out-String | Invoke-Expression"
+  ],
   "checkver": {
     "github": "https://github.com/doitintl/dci-cli"
   },
