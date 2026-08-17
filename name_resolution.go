@@ -23,10 +23,13 @@ import (
 
 // resolutionListTarget describes where a resolvable operation's names live: the
 // parent collection list endpoint derived from URI templates in the cached spec.
+// hasBody marks operations whose surplus positional arguments are body
+// shorthand rather than words of an unquoted multi-word name.
 type resolutionListTarget struct {
 	listPath      string
 	resource      string
 	listOperation string
+	hasBody       bool
 }
 
 // resolutionExcludedResources removes collections from the derived index. The
@@ -111,6 +114,7 @@ func buildResolutionIndex(operations []cli.Operation) map[string]resolutionListT
 			listPath:      parent,
 			resource:      resource,
 			listOperation: listOperation,
+			hasBody:       operation.BodyMediaType != "",
 		}
 	}
 	return index
@@ -143,6 +147,11 @@ func resolvePathArguments(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	input := strings.TrimSpace(args[0])
+	if joinableNameArguments(cmd, args) {
+		// The shell word-split an unquoted multi-word name: rejoin the
+		// positionals into the single name the user typed.
+		input = strings.TrimSpace(strings.Join(args, " "))
+	}
 	if input == "" {
 		return nil
 	}
@@ -171,6 +180,79 @@ func resolvePathArguments(cmd *cobra.Command, args []string) error {
 func boolFlagSet(cmd *cobra.Command, name string) bool {
 	flag := cmd.Flags().Lookup(name)
 	return flag != nil && flag.Value.Type() == "bool" && flag.Value.String() == "true"
+}
+
+// joinableNameArguments reports whether surplus positional arguments can be
+// treated as the space-split words of one unquoted name: the operation
+// resolves names into its only path parameter, takes no request body (surplus
+// words there are body shorthand), resolution is not switched off, and no
+// word looks like a flag.
+func joinableNameArguments(cmd *cobra.Command, args []string) bool {
+	target, ok := resolutionIndex[cmd.Name()]
+	if !ok || target.hasBody || len(args) < 2 {
+		return false
+	}
+	if on, valid := parseBoolish(os.Getenv("DCI_NO_RESOLVE")); valid && on {
+		return false
+	}
+	if boolFlagSet(cmd, "id") {
+		return false
+	}
+	for _, argument := range args {
+		if strings.HasPrefix(argument, "-") {
+			return false
+		}
+	}
+	if params := operationPathParameters[cmd.Name()]; len(params) > 0 {
+		if declared := params[0].Type; declared != "" && declared != "string" {
+			return false
+		}
+	}
+	return true
+}
+
+const joinableArgsAnnotation = "dci-joinable-args"
+
+// relaxResolvableArgsValidation loosens cobra's generated ExactArgs(1) on
+// resolvable no-body commands: an unquoted multi-word name arrives as several
+// positionals, and cobra validates argument counts before the pre-run hook can
+// rejoin them. The original validator still applies whenever the join does not
+// (--id, DCI_NO_RESOLVE, flag-shaped words), so those paths keep their exact
+// arity errors. Restish's Run only reads args[0] for the path parameter, so
+// the surplus words left in the slice after the join are inert.
+//
+// Besides running when operation metadata loads, this is registered as a
+// cobra initializer: restish hydrates the operation subcommands inside
+// cli.Run, after the invocation preflight, and initializers are the one hook
+// cobra fires after hydration but before ValidateArgs.
+func relaxResolvableArgsValidation() {
+	if cli.Root == nil {
+		return
+	}
+	dciCommand := findDCICommand()
+	if dciCommand == nil {
+		return
+	}
+	for _, command := range dciCommand.Commands() {
+		target, ok := resolutionIndex[command.Name()]
+		if !ok || target.hasBody || command.Annotations[joinableArgsAnnotation] == "true" {
+			continue
+		}
+		if command.Annotations == nil {
+			command.Annotations = map[string]string{}
+		}
+		command.Annotations[joinableArgsAnnotation] = "true"
+		original := command.Args
+		command.Args = func(cmd *cobra.Command, args []string) error {
+			if joinableNameArguments(cmd, args) {
+				return nil
+			}
+			if original == nil {
+				return nil
+			}
+			return original(cmd, args)
+		}
+	}
 }
 
 // resolutionCustomerContext reads the -D override straight off the flag set:

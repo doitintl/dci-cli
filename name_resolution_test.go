@@ -19,6 +19,8 @@ func resolutionTestOperations() []cli.Operation {
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
 		{Name: "delete-report", Method: "DELETE", URITemplate: "https://api.doit.com/analytics/v1/reports/{id}",
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
+		{Name: "update-report", Method: "PATCH", URITemplate: "https://api.doit.com/analytics/v1/reports/{id}",
+			PathParams: []*cli.Param{{Name: "id", Type: "string"}}, BodyMediaType: "application/json"},
 		{Name: "list-budgets", Method: "GET", URITemplate: "https://api.doit.com/analytics/v1/budgets"},
 		{Name: "get-budget", Method: "GET", URITemplate: "https://api.doit.com/analytics/v1/budgets/{id}",
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
@@ -40,6 +42,7 @@ func TestBuildResolutionIndex(t *testing.T) {
 	for operationName, expected := range map[string]resolutionListTarget{
 		"get-report":    {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports"},
 		"delete-report": {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports"},
+		"update-report": {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports", hasBody: true},
 		"get-budget":    {listPath: "/analytics/v1/budgets", resource: "budgets", listOperation: "list-budgets"},
 	} {
 		if got := index[operationName]; got != expected {
@@ -304,6 +307,158 @@ func TestResolvePathArgumentsGating(t *testing.T) {
 				t.Fatalf("idShapedPathArgument unexpectedly %q", idShapedPathArgument)
 			}
 		})
+	}
+}
+
+func TestResolvePathArgumentsJoinsSpaceSplitName(t *testing.T) {
+	t.Setenv("DCI_NO_RESOLVE", "")
+	calls := stubNameResolution(t, resolverListResult{entries: namedEntries("Tom Playground1 only Full details")}, nil)
+	setResolutionIndex(resolutionTestOperations())
+	t.Cleanup(resetPathValidationState)
+	setOperationPathParameters(resolutionTestOperations())
+
+	command := resolutionTestCommand("get-report")
+	args := []string{"Tom", "Playground1", "only", "Full", "details"}
+	if err := resolvePathArguments(command, args); err != nil {
+		t.Fatal(err)
+	}
+	if args[0] != "id-0" {
+		t.Fatalf("args[0] = %q, want resolved id", args[0])
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("fetch calls = %d, want 1", len(*calls))
+	}
+	recorded := resolvedTargets["get-report"]
+	if recorded.input != "Tom Playground1 only Full details" || recorded.name != "Tom Playground1 only Full details" {
+		t.Fatalf("resolved target = %+v, want the rejoined name", recorded)
+	}
+}
+
+func TestJoinableNameArgumentsGating(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		command   string
+		args      []string
+		configure func(t *testing.T, command *cobra.Command)
+		wantName  string // resolved name; distinguishes joined vs first-arg-only input
+	}{
+		{
+			name:     "no-body operation joins the words",
+			command:  "get-report",
+			args:     []string{"Tom", "Playground1"},
+			wantName: "Tom Playground1",
+		},
+		{
+			name:     "body operation resolves only the first word",
+			command:  "update-report",
+			args:     []string{"Tom", "body: value"},
+			wantName: "Tom",
+		},
+		{
+			name:     "flag-shaped surplus word blocks the join",
+			command:  "get-report",
+			args:     []string{"Tom", "-x"},
+			wantName: "Tom",
+		},
+		{
+			name:    "id-shaped first word still resolves once joined",
+			command: "get-report",
+			args:    []string{"AbCdEfGhIjKlMnOpQrSt", "Tom"},
+			// The joined input contains a space, so the ID passthrough cannot
+			// trigger; the lookup runs and misses — asserted below.
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("DCI_NO_RESOLVE", "")
+			calls := stubNameResolution(t, resolverListResult{entries: namedEntries("Tom", "Tom Playground1")}, nil)
+			setResolutionIndex(resolutionTestOperations())
+			t.Cleanup(resetPathValidationState)
+			setOperationPathParameters(resolutionTestOperations())
+
+			command := resolutionTestCommand(testCase.command)
+			if testCase.configure != nil {
+				testCase.configure(t, command)
+			}
+			err := resolvePathArguments(command, testCase.args)
+			if testCase.wantName == "" {
+				if err == nil || !strings.Contains(err.Error(), "no report found matching") {
+					t.Fatalf("err = %v, want a lookup miss on the joined input", err)
+				}
+				if idShapedPathArgument != "" {
+					t.Fatalf("idShapedPathArgument = %q, want ID passthrough not to trigger", idShapedPathArgument)
+				}
+				if len(*calls) != 1 {
+					t.Fatalf("fetch calls = %d, want 1", len(*calls))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(*calls) != 1 {
+				t.Fatalf("fetch calls = %d, want 1", len(*calls))
+			}
+			if recorded := resolvedTargets[testCase.command]; recorded.name != testCase.wantName {
+				t.Fatalf("resolved name = %q, want %q", recorded.name, testCase.wantName)
+			}
+		})
+	}
+}
+
+func TestRelaxResolvableArgsValidation(t *testing.T) {
+	t.Setenv("DCI_NO_RESOLVE", "")
+	stubNameResolution(t, resolverListResult{}, nil)
+	setResolutionIndex(resolutionTestOperations())
+	t.Cleanup(resetPathValidationState)
+	setOperationPathParameters(resolutionTestOperations())
+
+	previousRoot := cli.Root
+	cli.Root = &cobra.Command{Use: "dci"}
+	t.Cleanup(func() { cli.Root = previousRoot })
+	dciCommand := &cobra.Command{Use: "dci"}
+	cli.Root.AddCommand(dciCommand)
+	getReport := resolutionTestCommand("get-report")
+	getReport.Args = cobra.ExactArgs(1)
+	updateReport := resolutionTestCommand("update-report")
+	updateReport.Args = cobra.MinimumNArgs(1)
+	listReports := resolutionTestCommand("list-reports")
+	listReports.Args = cobra.NoArgs
+	dciCommand.AddCommand(getReport, updateReport, listReports)
+
+	relaxResolvableArgsValidation()
+	relaxResolvableArgsValidation() // idempotent: the annotation guards re-wraps
+
+	if err := getReport.Args(getReport, []string{"Tom", "Playground1"}); err != nil {
+		t.Fatalf("space-split name rejected: %v", err)
+	}
+	if err := getReport.Args(getReport, []string{"Tom"}); err != nil {
+		t.Fatalf("single argument rejected: %v", err)
+	}
+	if err := getReport.Args(getReport, []string{"Tom", "Playground1", "extra"}); err != nil {
+		t.Fatalf("longer space-split name rejected: %v", err)
+	}
+
+	// When the join cannot apply, the original arity errors must survive.
+	if err := getReport.Args(getReport, []string{}); err == nil {
+		t.Fatal("zero arguments unexpectedly accepted")
+	}
+	_ = getReport.Flags().Set("id", "true")
+	if err := getReport.Args(getReport, []string{"Tom", "Playground1"}); err == nil {
+		t.Fatal("--id with surplus words unexpectedly accepted")
+	}
+	_ = getReport.Flags().Set("id", "false")
+	t.Setenv("DCI_NO_RESOLVE", "1")
+	if err := getReport.Args(getReport, []string{"Tom", "Playground1"}); err == nil {
+		t.Fatal("DCI_NO_RESOLVE with surplus words unexpectedly accepted")
+	}
+	t.Setenv("DCI_NO_RESOLVE", "")
+
+	// Body and unresolvable commands keep their validators untouched.
+	if updateReport.Annotations[joinableArgsAnnotation] != "" {
+		t.Fatal("body operation was wrapped")
+	}
+	if listReports.Annotations[joinableArgsAnnotation] != "" {
+		t.Fatal("unresolvable operation was wrapped")
 	}
 }
 
