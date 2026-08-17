@@ -96,6 +96,35 @@ func TestNormalizeArgs(t *testing.T) {
 			in:   []string{"dci", "__completeNoDesc", "login", ""},
 			out:  []string{"dci", "__completeNoDesc", "login", ""},
 		},
+		{
+			// dci st<Tab>: the partial word is the one being completed, so it
+			// must not be treated as a committed API command — root-level
+			// completion is where root commands (status) and API operations
+			// are merged into one candidate list.
+			name: "__complete with partial first word stays at root",
+			in:   []string{"dci", "__complete", "st"},
+			out:  []string{"dci", "__complete", "st"},
+		},
+		{
+			name: "__complete with partial api command stays at root",
+			in:   []string{"dci", "__complete", "list-bud"},
+			out:  []string{"dci", "__complete", "list-bud"},
+		},
+		{
+			name: "__completeNoDesc with partial first word stays at root",
+			in:   []string{"dci", "__completeNoDesc", "st"},
+			out:  []string{"dci", "__completeNoDesc", "st"},
+		},
+		{
+			name: "__complete with global flag then partial first word stays at root",
+			in:   []string{"dci", "__complete", "--rsh-timeout", "5s", "st"},
+			out:  []string{"dci", "__complete", "--rsh-timeout", "5s", "st"},
+		},
+		{
+			name: "__complete with global flag then api command gets dci prefix",
+			in:   []string{"dci", "__complete", "--rsh-timeout", "5s", "list-budgets", ""},
+			out:  []string{"dci", "__complete", "dci", "--rsh-timeout", "5s", "list-budgets", ""},
+		},
 	}
 
 	for _, tt := range tests {

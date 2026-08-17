@@ -570,17 +570,13 @@ func normalizeCompletionArgs(args []string, completionCmd string) []string {
 		return args
 	}
 
-	// Check the first arg after the completion command — if it's a root
-	// command (or empty), let cobra handle it at root level.
-	tail := args[idx+1:]
-	first := ""
-	for _, a := range tail {
-		if !strings.HasPrefix(a, "-") {
-			first = a
-			break
-		}
-	}
-	if first == "" || first == "help" || isRootCommand(first) {
+	// Only the words before the last one (the word being completed) can commit
+	// a command. A partial first word (dci st<Tab>) must stay at root, where
+	// cobra's subcommand matching and cli.Root's ValidArgsFunction together
+	// offer root commands and API operations in one candidate list.
+	preceding := args[idx+1 : len(args)-1]
+	command, _, ok := completionPositionalWords(preceding, completionFlagSets()...)
+	if !ok || command == "" || command == "help" || isRootCommand(command) {
 		return args
 	}
 
@@ -588,7 +584,7 @@ func normalizeCompletionArgs(args []string, completionCmd string) []string {
 	result := make([]string, 0, len(args)+1)
 	result = append(result, args[:idx+1]...)
 	result = append(result, "dci")
-	result = append(result, tail...)
+	result = append(result, args[idx+1:]...)
 	return result
 }
 
