@@ -258,8 +258,11 @@ func TestCompletionPreflightNoDescOmitsIDs(t *testing.T) {
 // TestCompletionPreflightCompletesSpaceSplitNames covers the shell scripts'
 // word splitting: zsh (`${=words}`), bash (COMP_WORDS), and fish
 // (commandline -opc) all deliver an unquoted in-progress name as separate
-// words, so candidates must be matched against the rejoined words and emitted
-// relative to the current word only.
+// words, so candidates are matched against the rejoined words and emitted as
+// the tail from the current word on. Each match also emits the full name: a
+// quoted in-progress name arrives identically split (the scripts eval a flat
+// request string), but the shell filters against the whole dequoted word,
+// which only the full name can match.
 func TestCompletionPreflightCompletesSpaceSplitNames(t *testing.T) {
 	api := cli.API{Operations: resolutionTestOperations()}
 	for _, testCase := range []struct {
@@ -270,22 +273,22 @@ func TestCompletionPreflightCompletesSpaceSplitNames(t *testing.T) {
 		{
 			name: "mid-word tail",
 			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", "A"},
-			want: []string{"AWS Spend\tr-1", ":4"},
+			want: []string{"AWS Spend\tr-1", "Monthly AWS Spend\tr-1", ":4"},
 		},
 		{
 			name: "empty current word after a space",
 			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", ""},
-			want: []string{"AWS Spend\tr-1", "gcp spend\tr-2", ":4"},
+			want: []string{"AWS Spend\tr-1", "Monthly AWS Spend\tr-1", "gcp spend\tr-2", "monthly gcp spend\tr-2", ":4"},
 		},
 		{
 			name: "current word filters the tail",
 			args: []string{"dci", "__complete", "dci", "get-report", "monthly", "g"},
-			want: []string{"gcp spend\tr-2", ":4"},
+			want: []string{"gcp spend\tr-2", "monthly gcp spend\tr-2", ":4"},
 		},
 		{
 			name: "two preceding words",
 			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", "AWS", "Sp"},
-			want: []string{"Spend\tr-1", ":4"},
+			want: []string{"Spend\tr-1", "Monthly AWS Spend\tr-1", ":4"},
 		},
 		{
 			name: "fully typed name leaves nothing to complete",
@@ -295,12 +298,12 @@ func TestCompletionPreflightCompletesSpaceSplitNames(t *testing.T) {
 		{
 			name: "flags between the words are skipped",
 			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", "--output", "json", "A"},
-			want: []string{"AWS Spend\tr-1", ":4"},
+			want: []string{"AWS Spend\tr-1", "Monthly AWS Spend\tr-1", ":4"},
 		},
 		{
 			name: "no-desc omits ids from tails",
 			args: []string{"dci", "__completeNoDesc", "dci", "get-report", "Monthly", "A"},
-			want: []string{"AWS Spend", ":4"},
+			want: []string{"AWS Spend", "Monthly AWS Spend", ":4"},
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

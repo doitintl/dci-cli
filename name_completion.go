@@ -194,28 +194,44 @@ func completionPreflight(args []string) (handled bool, exitCode int) {
 // printNameCompletions emits candidates relative to the shell's current word.
 // Shells word-split an unquoted in-progress name on spaces, so the positional
 // words preceding the current one are matched against the head of each cached
-// name and only the tail from the current word onward is emitted — mirroring
-// how zsh completes the last segment of a multi-segment path.
+// name and the tail from the current word onward is emitted — mirroring how
+// zsh completes the last segment of a multi-segment path.
+//
+// A quoted in-progress name reaches the binary the same way — zsh dequotes
+// `"New SKU` to one word, but the generated script evals a flat request string
+// that re-splits it — while the shell filters candidates against the whole
+// dequoted word, which no tail can match. Each matched entry is therefore
+// emitted twice, tail and full name: the shell's own current-word filter keeps
+// the tail when the name was typed unquoted and the full name when it was
+// quoted, and drops the other.
 func printNameCompletions(writer *os.File, entries []nameCacheEntry, preceding []string, toComplete string, noDescriptions bool) {
 	head := strings.Join(preceding, " ") + " "
 	prefix := strings.ToLower(toComplete)
+	emit := func(candidate, id string) {
+		if noDescriptions {
+			fmt.Fprintln(writer, candidate)
+			return
+		}
+		fmt.Fprintf(writer, "%s\t%s\n", candidate, id)
+	}
 	for _, entry := range entries {
 		candidate := entry.Name
+		fullName := ""
 		if len(preceding) > 0 {
 			tail, matched := trimPrefixFold(candidate, head)
 			if !matched || tail == "" {
 				continue
 			}
 			candidate = tail
+			fullName = entry.Name
 		}
 		if !strings.HasPrefix(strings.ToLower(candidate), prefix) {
 			continue
 		}
-		if noDescriptions {
-			fmt.Fprintln(writer, candidate)
-			continue
+		emit(candidate, entry.ID)
+		if fullName != "" {
+			emit(fullName, entry.ID)
 		}
-		fmt.Fprintf(writer, "%s\t%s\n", candidate, entry.ID)
 	}
 	fmt.Fprintf(writer, ":%d\n", cobra.ShellCompDirectiveNoFileComp)
 }
