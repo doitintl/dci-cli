@@ -30,7 +30,7 @@ jobs:
             -w /workspace \
             -e GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             -e CGO_ENABLED=1 \
-            ghcr.io/goreleaser/goreleaser-cross:v1.25.7 \
+            ghcr.io/goreleaser/goreleaser-cross:v1.25.9 \
             release --clean
 
       - name: Trigger downstream workflows
