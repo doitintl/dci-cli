@@ -63,6 +63,9 @@ jobs:
           brew install verify/test/dci
           dci --version
           dci --help >/dev/null
+          test -f "$(brew --prefix)/etc/bash_completion.d/dci"
+          test -f "$(brew --prefix)/share/zsh/site-functions/_dci"
+          test -f "$(brew --prefix)/share/fish/vendor_completions.d/dci.fish"
 
   linux-deb-smoke:
     runs-on: ubuntu-latest
@@ -100,6 +103,9 @@ jobs:
           sudo dpkg -i "$pkg"
           dci --version
           dci --help >/dev/null
+          test -f /usr/share/bash-completion/completions/dci
+          test -f /usr/share/zsh/vendor-completions/_dci
+          test -f /usr/share/fish/vendor_completions.d/dci.fish
 
   linux-rpm-smoke:
     runs-on: ubuntu-latest
@@ -142,6 +148,9 @@ jobs:
           dnf install -y "$pkg"
           dci --version
           dci --help >/dev/null
+          test -f /usr/share/bash-completion/completions/dci
+          test -f /usr/share/zsh/site-functions/_dci
+          test -f /usr/share/fish/vendor_completions.d/dci.fish
 
   windows-zip-smoke:
     runs-on: windows-latest
@@ -176,3 +185,6 @@ jobs:
           Expand-Archive -Path $zip.FullName -DestinationPath dist/verify/windows
           & "$PWD\dist\verify\windows\dci.exe" --version
           & "$PWD\dist\verify\windows\dci.exe" --help | Out-Null
+          if (-not (Test-Path "dist/verify/windows/completions/dci.ps1")) {
+            throw "completions/dci.ps1 missing from windows zip"
+          }
