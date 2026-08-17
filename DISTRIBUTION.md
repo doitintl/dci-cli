@@ -42,6 +42,26 @@ Linux packages:
 - `dci_<version>_linux_amd64.deb` / `_arm64.deb`
 - `dci_<version>_linux_amd64.rpm` / `_arm64.rpm`
 
+Shell completions:
+
+- `packaging/completions.sh` runs as a GoReleaser before hook. It builds a
+  throwaway binary named `dci` (the scripts embed the invoking binary's name,
+  so `go run .` would produce scripts wired to `dci-cli`) and generates
+  `completions/dci.{bash,zsh,fish,ps1}`.
+- Every archive includes the `completions/` directory.
+- The `.deb`/`.rpm` packages install bash/zsh/fish completions to the standard
+  system paths (`/usr/share/bash-completion/completions/dci`,
+  `/usr/share/fish/vendor_completions.d/dci.fish`, and for zsh
+  `/usr/share/zsh/vendor-completions/_dci` on deb vs
+  `/usr/share/zsh/site-functions/_dci` on rpm — Debian's default fpath does
+  not include site-functions).
+- The Homebrew formula installs the pre-generated scripts from the archive.
+- Scoop prints a post-install note with the PowerShell profile line; WinGet has
+  no completion mechanism, so Windows users load `dci completion powershell`
+  from their profile (documented in the README).
+- `post-release-verify.yml` asserts the completion files land in the Homebrew,
+  `.deb`, `.rpm`, and Windows zip installs.
+
 ## Repository Layout (Distribution Files)
 
 ```
@@ -50,6 +70,7 @@ Linux packages:
 .github/workflows/sync-manifests.yml
 .github/workflows/post-release-verify.yml
 packaging/render.sh                 # Template renderer for manifests
+packaging/completions.sh            # Generates shell completion scripts
 packaging/homebrew/dci.rb.tmpl
 packaging/scoop/dci.json.tmpl
 packaging/winget/*.tmpl
