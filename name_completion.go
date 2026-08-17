@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
@@ -155,8 +157,8 @@ func completionPreflight(args []string) (handled bool, exitCode int) {
 	if strings.HasPrefix(toComplete, "-") {
 		return false, 0
 	}
-	commandName, position, ok := completionPositionalIndex(words[:len(words)-1], completionFlagSets()...)
-	if !ok || commandName == "" || position != 0 {
+	commandName, positionals, ok := completionPositionalWords(words[:len(words)-1], completionFlagSets()...)
+	if !ok || commandName == "" {
 		return false, 0
 	}
 	api, err := loadDCIOperationAPI()
@@ -171,6 +173,12 @@ func completionPreflight(args []string) (handled bool, exitCode int) {
 	if !ok {
 		return false, 0
 	}
+	// Surplus positionals are the shell word-splitting an unquoted in-progress
+	// name on spaces — except on a body operation, where extra words are body
+	// shorthand and must fall through to cobra.
+	if len(positionals) > 0 && target.hasBody {
+		return false, 0
+	}
 	cache, state := readNameCache(dciConfigDir(), activeCustomerContext(), time.Now())
 	if state != nameCacheFresh {
 		spawnNameCacheRefresh()
@@ -179,23 +187,51 @@ func completionPreflight(args []string) (handled bool, exitCode int) {
 	if state != nameCacheAbsent {
 		entries = cache.Resources[target.resource]
 	}
-	printNameCompletions(os.Stdout, entries, toComplete, args[1] == "__completeNoDesc")
+	printNameCompletions(os.Stdout, entries, positionals, toComplete, args[1] == "__completeNoDesc")
 	return true, 0
 }
 
-func printNameCompletions(writer *os.File, entries []nameCacheEntry, toComplete string, noDescriptions bool) {
+// printNameCompletions emits candidates relative to the shell's current word.
+// Shells word-split an unquoted in-progress name on spaces, so the positional
+// words preceding the current one are matched against the head of each cached
+// name and only the tail from the current word onward is emitted — mirroring
+// how zsh completes the last segment of a multi-segment path.
+func printNameCompletions(writer *os.File, entries []nameCacheEntry, preceding []string, toComplete string, noDescriptions bool) {
+	head := strings.Join(preceding, " ") + " "
 	prefix := strings.ToLower(toComplete)
 	for _, entry := range entries {
-		if !strings.HasPrefix(strings.ToLower(entry.Name), prefix) {
+		candidate := entry.Name
+		if len(preceding) > 0 {
+			tail, matched := trimPrefixFold(candidate, head)
+			if !matched || tail == "" {
+				continue
+			}
+			candidate = tail
+		}
+		if !strings.HasPrefix(strings.ToLower(candidate), prefix) {
 			continue
 		}
 		if noDescriptions {
-			fmt.Fprintln(writer, entry.Name)
+			fmt.Fprintln(writer, candidate)
 			continue
 		}
-		fmt.Fprintf(writer, "%s\t%s\n", entry.Name, entry.ID)
+		fmt.Fprintf(writer, "%s\t%s\n", candidate, entry.ID)
 	}
 	fmt.Fprintf(writer, ":%d\n", cobra.ShellCompDirectiveNoFileComp)
+}
+
+// trimPrefixFold trims prefix from s rune-wise and case-insensitively,
+// returning the remainder of s with its original casing. Byte-offset trimming
+// after ToLower would misalign on runes whose lowercase form changes width.
+func trimPrefixFold(s, prefix string) (string, bool) {
+	for _, want := range prefix {
+		got, size := utf8.DecodeRuneInString(s)
+		if size == 0 || unicode.ToLower(got) != unicode.ToLower(want) {
+			return "", false
+		}
+		s = s[size:]
+	}
+	return s, true
 }
 
 func completionFlagSets() []*pflag.FlagSet {
@@ -209,14 +245,14 @@ func completionFlagSets() []*pflag.FlagSet {
 	return flagSets
 }
 
-// completionPositionalIndex mirrors commandArg's flag-skipping walk over the
-// words preceding the completion word: it returns the command word and how
-// many positionals precede the one being completed. ok is false when the
+// completionPositionalWords mirrors commandArg's flag-skipping walk over the
+// words preceding the completion word: it returns the command word and the
+// positional words preceding the one being completed. ok is false when the
 // completion word is actually a flag's value (a dangling value-taking flag
 // ends the word list), so cobra's flag completion takes over. Flags unknown to
 // the given flag sets (operation-local query params) are pragmatically assumed
 // to take a value when one follows.
-func completionPositionalIndex(words []string, flagSets ...*pflag.FlagSet) (command string, position int, ok bool) {
+func completionPositionalWords(words []string, flagSets ...*pflag.FlagSet) (command string, positionals []string, ok bool) {
 	lookupFlag := func(name string) *pflag.Flag {
 		for _, flags := range flagSets {
 			if flags != nil {
@@ -242,7 +278,7 @@ func completionPositionalIndex(words []string, flagSets ...*pflag.FlagSet) (comm
 			command = word
 			return
 		}
-		position++
+		positionals = append(positionals, word)
 	}
 
 	afterTerminator := false
@@ -274,7 +310,7 @@ func completionPositionalIndex(words []string, flagSets ...*pflag.FlagSet) (comm
 				continue
 			}
 			if index+1 >= len(words) {
-				return "", 0, false
+				return "", nil, false
 			}
 			index++
 			continue
@@ -290,14 +326,14 @@ func completionPositionalIndex(words []string, flagSets ...*pflag.FlagSet) (comm
 			}
 			if j == len(shorts)-1 {
 				if index+1 >= len(words) {
-					return "", 0, false
+					return "", nil, false
 				}
 				index++
 			}
 			break
 		}
 	}
-	return command, position, true
+	return command, positionals, true
 }
 
 func registerNameRefreshCommand(configDir string) {

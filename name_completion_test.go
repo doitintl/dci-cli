@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-func TestCompletionPositionalIndex(t *testing.T) {
+func TestCompletionPositionalWords(t *testing.T) {
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	flags.String("output", "", "")
 	flags.StringP("customer-context", "D", "", "")
@@ -25,35 +25,39 @@ func TestCompletionPositionalIndex(t *testing.T) {
 		name        string
 		words       []string
 		wantCommand string
-		wantIndex   int
+		wantWords   []string
 		wantOK      bool
 	}{
-		{name: "bare command", words: []string{"get-report"}, wantCommand: "get-report", wantIndex: 0, wantOK: true},
-		{name: "one positional", words: []string{"get-report", "monthly"}, wantCommand: "get-report", wantIndex: 1, wantOK: true},
-		{name: "known value flag skips its value", words: []string{"get-report", "--output", "json"}, wantCommand: "get-report", wantIndex: 0, wantOK: true},
-		{name: "known value flag with equals", words: []string{"get-report", "--output=json"}, wantCommand: "get-report", wantIndex: 0, wantOK: true},
-		{name: "bool flag consumes nothing", words: []string{"get-report", "--yes", "monthly"}, wantCommand: "get-report", wantIndex: 1, wantOK: true},
-		{name: "short value flag skips its value", words: []string{"get-report", "-D", "acme.com"}, wantCommand: "get-report", wantIndex: 0, wantOK: true},
-		{name: "short bool flag consumes nothing", words: []string{"get-report", "-P", "monthly"}, wantCommand: "get-report", wantIndex: 1, wantOK: true},
-		{name: "interleaved flags and positionals", words: []string{"--output", "json", "get-report", "--yes", "arg1", "-D", "acme.com", "arg2"}, wantCommand: "get-report", wantIndex: 2, wantOK: true},
-		{name: "unknown flag assumed to take the next value", words: []string{"get-report", "--filter", "owner:me"}, wantCommand: "get-report", wantIndex: 0, wantOK: true},
-		{name: "unknown flag followed by a flag consumes nothing", words: []string{"get-report", "--full", "--yes"}, wantCommand: "get-report", wantIndex: 0, wantOK: true},
+		{name: "bare command", words: []string{"get-report"}, wantCommand: "get-report", wantOK: true},
+		{name: "one positional", words: []string{"get-report", "monthly"}, wantCommand: "get-report", wantWords: []string{"monthly"}, wantOK: true},
+		{name: "known value flag skips its value", words: []string{"get-report", "--output", "json"}, wantCommand: "get-report", wantOK: true},
+		{name: "known value flag with equals", words: []string{"get-report", "--output=json"}, wantCommand: "get-report", wantOK: true},
+		{name: "bool flag consumes nothing", words: []string{"get-report", "--yes", "monthly"}, wantCommand: "get-report", wantWords: []string{"monthly"}, wantOK: true},
+		{name: "short value flag skips its value", words: []string{"get-report", "-D", "acme.com"}, wantCommand: "get-report", wantOK: true},
+		{name: "short bool flag consumes nothing", words: []string{"get-report", "-P", "monthly"}, wantCommand: "get-report", wantWords: []string{"monthly"}, wantOK: true},
+		{name: "interleaved flags and positionals", words: []string{"--output", "json", "get-report", "--yes", "arg1", "-D", "acme.com", "arg2"}, wantCommand: "get-report", wantWords: []string{"arg1", "arg2"}, wantOK: true},
+		{name: "unknown flag assumed to take the next value", words: []string{"get-report", "--filter", "owner:me"}, wantCommand: "get-report", wantOK: true},
+		{name: "unknown flag followed by a flag consumes nothing", words: []string{"get-report", "--full", "--yes"}, wantCommand: "get-report", wantOK: true},
 		{name: "dangling known value flag owns the completion word", words: []string{"get-report", "--output"}, wantOK: false},
 		{name: "dangling short value flag owns the completion word", words: []string{"get-report", "-D"}, wantOK: false},
 		{name: "dangling unknown flag owns the completion word", words: []string{"get-report", "--filter"}, wantOK: false},
-		{name: "dangling bool flag leaves the word positional", words: []string{"get-report", "--yes"}, wantCommand: "get-report", wantIndex: 0, wantOK: true},
-		{name: "terminator makes everything positional", words: []string{"get-report", "--", "--output"}, wantCommand: "get-report", wantIndex: 1, wantOK: true},
+		{name: "dangling bool flag leaves the word positional", words: []string{"get-report", "--yes"}, wantCommand: "get-report", wantOK: true},
+		{name: "terminator makes everything positional", words: []string{"get-report", "--", "--output"}, wantCommand: "get-report", wantWords: []string{"--output"}, wantOK: true},
+		{name: "space-split name words stay in order", words: []string{"get-report", "Tom", "Playground1", "only"}, wantCommand: "get-report", wantWords: []string{"Tom", "Playground1", "only"}, wantOK: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			command, index, ok := completionPositionalIndex(testCase.words, flags)
+			command, positionals, ok := completionPositionalWords(testCase.words, flags)
 			if ok != testCase.wantOK {
 				t.Fatalf("ok = %t, want %t", ok, testCase.wantOK)
 			}
 			if !testCase.wantOK {
 				return
 			}
-			if command != testCase.wantCommand || index != testCase.wantIndex {
-				t.Fatalf("command = %q, index = %d, want %q %d", command, index, testCase.wantCommand, testCase.wantIndex)
+			if command != testCase.wantCommand {
+				t.Fatalf("command = %q, want %q", command, testCase.wantCommand)
+			}
+			if strings.Join(positionals, "\x00") != strings.Join(testCase.wantWords, "\x00") {
+				t.Fatalf("positionals = %q, want %q", positionals, testCase.wantWords)
 			}
 		})
 	}
@@ -251,6 +255,92 @@ func TestCompletionPreflightNoDescOmitsIDs(t *testing.T) {
 	}
 }
 
+// TestCompletionPreflightCompletesSpaceSplitNames covers the shell scripts'
+// word splitting: zsh (`${=words}`), bash (COMP_WORDS), and fish
+// (commandline -opc) all deliver an unquoted in-progress name as separate
+// words, so candidates must be matched against the rejoined words and emitted
+// relative to the current word only.
+func TestCompletionPreflightCompletesSpaceSplitNames(t *testing.T) {
+	api := cli.API{Operations: resolutionTestOperations()}
+	for _, testCase := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "mid-word tail",
+			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", "A"},
+			want: []string{"AWS Spend\tr-1", ":4"},
+		},
+		{
+			name: "empty current word after a space",
+			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", ""},
+			want: []string{"AWS Spend\tr-1", "gcp spend\tr-2", ":4"},
+		},
+		{
+			name: "current word filters the tail",
+			args: []string{"dci", "__complete", "dci", "get-report", "monthly", "g"},
+			want: []string{"gcp spend\tr-2", ":4"},
+		},
+		{
+			name: "two preceding words",
+			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", "AWS", "Sp"},
+			want: []string{"Spend\tr-1", ":4"},
+		},
+		{
+			name: "fully typed name leaves nothing to complete",
+			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", "AWS", "Spend", ""},
+			want: []string{":4"},
+		},
+		{
+			name: "flags between the words are skipped",
+			args: []string{"dci", "__complete", "dci", "get-report", "Monthly", "--output", "json", "A"},
+			want: []string{"AWS Spend\tr-1", ":4"},
+		},
+		{
+			name: "no-desc omits ids from tails",
+			args: []string{"dci", "__completeNoDesc", "dci", "get-report", "Monthly", "A"},
+			want: []string{"AWS Spend", ":4"},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, configDir := configureCompletionPreflightTest(t, api, true)
+			writeCompletionNameCache(t, configDir, time.Now())
+			var handled bool
+			output := captureCompletionOutput(t, func() {
+				handled, _ = completionPreflight(testCase.args)
+			})
+			if !handled {
+				t.Fatal("space-split name completion not handled")
+			}
+			got := strings.Split(strings.TrimRight(output, "\n"), "\n")
+			if strings.Join(got, "\x00") != strings.Join(testCase.want, "\x00") {
+				t.Fatalf("output lines = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestTrimPrefixFold(t *testing.T) {
+	for _, testCase := range []struct {
+		s, prefix, want string
+		wantOK          bool
+	}{
+		{"Monthly AWS Spend", "Monthly ", "AWS Spend", true},
+		{"Monthly AWS Spend", "monthly ", "AWS Spend", true},
+		{"MONTHLY AWS Spend", "monthly ", "AWS Spend", true},
+		{"Monthly", "Monthly ", "", false},
+		{"Quarterly Overview", "Monthly ", "", false},
+		{"Ödeme Raporu", "ödeme ", "Raporu", true},
+	} {
+		got, ok := trimPrefixFold(testCase.s, testCase.prefix)
+		if ok != testCase.wantOK || got != testCase.want {
+			t.Errorf("trimPrefixFold(%q, %q) = %q, %t; want %q, %t",
+				testCase.s, testCase.prefix, got, ok, testCase.want, testCase.wantOK)
+		}
+	}
+}
+
 func TestCompletionPreflightStaleCacheServesAndRefreshes(t *testing.T) {
 	api := cli.API{Operations: resolutionTestOperations()}
 	refreshCount, configDir := configureCompletionPreflightTest(t, api, true)
@@ -296,7 +386,7 @@ func TestCompletionPreflightFallsThrough(t *testing.T) {
 		{name: "not a completion invocation", args: []string{"dci", "dci", "get-report", "monthly"}, specCached: true},
 		{name: "root-level completion", args: []string{"dci", "__complete", "status", ""}, specCached: true},
 		{name: "unresolvable operation", args: []string{"dci", "__complete", "dci", "list-reports", ""}, specCached: true},
-		{name: "second positional", args: []string{"dci", "__complete", "dci", "get-report", "ReportIdentifier1234", ""}, specCached: true},
+		{name: "second positional on a body operation", args: []string{"dci", "__complete", "dci", "update-report", "Monthly", ""}, specCached: true},
 		{name: "flag word", args: []string{"dci", "__complete", "dci", "get-report", "--out"}, specCached: true},
 		{name: "flag value position", args: []string{"dci", "__complete", "dci", "get-report", "--filter", ""}, specCached: true},
 	} {

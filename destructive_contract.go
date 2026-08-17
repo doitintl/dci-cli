@@ -163,6 +163,7 @@ func setOperationMetadata(operations []cli.Operation) {
 	setDestructiveOperations(operations)
 	setOperationPathParameters(operations)
 	setResolutionIndex(operations)
+	relaxResolvableArgsValidation()
 }
 
 func ensureDestructiveOperations() error {

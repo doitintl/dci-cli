@@ -397,6 +397,11 @@ func run() (exitCode int) {
 	applyCustomerContext(configDir)
 	lockToDCI()
 	setupCompletion()
+	// The API subcommands do not exist yet — restish hydrates them inside
+	// cli.Run — so the arity relaxation for space-split resolvable names must
+	// re-run once they do. Cobra initializers fire after hydration and flag
+	// parsing but before args validation.
+	cobra.OnInitialize(relaxResolvableArgsValidation)
 	os.Args = rewriteHelpFullFlag(os.Args)
 	os.Args = normalizeArgs(os.Args)
 	if handled, completionExitCode := completionPreflight(os.Args); handled {
