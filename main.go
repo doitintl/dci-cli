@@ -1671,6 +1671,8 @@ func addOutputFlag() {
 		viper.Set("table-priority-column", "")
 		viper.Set("table-accent-column", "")
 		viper.Set("table-accent-flag-key", "")
+		viper.Set("table-link-column", "")
+		viper.Set("table-link-url-key", "")
 		// Whether cell accents (e.g. the insights easy-win title highlight) may
 		// color interactive table output. Same gate as the heatmap, minus the
 		// --heatmap flag, which governs only the pivot shading.
@@ -2987,6 +2989,7 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 
 	heat := newHeatmap(rows, keys)
 	accentColumn, accentFlagKey := tableAccentConfig()
+	linkColumn, linkURLKey := tableLinkConfig()
 	for rowIndex, row := range rows {
 		body := make([]*simpletable.Cell, 0, len(keys))
 		for i, k := range keys {
@@ -2998,6 +3001,9 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 			}
 			if k == accentColumn {
 				cellText = accentCell(row, accentFlagKey, cellText)
+			}
+			if k == linkColumn {
+				cellText = linkCell(row, linkURLKey, cellText)
 			}
 			// Numbers align right for magnitude comparison; text reads left.
 			align := simpletable.AlignLeft
@@ -3040,6 +3046,34 @@ func accentCell(row map[string]interface{}, flagKey, cellText string) string {
 		return cellText
 	}
 	return "\x1b[1;32m" + cellText + "\x1b[0m"
+}
+
+// tableLinkConfig returns the view-designated hyperlink: the column whose
+// cells link out and the per-row key holding the URL (e.g. the insights
+// title linking to reportUrl). Gated like the accent — OSC 8 hyperlinks are
+// for interactive human terminals only.
+func tableLinkConfig() (column, urlKey string) {
+	if !viper.GetBool("table-color") {
+		return "", ""
+	}
+	column = strings.TrimSpace(viper.GetString("table-link-column"))
+	urlKey = strings.TrimSpace(viper.GetString("table-link-url-key"))
+	if column == "" || urlKey == "" {
+		return "", ""
+	}
+	return column, urlKey
+}
+
+// linkCell wraps a cell in an OSC 8 terminal hyperlink when the row carries a
+// non-empty URL under urlKey. Applied after width formatting and outside any
+// color codes; the escape sequences take no cells.
+func linkCell(row map[string]interface{}, urlKey, cellText string) string {
+	url, _ := row[urlKey].(string)
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return cellText
+	}
+	return "\x1b]8;;" + url + "\x1b\\" + cellText + "\x1b]8;;\x1b\\"
 }
 
 type tableHeatmap struct {
