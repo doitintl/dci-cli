@@ -16,8 +16,14 @@ import (
 func resetTransformConfig(t *testing.T) {
 	t.Helper()
 	oldAgentMode := agentMode
+	// Full-pipeline tests leave the PreRun-resolved display zone behind
+	// (production resets it in run()); transform tests must see the
+	// deterministic UTC fallback unless they opt into a zone themselves.
+	oldDisplayLoc := displayTimeLocation
+	displayTimeLocation = nil
 	t.Cleanup(func() {
 		agentMode = oldAgentMode
+		displayTimeLocation = oldDisplayLoc
 		viper.Set("max-rows", nil)
 		viper.Set("rows-mode", nil)
 		viper.Set("pivot-rows", nil)

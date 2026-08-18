@@ -17,6 +17,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	// Embed the IANA zone database so DCI_TZ works on hosts without one
+	// (notably Windows installs via Scoop/WinGet).
+	_ "time/tzdata"
 
 	"github.com/alexeyco/simpletable"
 	"github.com/mattn/go-runewidth"
@@ -298,6 +301,8 @@ func run() (exitCode int) {
 	invokedCommandName = ""
 	bufferedRequestBody = nil
 	configuredAPIBase = ""
+	displayTimeLocation = nil
+	localizedInstantShown = false
 	nonJSONErrorResponse = false
 	resetErrorContractState()
 	resetDestructiveContractState()
@@ -1611,6 +1616,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
 	dciCmd.PersistentFlags().Bool("include-dismissed", false, "Keep dismissed insights in list-insights results (excluded by default)")
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
+	dciCmd.PersistentFlags().Bool("utc", false, "Render timestamps in UTC instead of the local timezone (table output only; machine formats and report period columns are always UTC)")
 	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
 	dciCmd.PersistentFlags().Bool("id", false, "Treat positional resource arguments as literal IDs and skip name resolution")
 	dciCmd.PersistentFlags().Bool("name", false, "Force name resolution even when an argument matches the resource ID format")
@@ -1680,6 +1686,12 @@ func addOutputFlag() {
 		viper.Set("table-color", heatmapEnabled(true, agentMode, stdoutIsTTY(), os.Getenv("NO_COLOR") != ""))
 		viper.Set("pivot-active", false)
 		viper.Set("pivot-total-rows", 0)
+		viper.Set("utc-label-columns", "")
+
+		// Resolve the instant-display zone once per invocation; nil outside a
+		// normal command run keeps the pipeline UTC-deterministic in tests.
+		displayTimeLocation = resolveDisplayLocation(os.Getenv("DCI_TZ"))
+		localizedInstantShown = false
 
 		heatmapRequested := true
 		if flag := cmd.Flags().Lookup("heatmap"); flag != nil {
@@ -1693,6 +1705,7 @@ func addOutputFlag() {
 			"include-empty-rows": "include-empty-rows",
 			"include-dismissed":  "include-dismissed",
 			"raw-numbers":        "raw-numbers",
+			"utc":                "display-utc",
 		} {
 			value := false
 			if flag := cmd.Flags().Lookup(flagName); flag != nil {
@@ -1886,7 +1899,11 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 		return nil
 	}
 	resp.Body = transformSuccessBody(resp.Body)
-	return g.next.Format(resp)
+	if err := g.next.Format(resp); err != nil {
+		return err
+	}
+	maybeNoteDisplayZone()
+	return nil
 }
 
 func responseBodyIsEmpty(body interface{}) bool {
@@ -2051,7 +2068,7 @@ func (t dciTableContentType) Marshal(value interface{}) ([]byte, error) {
 		return nil, err
 	}
 
-	rows, err := toTableRows(jsonSafe)
+	rows, err := toTableRows(jsonSafe, labelDisplay)
 	if err != nil {
 		// Response is not table-friendly; fall back to indented JSON.
 		b, jsonErr := json.MarshalIndent(jsonSafe, "", "  ")
@@ -2110,8 +2127,9 @@ func (t dciToonContentType) Unmarshal(data []byte, value interface{}) error {
 func toonPrepare(v interface{}) interface{} {
 	if root, ok := v.(map[string]interface{}); ok {
 		// get-report rows arrive as arrays of arrays; map them to schema-named
-		// objects (same as the table path) so they can fold tabular.
-		if rows, handled, err := extractGetReportRows(root); handled && err == nil {
+		// objects (same as the table path) so they can fold tabular. Labels
+		// stay full RFC3339 UTC — agent output is zone-independent.
+		if rows, handled, err := extractGetReportRows(root, labelRFC3339); handled && err == nil {
 			items := make([]interface{}, len(rows))
 			for i, r := range rows {
 				items[i] = r
@@ -2315,7 +2333,7 @@ func toJSONSafe(value interface{}) (interface{}, error) {
 	return v, nil
 }
 
-func toTableRows(value interface{}) ([]map[string]interface{}, error) {
+func toTableRows(value interface{}, style timestampLabelStyle) ([]map[string]interface{}, error) {
 	switch v := value.(type) {
 	case []interface{}:
 		rows := make([]map[string]interface{}, 0, len(v))
@@ -2330,13 +2348,13 @@ func toTableRows(value interface{}) ([]map[string]interface{}, error) {
 	case map[string]interface{}:
 		// Special case for get-report responses where rows are in
 		// result.rows/results.rows and each row can be an array.
-		if rows, handled, err := extractGetReportRows(v); handled {
+		if rows, handled, err := extractGetReportRows(v, style); handled {
 			return rows, err
 		}
 
 		// If this is a list response wrapper, pull out the most likely list field.
 		if list := pickObjectArrayField(v); list != nil {
-			return toTableRows(list)
+			return toTableRows(list, style)
 		}
 		// Otherwise treat it as a single-row table.
 		return []map[string]interface{}{v}, nil
@@ -2345,7 +2363,7 @@ func toTableRows(value interface{}) ([]map[string]interface{}, error) {
 	}
 }
 
-func extractGetReportRows(root map[string]interface{}) ([]map[string]interface{}, bool, error) {
+func extractGetReportRows(root map[string]interface{}, style timestampLabelStyle) ([]map[string]interface{}, bool, error) {
 	containers := []string{"result", "results"}
 	for _, key := range containers {
 		rawContainer, ok := root[key]
@@ -2375,11 +2393,11 @@ func extractGetReportRows(root map[string]interface{}) ([]map[string]interface{}
 		for _, item := range rowItems {
 			switch row := item.(type) {
 			case map[string]interface{}:
-				rows = append(rows, displayTimestampFields(row, schema))
+				rows = append(rows, displayTimestampFields(row, schema, style))
 			case []interface{}:
 				obj := map[string]interface{}{}
 				for i, cell := range row {
-					obj[reportColumnName(colNames, i)] = displayTimestampCell(cell, schemaColumnType(schema, i))
+					obj[reportColumnName(colNames, i)] = displayTimestampCell(cell, schemaColumnType(schema, i), style)
 				}
 				rows = append(rows, obj)
 			default:
@@ -2679,12 +2697,34 @@ func tableCellText(key string, val interface{}) string {
 		}
 		return strings.Join(converted, ", ")
 	}
+	if !viper.GetBool("raw-numbers") && utcLabelColumn(key) {
+		// View-designated UTC label columns (anomaly usage-window boundaries):
+		// epoch values become UTC label text, never zone-shifted — an hourly
+		// anomaly starting 01:00 UTC must not relabel onto another local day.
+		if ms, ok := numericCell(val); ok && ms >= 1e12 && ms < 4.1e12 {
+			return utcEpochDateLabel(time.UnixMilli(int64(ms)))
+		}
+		if sec, ok := numericCell(val); ok && sec >= 1e9 && sec < 4.1e9 {
+			return utcEpochDateLabel(time.Unix(int64(sec), 0))
+		}
+	}
 	if !viper.GetBool("raw-numbers") && timeNamedColumn(key) {
 		if sec, ok := numericCell(val); ok && sec >= 1e9 && sec < 4.1e9 {
 			return prettifyTimestamp(time.Unix(int64(sec), 0).UTC().Format(time.RFC3339))
 		}
 	}
 	return formatTableValue(val)
+}
+
+// utcLabelColumn reports whether the view marked this column as a UTC label
+// (set by the response transform, e.g. anomaly startTime/endTime).
+func utcLabelColumn(key string) bool {
+	for _, column := range strings.Split(viper.GetString("utc-label-columns"), ",") {
+		if column != "" && column == key {
+			return true
+		}
+	}
+	return false
 }
 
 func timeNamedColumn(key string) bool {
@@ -2866,11 +2906,39 @@ func schemaColumnType(schema []reportColumn, i int) string {
 	return ""
 }
 
+// timestampLabelStyle selects how schema-declared timestamp cells (report
+// result period labels) are encoded for a renderer. Labels are UTC in every
+// style — the choice is only between machine and human encodings.
+type timestampLabelStyle int
+
+const (
+	// labelRFC3339 keeps full RFC3339 UTC strings — TOON and CSV.
+	labelRFC3339 timestampLabelStyle = iota
+	// labelDisplay emits the final human label text ("2026-08-01",
+	// "2026-08-09 01:00") — the table. Deliberately shorter than
+	// prettifyTimestamp's 20-char pre-check, so label strings can never
+	// re-enter the zone-aware instant path.
+	labelDisplay
+)
+
+// utcEpochDateLabel formats a UTC time as final label text: bare date at
+// midnight (daily/monthly grain carries no time information), minute
+// precision otherwise or when the result is hourly-grain.
+func utcEpochDateLabel(t time.Time) string {
+	utc := t.UTC()
+	if !viper.GetBool("report-hourly") && utc.Hour() == 0 && utc.Minute() == 0 && utc.Second() == 0 {
+		return utc.Format("2006-01-02")
+	}
+	return utc.Format("2006-01-02 15:04")
+}
+
 // displayTimestampCell converts schema-declared timestamp cells (epoch
-// seconds) to ISO 8601 for the human-facing table/TOON renderers. Machine
-// formats (json, yaml, csv via raw rows) keep the raw epoch values, and
-// --raw-numbers opts TOON/table consumers back into raw epochs too.
-func displayTimestampCell(cell interface{}, colType string) interface{} {
+// seconds) for the human-facing renderers: RFC3339 UTC for TOON/CSV, final
+// label text for the table. These are data-bucket labels, never instants —
+// they stay UTC in every zone configuration. Machine formats (json, yaml)
+// keep the raw epoch values, and --raw-numbers opts table/TOON/CSV
+// consumers back into raw epochs too.
+func displayTimestampCell(cell interface{}, colType string, style timestampLabelStyle) interface{} {
 	if viper.GetBool("raw-numbers") {
 		return cell
 	}
@@ -2881,11 +2949,15 @@ func displayTimestampCell(cell interface{}, colType string) interface{} {
 	if !ok || sec < 1e9 || sec >= 4.1e9 {
 		return cell
 	}
-	return time.Unix(int64(sec), 0).UTC().Format(time.RFC3339)
+	t := time.Unix(int64(sec), 0).UTC()
+	if style == labelDisplay {
+		return utcEpochDateLabel(t)
+	}
+	return t.Format(time.RFC3339)
 }
 
 // displayTimestampFields applies displayTimestampCell to keyed rows.
-func displayTimestampFields(row map[string]interface{}, schema []reportColumn) map[string]interface{} {
+func displayTimestampFields(row map[string]interface{}, schema []reportColumn, style timestampLabelStyle) map[string]interface{} {
 	if len(schema) == 0 {
 		return row
 	}
@@ -2895,7 +2967,7 @@ func displayTimestampFields(row map[string]interface{}, schema []reportColumn) m
 	}
 	for _, col := range schema {
 		if v, ok := out[col.Name]; ok {
-			out[col.Name] = displayTimestampCell(v, col.Type)
+			out[col.Name] = displayTimestampCell(v, col.Type, style)
 		}
 	}
 	return out
@@ -2926,12 +2998,85 @@ func formatTableValue(val interface{}) string {
 	}
 }
 
-// prettifyTimestamp renders RFC3339 strings for human eyes: midnight UTC
-// becomes a bare date (daily/monthly report grain carries no time
-// information), anything else keeps minute precision. Hourly report results
-// keep the time even at midnight — the resolution is part of the data.
-// Non-timestamp strings pass through untouched; machine formats (json, yaml,
-// csv, toon) never see this — they keep full RFC3339.
+// displayTimeLocation is the zone instants render in for the current
+// invocation, resolved once in the dci PersistentPreRunE. It stays nil
+// outside a normal command run (tests, internal calls), where UTC keeps
+// output deterministic — same fallback rationale as shouldPivotReportRows'
+// empty-output-format check.
+var displayTimeLocation *time.Location
+
+// localizedInstantShown records that at least one instant rendered with a
+// non-zero UTC offset this invocation, so the one-line zone note on stderr
+// only appears when the output actually differs from UTC.
+var localizedInstantShown bool
+
+// resolveDisplayLocation picks the instant-display zone: DCI_TZ (IANA name)
+// when set, otherwise the system zone (time.Local, which already honors TZ).
+// An invalid DCI_TZ warns once and falls back to the system zone rather than
+// silently changing what the user asked for.
+func resolveDisplayLocation(dciTZ string) *time.Location {
+	dciTZ = strings.TrimSpace(dciTZ)
+	if dciTZ == "" {
+		return time.Local
+	}
+	loc, err := time.LoadLocation(dciTZ)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: ignoring invalid DCI_TZ=%q (use an IANA zone name like Europe/Berlin); using the system zone\n", dciTZ)
+		return time.Local
+	}
+	return loc
+}
+
+// displayLocation returns the zone instants render in. UTC for every
+// machine-consumed context — agent mode, json/yaml/csv/toon, --utc, and
+// pipelines running outside a normal command — so only the human table view
+// ever sees machine-local times.
+func displayLocation() *time.Location {
+	if displayTimeLocation == nil || agentMode || viper.GetBool("display-utc") {
+		return time.UTC
+	}
+	switch strings.TrimSpace(viper.GetString("rsh-output-format")) {
+	case "table", "auto":
+		return displayTimeLocation
+	default:
+		return time.UTC
+	}
+}
+
+// maybeNoteDisplayZone emits the once-per-invocation stderr note after a
+// table render that actually localized an instant, so users always know
+// which zone they are reading and how to get UTC back.
+func maybeNoteDisplayZone() {
+	if !localizedInstantShown || cli.Stderr == nil {
+		return
+	}
+	localizedInstantShown = false
+	loc := displayLocation()
+	if loc == time.UTC {
+		return
+	}
+	name := loc.String()
+	if name == "Local" {
+		name = "local time"
+	}
+	_, offset := time.Now().In(loc).Zone()
+	sign := "+"
+	if offset < 0 {
+		sign = "-"
+		offset = -offset
+	}
+	fmt.Fprintf(cli.Stderr, "note: times shown in %s (UTC%s%02d:%02d); pass --utc for UTC\n",
+		name, sign, offset/3600, (offset%3600)/60)
+}
+
+// prettifyTimestamp renders RFC3339 strings for human eyes. Values at
+// exactly midnight UTC are date-valued (calendar dates: contract terms,
+// invoice dates, budget periods, daily report grain) — they become a bare
+// UTC date and are never zone-shifted. Anything with a real time-of-day is
+// an instant and renders in displayLocation() at minute precision. Hourly
+// report results keep the time even at midnight — the resolution is part of
+// the data. Non-timestamp strings pass through untouched; machine formats
+// (json, yaml, csv, toon) never see this — they keep full RFC3339.
 func prettifyTimestamp(s string) string {
 	if len(s) < 20 || s[4] != '-' || s[10] != 'T' {
 		return s // cheap pre-check before parsing
@@ -2941,10 +3086,17 @@ func prettifyTimestamp(s string) string {
 		return s
 	}
 	utc := parsed.UTC()
-	if !viper.GetBool("report-hourly") && utc.Hour() == 0 && utc.Minute() == 0 && utc.Second() == 0 {
+	if utc.Hour() == 0 && utc.Minute() == 0 && utc.Second() == 0 {
+		if viper.GetBool("report-hourly") {
+			return utc.Format("2006-01-02 15:04")
+		}
 		return utc.Format("2006-01-02")
 	}
-	return utc.Format("2006-01-02 15:04")
+	local := utc.In(displayLocation())
+	if _, offset := local.Zone(); offset != 0 {
+		localizedInstantShown = true
+	}
+	return local.Format("2006-01-02 15:04")
 }
 
 // groupDigits inserts thousands separators into the integer part of a

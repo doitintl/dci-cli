@@ -1,7 +1,9 @@
 package main
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -454,5 +456,84 @@ func TestMoneyNamedColumnCoversInvoiceFields(t *testing.T) {
 		if got := moneyNamedColumn(name); got != want {
 			t.Errorf("moneyNamedColumn(%q) = %v, want %v", name, got, want)
 		}
+	}
+}
+
+func TestDisplayTimeColumnTitleRewrite(t *testing.T) {
+	// UTC context (unresolved zone): titles keep their canonical suffix.
+	prev := displayTimeLocation
+	displayTimeLocation = nil
+	t.Cleanup(func() { displayTimeLocation = prev })
+	if got := displayTimeColumnTitle("updated (UTC)", "updateTime"); got != "updated (UTC)" {
+		t.Errorf("UTC context title = %q, want unchanged", got)
+	}
+
+	// Localized context: instant columns advertise local rendering...
+	loc, err := time.LoadLocation("Asia/Jerusalem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	displayTimeLocation = loc
+	viper.Set("rsh-output-format", "table")
+	t.Cleanup(func() { viper.Set("rsh-output-format", nil) })
+	if got := displayTimeColumnTitle("updated (UTC)", "updateTime"); got != "updated (local)" {
+		t.Errorf("localized title = %q, want updated (local)", got)
+	}
+	if got := displayTimeColumnTitle("owner", ""); got != "owner" {
+		t.Errorf("non-time title = %q, want unchanged", got)
+	}
+
+	// ...but UTC-label columns (anomaly windows) keep title and zone.
+	viper.Set("utc-label-columns", "startTime,endTime,started (UTC)")
+	t.Cleanup(func() { viper.Set("utc-label-columns", "") })
+	if got := displayTimeColumnTitle("started (UTC)", "startTime"); got != "started (UTC)" {
+		t.Errorf("UTC-label title = %q, want kept as (UTC)", got)
+	}
+}
+
+func TestAnomalyCuratedViewStaysUTCUnderZone(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Jerusalem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevLoc := displayTimeLocation
+	displayTimeLocation = loc
+	prevCmd := invokedCommandName
+	invokedCommandName = "list-anomalies"
+	viper.Set("rsh-output-format", "table")
+	viper.Set("table-columns", "")
+	viper.Set("raw-numbers", false)
+	t.Cleanup(func() {
+		displayTimeLocation = prevLoc
+		invokedCommandName = prevCmd
+		viper.Set("rsh-output-format", nil)
+		viper.Set("table-columns", nil)
+		viper.Set("raw-numbers", nil)
+		viper.Set("utc-label-columns", "")
+	})
+
+	hourlyStart := time.Date(2026, 8, 12, 1, 0, 0, 0, time.UTC).UnixMilli()
+	body := map[string]interface{}{
+		"anomalies": []interface{}{map[string]interface{}{
+			"serviceName": "S3", "severityLevel": "warning", "costOfAnomaly": 10.0,
+			"platform": "aws", "status": "active", "startTime": hourlyStart,
+			"acknowledgedAt": "2026-08-12T09:15:30Z",
+		}},
+		"rowCount": int64(1),
+	}
+	transformSuccessBody(body)
+	row := body["anomalies"].([]interface{})[0].(map[string]interface{})
+
+	// The curated column keeps its (UTC) title, and the renderer keeps the
+	// value in UTC ("01:00", not "04:00" IDT)...
+	if !strings.Contains(viper.GetString("table-columns"), "started (UTC)") {
+		t.Fatalf("curated columns = %q, want started (UTC)", viper.GetString("table-columns"))
+	}
+	if got := tableCellText("started (UTC)", row["started (UTC)"]); got != "2026-08-12 01:00" {
+		t.Errorf("started (UTC) cell = %q, want UTC label", got)
+	}
+	// ...while sibling instants on the same row localize.
+	if got := tableCellText("acknowledgedAt", row["acknowledgedAt"]); got != "2026-08-12 12:15" {
+		t.Errorf("acknowledgedAt cell = %q, want localized instant", got)
 	}
 }

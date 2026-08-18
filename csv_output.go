@@ -20,7 +20,9 @@ func (t dciCSVContentType) Marshal(value interface{}) ([]byte, error) {
 	}
 	jsonSafe = normalizeIntegralNumbers(jsonSafe)
 
-	rows, err := toTableRows(jsonSafe)
+	// Labels keep full RFC3339 UTC: CSV is a machine format and must be
+	// byte-identical regardless of the host's zone.
+	rows, err := toTableRows(jsonSafe, labelRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("response is not table-shaped; use --output json instead: %w", err)
 	}
