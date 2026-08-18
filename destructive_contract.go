@@ -20,7 +20,13 @@ var (
 	destructiveCommandSet   = map[string]bool{}
 	destructiveMetadataRead bool
 	destructiveMetadataErr  error
-	loadOperationAPI        = cli.Load
+	loadOperationAPI        = func(base string, root *cobra.Command) (cli.API, error) {
+		// cli.Load dereferences cli.Cache, which only exists after cli.Init.
+		if cli.Cache == nil {
+			return cli.API{}, errors.New("restish CLI is not initialized")
+		}
+		return cli.Load(base, root)
+	}
 )
 
 // Non-DELETE operations belong here only when they can revoke access, alter financial contracts,

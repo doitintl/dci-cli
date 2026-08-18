@@ -116,6 +116,7 @@ func TestDestructiveMetadataDoesNotReloadEmptyOperationSet(t *testing.T) {
 
 func TestDestructiveConfirmation(t *testing.T) {
 	setDestructiveOperations([]cli.Operation{{Name: "delete-budget", Method: "DELETE"}})
+	t.Cleanup(resetDestructiveContractState)
 	command := &cobra.Command{Use: "delete-budget"}
 
 	t.Run("fails closed", func(t *testing.T) {
@@ -306,6 +307,7 @@ func TestDestructiveConfirmationErrorMetadata(t *testing.T) {
 }
 
 func TestDestructiveCommandClassification(t *testing.T) {
+	t.Cleanup(resetDestructiveContractState)
 	setDestructiveOperations([]cli.Operation{
 		{Name: "delete-budget", Method: "DELETE"},
 		{Name: "archive-contract-template", Method: "DELETE"},

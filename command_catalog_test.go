@@ -121,6 +121,7 @@ func TestCatalogAndRuntimeDestructiveClassificationMatch(t *testing.T) {
 		{Name: "list-alerts", Method: "GET"},
 	}
 	setDestructiveOperations(operations)
+	t.Cleanup(resetDestructiveContractState)
 	catalog := buildCommandCatalog(cli.API{Operations: operations})
 	entries := make(map[string]commandCatalogEntry, len(catalog.Commands))
 	for _, entry := range catalog.Commands {
