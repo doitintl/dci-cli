@@ -2990,11 +2990,17 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 	heat := newHeatmap(rows, keys)
 	accentColumn, accentFlagKey := tableAccentConfig()
 	linkColumn, linkURLKey := tableLinkConfig()
+	links := &tableLinks{}
 	for rowIndex, row := range rows {
 		body := make([]*simpletable.Cell, 0, len(keys))
 		for i, k := range keys {
 			val := row[k]
 			cellText := renderCellText(row, k)
+			if linkColumn != "" {
+				// Stray marker runes in real data would pair with a link
+				// marker and misplace a hyperlink.
+				cellText = stripLinkMarkers(cellText)
+			}
 			cellText = formatCell(cellText, colWidths[i], mode)
 			if heat != nil {
 				cellText = heat.colorize(rowIndex, k, val, cellText)
@@ -3003,7 +3009,7 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 				cellText = accentCell(row, accentFlagKey, cellText)
 			}
 			if k == linkColumn {
-				cellText = linkCell(row, linkURLKey, cellText)
+				cellText = links.mark(row, linkURLKey, cellText)
 			}
 			// Numbers and money align right for magnitude comparison; text
 			// reads left.
@@ -3020,7 +3026,7 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 	out := table.String()
 	// Replace the U+2800 padding placeholder with real spaces.
 	out = strings.ReplaceAll(out, "\u2800", " ")
-	return out, nil
+	return links.apply(out), nil
 }
 
 // tableAccentConfig returns the view-designated accent: the column to color
@@ -3065,16 +3071,74 @@ func tableLinkConfig() (column, urlKey string) {
 	return column, urlKey
 }
 
-// linkCell wraps a cell in an OSC 8 terminal hyperlink when the row carries a
-// non-empty URL under urlKey. Applied after width formatting and outside any
-// color codes; the escape sequences take no cells.
-func linkCell(row map[string]interface{}, urlKey, cellText string) string {
+// Link cells cannot carry their OSC 8 escape sequences through simpletable:
+// its width math strips CSI color codes (the heatmap and accent SGR codes)
+// but not OSC sequences, so an in-cell URL would count toward the measured
+// column width and shear every border after it. Instead, linked cells are
+// wrapped in zero-width marker runes — invisible to go-runewidth, so
+// alignment is unaffected — with the URLs queued in render order, and apply
+// swaps each marked segment for the real hyperlink after the table string is
+// built.
+const (
+	linkStartMarker = "​" // zero width space
+	linkEndMarker   = "‌" // zero width non-joiner
+)
+
+type tableLinks struct {
+	urls []string
+}
+
+// mark wraps each non-blank line of a linked cell in marker runes and queues
+// the row's URL once per marked line: wrap mode splits a cell across output
+// lines, and each must become its own hyperlink — one link spanning the
+// newline would swallow the table borders between them.
+func (l *tableLinks) mark(row map[string]interface{}, urlKey, cellText string) string {
 	url, _ := row[urlKey].(string)
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return cellText
 	}
-	return "\x1b]8;;" + url + "\x1b\\" + cellText + "\x1b]8;;\x1b\\"
+	lines := strings.Split(cellText, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		l.urls = append(l.urls, url)
+		lines[i] = linkStartMarker + line + linkEndMarker
+	}
+	return strings.Join(lines, "\n")
+}
+
+// apply replaces the marked segments with OSC 8 hyperlinks, consuming the
+// queued URLs in order: simpletable renders rows in the order they were
+// added, so marker pairs appear in the output in queue order.
+func (l *tableLinks) apply(out string) string {
+	if len(l.urls) == 0 {
+		return out
+	}
+	var b strings.Builder
+	rest := out
+	for _, url := range l.urls {
+		start := strings.Index(rest, linkStartMarker)
+		if start < 0 {
+			break
+		}
+		length := strings.Index(rest[start:], linkEndMarker)
+		if length < 0 {
+			break
+		}
+		text := rest[start+len(linkStartMarker) : start+length]
+		b.WriteString(rest[:start])
+		b.WriteString("\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\")
+		rest = rest[start+length+len(linkEndMarker):]
+	}
+	b.WriteString(rest)
+	return b.String()
+}
+
+func stripLinkMarkers(s string) string {
+	s = strings.ReplaceAll(s, linkStartMarker, "")
+	return strings.ReplaceAll(s, linkEndMarker, "")
 }
 
 // moneyText reports whether a cell is a pre-formatted monetary string

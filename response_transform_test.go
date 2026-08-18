@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/viper"
 )
@@ -332,15 +334,74 @@ func TestMoneyTextAlignment(t *testing.T) {
 	}
 }
 
-func TestLinkCellWrapsOnlyRowsWithURL(t *testing.T) {
+func TestTableLinksMarkOnlyRowsWithURL(t *testing.T) {
+	links := &tableLinks{}
 	linked := map[string]interface{}{"reportUrl": "https://example.com/r/1"}
 	plain := map[string]interface{}{"reportUrl": ""}
-	want := "\x1b]8;;https://example.com/r/1\x1b\\Title\x1b]8;;\x1b\\"
-	if got := linkCell(linked, "reportUrl", "Title"); got != want {
-		t.Errorf("linkCell(linked) = %q, want OSC 8 wrapped", got)
+	if got := links.mark(linked, "reportUrl", "Title"); got != linkStartMarker+"Title"+linkEndMarker {
+		t.Errorf("mark(linked) = %q, want marker-wrapped", got)
 	}
-	if got := linkCell(plain, "reportUrl", "Title"); got != "Title" {
-		t.Errorf("linkCell(plain) = %q, want unchanged", got)
+	if got := links.mark(plain, "reportUrl", "Other"); got != "Other" {
+		t.Errorf("mark(plain) = %q, want unchanged", got)
+	}
+	out := links.apply("| " + linkStartMarker + "Title" + linkEndMarker + " |")
+	want := "| \x1b]8;;https://example.com/r/1\x1b\\Title\x1b]8;;\x1b\\ |"
+	if out != want {
+		t.Errorf("apply = %q, want %q", out, want)
+	}
+}
+
+func TestTableLinksWrapModeMarksEachLine(t *testing.T) {
+	links := &tableLinks{}
+	row := map[string]interface{}{"urlUI": "https://example.com/r/2"}
+	marked := links.mark(row, "urlUI", "first\nsecond")
+	if len(links.urls) != 2 {
+		t.Fatalf("urls queued = %d, want 2 (one per wrapped line)", len(links.urls))
+	}
+	out := links.apply(marked)
+	if strings.Count(out, "\x1b]8;;https://example.com/r/2\x1b\\") != 2 {
+		t.Errorf("apply = %q, want each wrapped line hyperlinked separately", out)
+	}
+	if strings.Contains(out, linkStartMarker) || strings.Contains(out, linkEndMarker) {
+		t.Errorf("apply = %q, want no marker runes left", out)
+	}
+}
+
+// The OSC 8 escape sequences must never pass through simpletable: its column
+// sizing strips CSI color codes but not OSC sequences, so an in-cell URL
+// would inflate the measured width and shear the table borders (the original
+// list-reports hyperlink bug).
+func TestBuildTableStringHyperlinksPreserveAlignment(t *testing.T) {
+	t.Cleanup(func() {
+		viper.Set("table-color", nil)
+		viper.Set("table-link-column", nil)
+		viper.Set("table-link-url-key", nil)
+	})
+	viper.Set("table-color", true)
+	viper.Set("table-link-column", "name")
+	viper.Set("table-link-url-key", "urlUI")
+	url := "https://console.example.com/customers/RSTDkHhaoGWwOEvlYlHyBUhm/analyze/reports/qPA5QvltVGvhlSUiNw3O"
+	rows := []map[string]interface{}{
+		{"name": "Anomaly Detection Dev WoW", "owner": "someone@example.com", "urlUI": url},
+		{"name": "Spend by User", "owner": "other@example.com", "urlUI": ""},
+	}
+	out, err := buildTableString(rows, []string{"name", "owner"}, []int{25, 19}, "fit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "\x1b]8;;"+url+"\x1b\\Anomaly Detection Dev WoW\x1b]8;;\x1b\\") {
+		t.Errorf("output missing the OSC 8 hyperlink:\n%s", out)
+	}
+	if strings.Contains(out, linkStartMarker) || strings.Contains(out, linkEndMarker) {
+		t.Error("marker runes leaked into the rendered table")
+	}
+	oscPattern := regexp.MustCompile(`\x1b]8;;[^\x1b]*\x1b\\`)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	want := runewidth.StringWidth(lines[0])
+	for _, line := range lines {
+		if got := runewidth.StringWidth(oscPattern.ReplaceAllString(line, "")); got != want {
+			t.Errorf("line visible width = %d, want %d (borders sheared): %q", got, want, line)
+		}
 	}
 }
 
