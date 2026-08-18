@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rest-sh/restish/cli"
@@ -147,6 +148,18 @@ func sortInsightsBySavings(rows []interface{}) {
 	})
 }
 
+// formatUSD renders a USD amount with cents and digit grouping ("$1,234.56").
+// Unlike formatMoney, which rounds to whole units for cloud-bill-scale report
+// cells, daily savings are small enough that cents carry signal.
+func formatUSD(amount float64) string {
+	cents := int64(math.Round(math.Abs(amount) * 100))
+	sign := ""
+	if amount < 0 && cents != 0 {
+		sign = "-"
+	}
+	return fmt.Sprintf("%s$%s.%02d", sign, groupDigits(strconv.FormatInt(cents/100, 10)), cents%100)
+}
+
 // insightDailySavings reads summary.potentialDailySavings (documented as USD)
 // from an insight row; 0 when absent.
 func insightDailySavings(item interface{}) float64 {
@@ -224,10 +237,10 @@ func applyInsightPresentation(rows []interface{}) {
 		if provider, ok := row["cloudProvider"]; ok {
 			row["provider"] = provider
 		}
-		// Rounded to cents; rows without savings leave the cell blank rather
-		// than printing a column of zeros.
+		// USD per the API schema; rows without savings leave the cell blank
+		// rather than printing a column of zeros.
 		if savings := insightDailySavings(row); savings > 0 {
-			row["dailySavings"] = math.Round(savings*100) / 100
+			row["dailySavings"] = formatUSD(savings)
 		}
 		if present["easyWinDescription"] {
 			marker := ""

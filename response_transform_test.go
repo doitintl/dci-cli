@@ -290,12 +290,45 @@ func TestTransformInsightsDailySavingsColumn(t *testing.T) {
 	root := transformSuccessBody(body).(map[string]interface{})
 	rows := root["results"].([]interface{})
 	first := rows[0].(map[string]interface{})
-	if first["dailySavings"] != 8.99 {
-		t.Errorf("dailySavings = %v, want 8.99 (rounded to cents)", first["dailySavings"])
+	if first["dailySavings"] != "$8.99" {
+		t.Errorf("dailySavings = %v, want $8.99 (USD, rounded to cents)", first["dailySavings"])
 	}
 	second := rows[1].(map[string]interface{})
 	if _, present := second["dailySavings"]; present {
 		t.Errorf("dailySavings = %v, want absent for zero savings (blank cell)", second["dailySavings"])
+	}
+}
+
+func TestFormatUSD(t *testing.T) {
+	cases := map[float64]string{
+		500:     "$500.00",
+		8.98765: "$8.99",
+		9.999:   "$10.00",
+		1234.5:  "$1,234.50",
+		0.01:    "$0.01",
+	}
+	for amount, want := range cases {
+		if got := formatUSD(amount); got != want {
+			t.Errorf("formatUSD(%v) = %q, want %q", amount, got, want)
+		}
+	}
+}
+
+func TestMoneyTextAlignment(t *testing.T) {
+	for val, want := range map[string]bool{
+		"$8.99":     true,
+		"$1,234.50": true,
+		"-$3.20":    true,
+		"plain":     false,
+		"$":         false,
+		"$notmoney": false,
+	} {
+		if got := moneyText(val); got != want {
+			t.Errorf("moneyText(%q) = %v, want %v", val, got, want)
+		}
+	}
+	if moneyText(8.99) {
+		t.Error("moneyText(number) = true, want false (numbers use the numeric path)")
 	}
 }
 

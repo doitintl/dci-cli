@@ -3005,9 +3005,10 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 			if k == linkColumn {
 				cellText = linkCell(row, linkURLKey, cellText)
 			}
-			// Numbers align right for magnitude comparison; text reads left.
+			// Numbers and money align right for magnitude comparison; text
+			// reads left.
 			align := simpletable.AlignLeft
-			if _, isNumeric := numericCell(val); isNumeric {
+			if _, isNumeric := numericCell(val); isNumeric || moneyText(val) {
 				align = simpletable.AlignRight
 			}
 			body = append(body, &simpletable.Cell{Align: align, Text: cellText})
@@ -3074,6 +3075,25 @@ func linkCell(row map[string]interface{}, urlKey, cellText string) string {
 		return cellText
 	}
 	return "\x1b]8;;" + url + "\x1b\\" + cellText + "\x1b]8;;\x1b\\"
+}
+
+// moneyText reports whether a cell is a pre-formatted monetary string
+// ("$1,234.56", "-$3.20") so money columns right-align like numeric ones.
+func moneyText(val interface{}) bool {
+	s, ok := val.(string)
+	if !ok {
+		return false
+	}
+	s = strings.TrimPrefix(s, "-")
+	if !strings.HasPrefix(s, "$") {
+		return false
+	}
+	s = strings.ReplaceAll(strings.TrimPrefix(s, "$"), ",", "")
+	if s == "" {
+		return false
+	}
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
 }
 
 type tableHeatmap struct {
