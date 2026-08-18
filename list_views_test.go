@@ -1,0 +1,301 @@
+package main
+
+import (
+	"testing"
+
+	"github.com/spf13/viper"
+)
+
+func resetListViewTest(t *testing.T, command string) {
+	t.Helper()
+	resetTransformConfig(t)
+	oldCommand := invokedCommandName
+	oldFetch := resolverListFetch
+	t.Cleanup(func() {
+		invokedCommandName = oldCommand
+		resolverListFetch = oldFetch
+		viper.Set("rsh-output-format", nil)
+		viper.Set("table-columns-auto", nil)
+		viper.Set("table-priority-column", nil)
+		viper.Set("table-link-column", nil)
+		viper.Set("table-link-url-key", nil)
+		viper.Set("table-items-key", nil)
+	})
+	invokedCommandName = command
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		t.Fatalf("unexpected folder lookup on %s", listPath)
+		return resolverListResult{}, nil
+	}
+	viper.Set("rsh-output-format", "table")
+	viper.Set("table-columns-auto", false)
+	viper.Set("table-priority-column", "")
+	viper.Set("table-link-column", "")
+	viper.Set("table-link-url-key", "")
+}
+
+// listViewCase captures one command's curated view against a realistic
+// sample row (field sets mirror live API responses).
+type listViewCase struct {
+	command  string
+	itemsKey string
+	row      map[string]interface{}
+	columns  string
+	linkURL  string                 // expected table-link-url-key ("" = no link)
+	cells    map[string]interface{} // expected derived/mirrored cells
+}
+
+func listViewCases() []listViewCase {
+	return []listViewCase{
+		{
+			command:  "list-budgets",
+			itemsKey: "budgets",
+			row: map[string]interface{}{
+				"id": "zwW1rPpV43nHkE0zTJoj", "budgetName": "GCP dev — App Engine",
+				"owner": "someone@example.com", "amount": int64(4900),
+				"currency": "USD", "currentUtilization": 2737.09, "riskStatus": "onTrack",
+				"createTime": int64(1786400706138), "updateTime": int64(1786400706138),
+				"url": "https://console.example.com/budgets/zwW1rPpV43nHkE0zTJoj",
+			},
+			columns: "budget name,owner,amount,spend to date,risk,updated (UTC)",
+			linkURL: "url",
+			cells: map[string]interface{}{
+				"budget name":   "GCP dev — App Engine",
+				"spend to date": 2737.09,
+				"risk":          "onTrack",
+				"updated (UTC)": int64(1786400706138),
+			},
+		},
+		{
+			command:  "list-allocations",
+			itemsKey: "allocations",
+			row: map[string]interface{}{
+				"id": "aWUB9gRAEkCqcdK2PCOh", "name": "CloudDiagrams",
+				"owner": "someone@example.com", "type": "custom", "allocationType": "single",
+				"folderId": "root", "createTime": int64(1787051321353), "updateTime": int64(1787051321353),
+				"urlUI": "https://console.example.com/allocations/aWUB9gRAEkCqcdK2PCOh",
+			},
+			columns: "name,owner,type,folder,updated (UTC)",
+			linkURL: "urlUI",
+			cells:   map[string]interface{}{"folder": "", "updated (UTC)": int64(1787051321353)},
+		},
+		{
+			command:  "list-anomalies",
+			itemsKey: "anomalies",
+			row: map[string]interface{}{
+				"id": "c72f2bda", "serviceName": "Cursor", "severityLevel": "warning",
+				"costOfAnomaly": 116.39, "platform": "cursor", "status": "active",
+				"startTime": int64(1786924800000), "acknowledged": false,
+			},
+			columns: "service,severity,anomaly cost,platform,status,started (UTC)",
+			cells: map[string]interface{}{
+				"service": "Cursor", "severity": "warning",
+				"anomaly cost": 116.39, "started (UTC)": int64(1786924800000),
+			},
+		},
+		{
+			command:  "list-alerts",
+			itemsKey: "alerts",
+			row: map[string]interface{}{
+				"id": "beNMYP7z8f2C8Qzfx4aJ", "name": "BQ storage alert",
+				"owner": "someone@example.com", "lastAlerted": nil,
+				"createTime": int64(1783503010786), "updateTime": int64(1783503080037),
+			},
+			columns: "name,owner,last alerted (UTC),updated (UTC)",
+			cells:   map[string]interface{}{"last alerted (UTC)": "", "updated (UTC)": int64(1783503080037)},
+		},
+		{
+			command:  "list-invoices",
+			itemsKey: "invoices",
+			row: map[string]interface{}{
+				"id": "INV-US-26001403", "platform": "google-cloud", "status": "PAID",
+				"invoiceDate": int64(1769817600000), "dueDate": int64(1772409600000),
+				"totalAmount": 301022.7, "balanceAmount": int64(0), "currency": "USD",
+				"url": "https://console.example.com/invoices/INV-US-26001403",
+			},
+			columns: "invoice,platform,issued,due,total,balance,status",
+			linkURL: "url",
+			cells: map[string]interface{}{
+				"invoice": "INV-US-26001403", "issued": int64(1769817600000),
+				"due": int64(1772409600000), "total": 301022.7, "balance": int64(0),
+			},
+		},
+		{
+			command:  "list-assets",
+			itemsKey: "assets",
+			row: map[string]interface{}{
+				"id": "amazon-web-services-005097884916", "name": "partnerops-msp-dev",
+				"type": "amazon-web-services", "createTime": int64(1776854665476),
+				"url": "https://console.example.com/assets/amazon-web-services",
+			},
+			columns: "name,type,created (UTC)",
+			linkURL: "url",
+			cells:   map[string]interface{}{"created (UTC)": int64(1776854665476)},
+		},
+		{
+			command:  "list-labels",
+			itemsKey: "labels",
+			row: map[string]interface{}{
+				"id": "cEnk7VN9x7hibWcLIgqh", "name": "House ANA", "type": "custom",
+				"color": "apricot", "createTime": "2026-07-06T11:45:06.445274Z",
+				"updateTime": "2026-07-06T11:45:41.503007Z",
+			},
+			columns: "name,type,color,updated (UTC)",
+			cells:   map[string]interface{}{"updated (UTC)": "2026-07-06T11:45:41.503007Z"},
+		},
+		{
+			command:  "list-tickets",
+			itemsKey: "tickets",
+			row: map[string]interface{}{
+				"id": int64(306123), "subject": "App Engine CreateVersion failures",
+				"status": "closed", "priority": "high",
+				"created_at": "2026-05-08T15:36:23Z", "updated_at": "2026-06-03T17:02:30Z",
+			},
+			columns: "subject,status,priority,updated (UTC)",
+			cells:   map[string]interface{}{"updated (UTC)": "2026-06-03T17:02:30Z"},
+		},
+	}
+}
+
+func TestListViewsCurateTier1Commands(t *testing.T) {
+	for _, tc := range listViewCases() {
+		t.Run(tc.command, func(t *testing.T) {
+			resetListViewTest(t, tc.command)
+			body := map[string]interface{}{tc.itemsKey: []interface{}{tc.row}}
+			root := transformSuccessBody(body).(map[string]interface{})
+			row := root[tc.itemsKey].([]interface{})[0].(map[string]interface{})
+
+			for cell, want := range tc.cells {
+				if got := row[cell]; got != want {
+					t.Errorf("%s = %#v, want %#v", cell, got, want)
+				}
+			}
+			if cols := viper.GetString("table-columns"); cols != tc.columns {
+				t.Errorf("table-columns = %q, want %q", cols, tc.columns)
+			}
+			if !viper.GetBool("table-columns-auto") {
+				t.Error("table-columns-auto = false, want true")
+			}
+			lead := tc.columns[:indexOrLen(tc.columns, ',')]
+			if got := viper.GetString("table-priority-column"); got != lead {
+				t.Errorf("table-priority-column = %q, want %q", got, lead)
+			}
+			wantLinkColumn := ""
+			if tc.linkURL != "" {
+				wantLinkColumn = lead
+			}
+			if got := viper.GetString("table-link-column"); got != wantLinkColumn {
+				t.Errorf("table-link-column = %q, want %q", got, wantLinkColumn)
+			}
+			if got := viper.GetString("table-link-url-key"); got != tc.linkURL {
+				t.Errorf("table-link-url-key = %q, want %q", got, tc.linkURL)
+			}
+		})
+	}
+}
+
+func indexOrLen(s string, sep byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == sep {
+			return i
+		}
+	}
+	return len(s)
+}
+
+func TestListViewsMachineFormatsKeepRawFields(t *testing.T) {
+	for _, tc := range listViewCases() {
+		t.Run(tc.command, func(t *testing.T) {
+			resetListViewTest(t, tc.command)
+			viper.Set("rsh-output-format", "json")
+			body := map[string]interface{}{tc.itemsKey: []interface{}{tc.row}}
+			before := len(tc.row)
+			transformSuccessBody(body)
+			if len(tc.row) != before {
+				t.Errorf("row grew from %d to %d fields, want raw response untouched for machine formats", before, len(tc.row))
+			}
+			if cols := viper.GetString("table-columns"); cols != "" {
+				t.Errorf("table-columns = %q, want unset for machine formats", cols)
+			}
+		})
+	}
+}
+
+func TestListViewAlertsSortsByUpdatedDescending(t *testing.T) {
+	resetListViewTest(t, "list-alerts")
+	body := map[string]interface{}{"alerts": []interface{}{
+		map[string]interface{}{"name": "stale", "updateTime": int64(1780000000000)},
+		map[string]interface{}{"name": "fresh", "updateTime": int64(1787000000000)},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["alerts"].([]interface{})
+	if got := rows[0].(map[string]interface{})["name"]; got != "fresh" {
+		t.Errorf("first alert = %v, want fresh (sorted by updateTime desc)", got)
+	}
+}
+
+func TestListViewAllocationsResolveFolders(t *testing.T) {
+	resetListViewTest(t, "list-allocations")
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		if listPath != foldersListPath {
+			t.Fatalf("listPath = %q, want %q", listPath, foldersListPath)
+		}
+		return resolverListResult{entries: []nameCacheEntry{{ID: "T0bkYjXi5fOfFNiF5Zhf", Name: "House ANA"}}}, nil
+	}
+	body := map[string]interface{}{"allocations": []interface{}{
+		map[string]interface{}{"name": "a", "folderId": "T0bkYjXi5fOfFNiF5Zhf", "updateTime": int64(1)},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["allocations"].([]interface{})[0].(map[string]interface{})
+	if row["folder"] != "House ANA" {
+		t.Errorf("folder = %v, want the resolved folder name", row["folder"])
+	}
+}
+
+// Zendesk tickets responses sideload a `users` array that can be larger than
+// `tickets`; the view must point the table renderer at the right one.
+func TestListViewTicketsPinsItemsKeyOverSideloadedUsers(t *testing.T) {
+	resetListViewTest(t, "list-tickets")
+	ticket := map[string]interface{}{"subject": "s", "status": "open", "priority": "high", "updated_at": "2026-06-03T17:02:30Z"}
+	body := map[string]interface{}{
+		"tickets": []interface{}{ticket},
+		"users":   []interface{}{map[string]interface{}{"id": 1}, map[string]interface{}{"id": 2}},
+	}
+	root := transformSuccessBody(body).(map[string]interface{})
+	if got := viper.GetString("table-items-key"); got != "tickets" {
+		t.Fatalf("table-items-key = %q, want tickets", got)
+	}
+	picked := pickObjectArrayField(root).([]interface{})
+	if len(picked) != 1 {
+		t.Fatalf("picked array len = %d, want 1 (the tickets array, not sideloaded users)", len(picked))
+	}
+	if picked[0].(map[string]interface{})["subject"] != "s" {
+		t.Error("picked array is not the tickets array")
+	}
+}
+
+func TestListViewInvoiceCreditMemoBlanksZeroTimeDueDate(t *testing.T) {
+	resetListViewTest(t, "list-invoices")
+	body := map[string]interface{}{"invoices": []interface{}{
+		map[string]interface{}{
+			"id": "CM-US-26000060", "platform": "google-cloud", "status": "PAID",
+			"invoiceDate": int64(1769817600000), "dueDate": int64(-62135596800000),
+			"totalAmount": -301022.7, "balanceAmount": int64(0), "currency": "USD",
+		},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["invoices"].([]interface{})[0].(map[string]interface{})
+	if row["due"] != "" {
+		t.Errorf("due = %#v, want blank for the Go-zero-time sentinel", row["due"])
+	}
+}
+
+func TestMoneyNamedColumnCoversInvoiceFields(t *testing.T) {
+	for name, want := range map[string]bool{
+		"total": true, "balance": true, "amount": true, "spend to date": true,
+		"anomaly cost": true, "subject": false, "risk": false,
+	} {
+		if got := moneyNamedColumn(name); got != want {
+			t.Errorf("moneyNamedColumn(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

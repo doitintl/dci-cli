@@ -347,7 +347,11 @@ func hasHourColumn(schema []reportColumn) bool {
 
 func moneyNamedColumn(name string) bool {
 	lower := strings.ToLower(name)
-	return strings.Contains(lower, "cost") || lower == "amount" || strings.Contains(lower, "spend") || strings.Contains(lower, "savings")
+	// "total" and "balance" are exact matches for the invoice view's columns;
+	// the pivot's totals column never money-formats through this path because
+	// pivot rows carry no currency field.
+	return strings.Contains(lower, "cost") || lower == "amount" || strings.Contains(lower, "spend") ||
+		strings.Contains(lower, "savings") || lower == "total" || lower == "balance"
 }
 
 // shouldPivotReportRows decides whether report rows render as a pivot.

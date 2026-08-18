@@ -13,8 +13,10 @@ package main
 // toon), explicit -C/--fields selections and machine formats (json, yaml,
 // csv) always see the raw response, and the column order is marked auto-set
 // so terminal-width fitting may still trim overflow columns. Client-side
-// sorting is declared only where the API's order is plain creation order;
-// it is deliberately absent where the server order is semantic.
+// sorting is declared only where the API's order is plain creation order
+// (reports, allocations, alerts); it is deliberately absent where the server
+// order is semantic — anomalies sort server-side (--sort-by/--sort-order)
+// and budgets reorder by projected breach date under riskStatus:atRisk.
 //
 // Keep user-facing behavior changes here in sync with the help-center CLI
 // docs (generated from omni's generate-cli-docs action; command notes live in
@@ -72,6 +74,92 @@ var listViews = map[string]listView{
 		sortField:    "updateTime",
 		needsFolders: true,
 	},
+	"list-budgets": {
+		itemsKey: "budgets",
+		columns: []viewColumn{
+			{title: "budget name", source: "budgetName"},
+			{title: "owner"},
+			{title: "amount"},
+			{title: "spend to date", source: "currentUtilization"},
+			{title: "risk", source: "riskStatus"},
+			{title: "updated (UTC)", source: "updateTime"},
+		},
+		linkURLKey: "url",
+	},
+	"list-allocations": {
+		itemsKey: "allocations",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "owner"},
+			{title: "type"},
+			{title: "folder", source: "folderId", derive: folderNameCell},
+			{title: "updated (UTC)", source: "updateTime"},
+		},
+		linkURLKey:   "urlUI",
+		sortField:    "updateTime",
+		needsFolders: true,
+	},
+	"list-anomalies": {
+		itemsKey: "anomalies",
+		columns: []viewColumn{
+			{title: "service", source: "serviceName"},
+			{title: "severity", source: "severityLevel"},
+			{title: "anomaly cost", source: "costOfAnomaly"},
+			{title: "platform"},
+			{title: "status"},
+			{title: "started (UTC)", source: "startTime"},
+		},
+	},
+	"list-alerts": {
+		itemsKey: "alerts",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "owner"},
+			{title: "last alerted (UTC)", source: "lastAlerted", derive: epochCell("lastAlerted")},
+			{title: "updated (UTC)", source: "updateTime"},
+		},
+		sortField: "updateTime",
+	},
+	"list-invoices": {
+		itemsKey: "invoices",
+		columns: []viewColumn{
+			{title: "invoice", source: "id"},
+			{title: "platform"},
+			{title: "issued", source: "invoiceDate", derive: epochCell("invoiceDate")},
+			{title: "due", source: "dueDate", derive: epochCell("dueDate")},
+			{title: "total", source: "totalAmount"},
+			{title: "balance", source: "balanceAmount"},
+			{title: "status"},
+		},
+		linkURLKey: "url",
+	},
+	"list-assets": {
+		itemsKey: "assets",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "type"},
+			{title: "created (UTC)", source: "createTime"},
+		},
+		linkURLKey: "url",
+	},
+	"list-labels": {
+		itemsKey: "labels",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "type"},
+			{title: "color"},
+			{title: "updated (UTC)", source: "updateTime"},
+		},
+	},
+	"list-tickets": {
+		itemsKey: "tickets",
+		columns: []viewColumn{
+			{title: "subject"},
+			{title: "status"},
+			{title: "priority"},
+			{title: "updated (UTC)", source: "updated_at"},
+		},
+	},
 }
 
 // applyListView applies the invoked command's registered view, if any:
@@ -128,6 +216,9 @@ func applyListView(body interface{}) interface{} {
 		linkColumn = titles[0]
 	}
 	setListViewConfig(titles, titles[0], linkColumn, view.linkURLKey, "", "")
+	// Point the table renderer at the curated items field: discovery by array
+	// size can pick a sideloaded secondary array instead (tickets vs users).
+	viper.Set("table-items-key", view.itemsKey)
 	return body
 }
 
@@ -165,6 +256,19 @@ func epochField(item interface{}, field string) float64 {
 	}
 	value, _ := numericCell(row[field])
 	return value
+}
+
+// epochCell mirrors an epoch-milliseconds field, blanking absent and
+// non-positive values: the API encodes "no date" as zero or Go's zero time
+// (-62135596800000 ms, seen on invoice credit memos), which would otherwise
+// render as a huge negative number.
+func epochCell(source string) func(map[string]interface{}, *viewContext) interface{} {
+	return func(row map[string]interface{}, _ *viewContext) interface{} {
+		if ms, ok := numericCell(row[source]); !ok || ms <= 0 {
+			return ""
+		}
+		return row[source]
+	}
 }
 
 // starredNameCell renders the report name, ★-prefixed when the row is

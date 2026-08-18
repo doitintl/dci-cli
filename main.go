@@ -1673,6 +1673,7 @@ func addOutputFlag() {
 		viper.Set("table-accent-flag-key", "")
 		viper.Set("table-link-column", "")
 		viper.Set("table-link-url-key", "")
+		viper.Set("table-items-key", "")
 		// Whether cell accents (e.g. the insights easy-win title highlight) may
 		// color interactive table output. Same gate as the heatmap, minus the
 		// --heatmap flag, which governs only the pivot shading.
@@ -2420,6 +2421,14 @@ func reportColumnName(schemaCols []string, i int) string {
 }
 
 func pickObjectArrayField(m map[string]interface{}) interface{} {
+	// A curated list view names the response's items field explicitly —
+	// size-based discovery below can lose to a sideloaded secondary array
+	// (Zendesk tickets responses carry a larger `users` array).
+	if key := strings.TrimSpace(viper.GetString("table-items-key")); key != "" {
+		if v, ok := m[key]; ok && isObjectArray(v) {
+			return v
+		}
+	}
 	// Prefer common patterns if present.
 	if v, ok := m["items"]; ok {
 		if isObjectArray(v) {
