@@ -456,7 +456,7 @@ func TestTicketsRowsPreferPrimaryCollectionWithoutCuratedView(t *testing.T) {
 			resetListViewTest(t, "list-tickets")
 			configure()
 			root := transformSuccessBody(ticketsAndUsers()).(map[string]interface{})
-			rows, err := toTableRows(root)
+			rows, err := toTableRows(root, labelDisplay)
 			if err != nil {
 				t.Fatal(err)
 			}
