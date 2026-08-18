@@ -2659,6 +2659,38 @@ func TestApplyDoerContext(t *testing.T) {
 	}
 }
 
+func TestValidateCustomerContextValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		token   string
+		wantErr bool
+	}{
+		{name: "customer domain", token: "acme.com", wantErr: false},
+		{name: "subdomain", token: "cloud.acme.co.uk", wantErr: false},
+		{name: "customer ID", token: "AbCdEf1234567890GhIj", wantErr: false},
+		{name: "dot-less token of 8+ chars", token: "internal", wantErr: false},
+		{name: "URL display name", token: "omni", wantErr: false},
+		{name: "minimum-length slug", token: "ab1", wantErr: false},
+		{name: "slug with dashes and digits", token: "acme-i2", wantErr: false},
+		{name: "empty", token: "", wantErr: true},
+		{name: "whitespace inside", token: "acme .com", wantErr: true},
+		{name: "too short for a slug", token: "ab", wantErr: true},
+		{name: "uppercase short token", token: "OMNI", wantErr: true},
+		{name: "slug starting with a dash", token: "-omni", wantErr: true},
+		{name: "slug ending with a dash", token: "omni-", wantErr: true},
+		{name: "underscore in short token", token: "om_ni", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCustomerContextValue(tt.token)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateCustomerContextValue(%q) error = %v, wantErr %v", tt.token, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestApplyCustomerContext(t *testing.T) {
 	t.Run("adds header and query param preserving existing entries", func(t *testing.T) {
 		t.Cleanup(viper.Reset)

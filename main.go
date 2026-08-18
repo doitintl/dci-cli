@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -1222,7 +1223,10 @@ func registerCustomerContextCommands(configDir string) {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "set TOKEN",
 		Short: "Set the default customerContext",
-		Args:  cobra.ExactArgs(1),
+		Long: "Set the default customerContext applied to every request.\n\n" +
+			"TOKEN can be a customer domain (acme.com), a customer ID, or a customer\n" +
+			"URL display name as shown in the DoiT Console URL (e.g. acme).",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			token := strings.TrimSpace(args[0])
 			if err := validateCustomerContextValue(token); err != nil {
@@ -1267,6 +1271,11 @@ func registerCustomerContextCommands(configDir string) {
 	cli.Root.AddCommand(cmd)
 }
 
+// customerSlugPattern matches customer URL display names: 3-12 chars,
+// lowercase letters/digits/dashes, starting and ending with a letter or
+// digit. Mirrors omni's services/customers/pkg/domain/requests.go.
+var customerSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,10}[a-z0-9]$`)
+
 // validateCustomerContextValue applies syntactic checks before persisting a
 // customer context: a bad value silently breaks every subsequent command with
 // a 403, so obvious mistakes are rejected at set time.
@@ -1277,10 +1286,11 @@ func validateCustomerContextValue(token string) error {
 	if strings.ContainsAny(token, " \t\r\n") {
 		return fmt.Errorf("customerContext cannot contain whitespace")
 	}
-	// Valid contexts are customer domains (acme.com) or customer IDs (20-char
-	// alphanumeric). Anything shorter without a dot is almost certainly a typo.
-	if !strings.Contains(token, ".") && len(token) < 8 {
-		return fmt.Errorf("customerContext %q does not look like a customer domain (e.g. acme.com) or customer ID", token)
+	// Valid contexts are customer domains (acme.com), customer IDs (20-char
+	// alphanumeric), or customer URL display names (short lowercase slugs).
+	// Anything matching none of those shapes is almost certainly a typo.
+	if !strings.Contains(token, ".") && len(token) < 8 && !customerSlugPattern.MatchString(token) {
+		return fmt.Errorf("customerContext %q does not look like a customer domain (e.g. acme.com), customer ID, or URL display name", token)
 	}
 	return nil
 }
@@ -1620,7 +1630,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include in table/toon output (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
 	dciCmd.PersistentFlags().IntP("table-max-col-width", "X", 0, "Maximum width per column when fitting or wrapping (0 = auto)")
-	dciCmd.PersistentFlags().StringP("customer-context", "D", "", "Override the active customer context for this command (e.g. acme.com)")
+	dciCmd.PersistentFlags().StringP("customer-context", "D", "", "Override the active customer context for this command: a customer domain, ID, or URL display name (e.g. acme.com)")
 	dciCmd.PersistentFlags().String("fields", "", "Comma-separated response fields to include")
 	dciCmd.PersistentFlags().String("exclude", "", "Comma-separated top-level fields to exclude from response items or wrappers")
 	dciCmd.PersistentFlags().Bool("full", false, "Return the full response without agent-oriented truncation")
