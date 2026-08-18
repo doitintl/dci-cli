@@ -29,6 +29,7 @@ func transformSuccessBody(body interface{}) interface{} {
 	body = normalizeIntegralNumbers(body)
 	body = nullListsToEmpty(body)
 	body = transformInsightsList(body)
+	body = applyListView(body)
 
 	container, rows, schema, ok := reportResultContainer(body)
 	if !ok {
@@ -137,7 +138,7 @@ func transformInsightsList(body interface{}) interface{} {
 
 	sortInsightsBySavings(results)
 
-	if insightPresentationView() {
+	if presentationView() {
 		applyInsightPresentation(results)
 	}
 	return body
@@ -179,11 +180,12 @@ func insightDailySavings(item interface{}) float64 {
 	return savings
 }
 
-// insightPresentationView reports whether the curated insight columns apply:
-// table-like formats only (table, auto, toon — same set shouldPivotReportRows
-// treats as presentational), and only when the user has not made an explicit
-// column selection via -C or --fields.
-func insightPresentationView() bool {
+// presentationView reports whether a curated default column view applies
+// (the list-insights and list-reports views): table-like formats only
+// (table, auto, toon — same set shouldPivotReportRows treats as
+// presentational), and only when the user has not made an explicit column
+// selection via -C or --fields.
+func presentationView() bool {
 	switch strings.TrimSpace(viper.GetString("rsh-output-format")) {
 	case "table", "auto", "toon":
 	default:
@@ -283,17 +285,15 @@ func applyInsightPresentation(rows []interface{}) {
 	}
 	sort.Strings(rest)
 
-	viper.Set("table-columns", strings.Join(append(headline, rest...), ","))
-	viper.Set("table-columns-auto", true)
-	viper.Set("table-priority-column", "title")
-	if present["easyWinDescription"] {
-		viper.Set("table-accent-column", "title")
-		viper.Set("table-accent-flag-key", "easyWin")
-	}
+	linkColumn, linkURLKey := "", ""
 	if present["reportUrl"] {
-		viper.Set("table-link-column", "title")
-		viper.Set("table-link-url-key", "reportUrl")
+		linkColumn, linkURLKey = "title", "reportUrl"
 	}
+	accentColumn, accentFlagKey := "", ""
+	if present["easyWinDescription"] {
+		accentColumn, accentFlagKey = "title", "easyWin"
+	}
+	setListViewConfig(append(headline, rest...), "title", linkColumn, linkURLKey, accentColumn, accentFlagKey)
 }
 
 func insightColumnContainsObject(rows []interface{}, key string) bool {

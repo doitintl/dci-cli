@@ -261,6 +261,212 @@ func TestTransformInsightsCuratesDefaultTableView(t *testing.T) {
 	}
 }
 
+func resetReportsListConfig(t *testing.T) {
+	t.Helper()
+	resetTransformConfig(t)
+	oldCommand := invokedCommandName
+	oldFetch := resolverListFetch
+	t.Cleanup(func() {
+		invokedCommandName = oldCommand
+		resolverListFetch = oldFetch
+		viper.Set("rsh-output-format", nil)
+		viper.Set("table-columns-auto", nil)
+		viper.Set("table-priority-column", nil)
+		viper.Set("table-link-column", nil)
+		viper.Set("table-link-url-key", nil)
+	})
+	invokedCommandName = "list-reports"
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		t.Fatalf("unexpected folder lookup on %s (all reports at top level)", listPath)
+		return resolverListResult{}, nil
+	}
+	viper.Set("rsh-output-format", "table")
+	viper.Set("table-columns-auto", false)
+	viper.Set("table-priority-column", "")
+	viper.Set("table-link-column", "")
+	viper.Set("table-link-url-key", "")
+}
+
+func reportsListRow(overrides map[string]interface{}) map[string]interface{} {
+	row := map[string]interface{}{
+		"createTime": int64(1787065375365),
+		"folderId":   "root",
+		"id":         "qPA5QvltVGvhlSUiNw3O",
+		"labels":     []interface{}{},
+		"owner":      "someone@example.com",
+		"reportName": "BQ storage data",
+		"type":       "custom",
+		"updateTime": int64(1787065375365),
+		"urlUI":      "https://console.doit.com/customers/x/analyze/reports/q",
+	}
+	for k, v := range overrides {
+		row[k] = v
+	}
+	return row
+}
+
+func reportsListBody(rows ...map[string]interface{}) map[string]interface{} {
+	items := make([]interface{}, len(rows))
+	for i, row := range rows {
+		items[i] = row
+	}
+	return map[string]interface{}{
+		"pageToken": "",
+		"reports":   items,
+	}
+}
+
+func TestTransformReportsCuratesDefaultTableView(t *testing.T) {
+	resetReportsListConfig(t)
+	body := reportsListBody(reportsListRow(map[string]interface{}{
+		"labels": []interface{}{
+			map[string]interface{}{"id": "l1", "name": "House ANA"},
+			map[string]interface{}{"id": "l2", "name": "Analytics"},
+		},
+	}))
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["reports"].([]interface{})[0].(map[string]interface{})
+
+	if row["report name"] != "BQ storage data" {
+		t.Errorf("report name = %v, want the reportName", row["report name"])
+	}
+	if row["updated (UTC)"] != int64(1787065375365) {
+		t.Errorf("updated (UTC) = %v, want updateTime mirrored", row["updated (UTC)"])
+	}
+	if row["folder"] != "" {
+		t.Errorf("folder = %v, want blank for root", row["folder"])
+	}
+	if row["labels"] != "House ANA, Analytics" {
+		t.Errorf("labels = %v, want comma-joined label names", row["labels"])
+	}
+
+	if cols := viper.GetString("table-columns"); cols != "report name,owner,updated (UTC),folder,labels" {
+		t.Errorf("table-columns = %q, want the curated order", cols)
+	}
+	if !viper.GetBool("table-columns-auto") {
+		t.Error("table-columns-auto = false, want true (order stays fit-eligible)")
+	}
+	if got := viper.GetString("table-priority-column"); got != "report name" {
+		t.Errorf("table-priority-column = %q, want report name", got)
+	}
+	if got := viper.GetString("table-link-column"); got != "report name" {
+		t.Errorf("table-link-column = %q, want report name", got)
+	}
+	if got := viper.GetString("table-link-url-key"); got != "urlUI" {
+		t.Errorf("table-link-url-key = %q, want urlUI", got)
+	}
+}
+
+func TestTransformReportsResolvesFolderNames(t *testing.T) {
+	resetReportsListConfig(t)
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		if listPath != foldersListPath {
+			t.Fatalf("listPath = %q, want %q", listPath, foldersListPath)
+		}
+		return resolverListResult{entries: []nameCacheEntry{{ID: "T0bkYjXi5fOfFNiF5Zhf", Name: "House ANA"}}}, nil
+	}
+	body := reportsListBody(
+		reportsListRow(map[string]interface{}{"folderId": "T0bkYjXi5fOfFNiF5Zhf"}),
+		reportsListRow(map[string]interface{}{"folderId": "UnknownFolderId000000"}),
+		reportsListRow(nil),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["reports"].([]interface{})
+	if folder := rows[0].(map[string]interface{})["folder"]; folder != "House ANA" {
+		t.Errorf("folder = %v, want the resolved folder name", folder)
+	}
+	if folder := rows[1].(map[string]interface{})["folder"]; folder != "UnknownFolderId000000" {
+		t.Errorf("folder = %v, want the raw id for unresolved folders", folder)
+	}
+	if folder := rows[2].(map[string]interface{})["folder"]; folder != "" {
+		t.Errorf("folder = %v, want blank for root", folder)
+	}
+}
+
+func TestTransformReportsFolderLookupFailureFallsBack(t *testing.T) {
+	resetReportsListConfig(t)
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		return resolverListResult{}, fmt.Errorf("network down")
+	}
+	body := reportsListBody(reportsListRow(map[string]interface{}{"folderId": "T0bkYjXi5fOfFNiF5Zhf"}))
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["reports"].([]interface{})[0].(map[string]interface{})
+	if row["folder"] != "T0bkYjXi5fOfFNiF5Zhf" {
+		t.Errorf("folder = %v, want the raw id when the lookup fails", row["folder"])
+	}
+}
+
+func TestTransformReportsStarredMarker(t *testing.T) {
+	resetReportsListConfig(t)
+	body := reportsListBody(
+		reportsListRow(map[string]interface{}{"starred": true}),
+		reportsListRow(nil),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["reports"].([]interface{})
+	if name := rows[0].(map[string]interface{})["report name"]; name != "★ BQ storage data" {
+		t.Errorf("report name = %v, want the ★ prefix for starred rows", name)
+	}
+	if name := rows[1].(map[string]interface{})["report name"]; name != "BQ storage data" {
+		t.Errorf("report name = %v, want no prefix for unstarred rows", name)
+	}
+}
+
+func TestTransformReportsSortsByUpdatedDescending(t *testing.T) {
+	resetReportsListConfig(t)
+	body := reportsListBody(
+		reportsListRow(map[string]interface{}{"id": "stale0000000000000000", "updateTime": int64(1780000000000)}),
+		reportsListRow(map[string]interface{}{"id": "fresh0000000000000000", "updateTime": int64(1787000000000)}),
+		reportsListRow(map[string]interface{}{"id": "middle000000000000000", "updateTime": int64(1783000000000)}),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	got := []string{}
+	for _, item := range root["reports"].([]interface{}) {
+		got = append(got, item.(map[string]interface{})["id"].(string))
+	}
+	want := []string{"fresh0000000000000000", "middle000000000000000", "stale0000000000000000"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sorted ids = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestTransformReportsMachineFormatsKeepRawFields(t *testing.T) {
+	resetReportsListConfig(t)
+	viper.Set("rsh-output-format", "json")
+	body := reportsListBody(
+		reportsListRow(map[string]interface{}{"id": "stale0000000000000000", "updateTime": int64(1780000000000)}),
+		reportsListRow(map[string]interface{}{"id": "fresh0000000000000000", "updateTime": int64(1787000000000)}),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["reports"].([]interface{})
+	row := rows[0].(map[string]interface{})
+	if _, present := row["report name"]; present {
+		t.Error("report name derived for machine formats, want raw fields only")
+	}
+	if row["id"] != "stale0000000000000000" {
+		t.Errorf("first id = %v, want the API's order kept for machine formats", row["id"])
+	}
+	if cols := viper.GetString("table-columns"); cols != "" {
+		t.Errorf("table-columns = %q, want unset for machine formats", cols)
+	}
+}
+
+func TestTransformReportsExplicitColumnsKeepRawFields(t *testing.T) {
+	resetReportsListConfig(t)
+	viper.Set("table-columns", "id,owner")
+	body := reportsListBody(reportsListRow(nil))
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["reports"].([]interface{})[0].(map[string]interface{})
+	if _, present := row["report name"]; present {
+		t.Error("report name derived despite explicit -C selection, want raw fields only")
+	}
+	if cols := viper.GetString("table-columns"); cols != "id,owner" {
+		t.Errorf("table-columns = %q, want the user's selection untouched", cols)
+	}
+}
+
 func TestTransformInsightsSortsBySavingsDescending(t *testing.T) {
 	resetInsightConfig(t)
 	viper.Set("rsh-output-format", "json") // sorting applies to machine formats too
