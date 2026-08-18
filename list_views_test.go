@@ -21,7 +21,6 @@ func resetListViewTest(t *testing.T, command string) {
 		viper.Set("table-priority-column", nil)
 		viper.Set("table-link-column", nil)
 		viper.Set("table-link-url-key", nil)
-		viper.Set("table-items-key", nil)
 	})
 	invokedCommandName = command
 	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
@@ -412,7 +411,7 @@ func TestListViewAllocationsResolveFolders(t *testing.T) {
 
 // Zendesk tickets responses sideload a `users` array that can be larger than
 // `tickets`; the view must point the table renderer at the right one.
-func TestListViewTicketsPinsItemsKeyOverSideloadedUsers(t *testing.T) {
+func TestListViewTicketsPicksTicketsOverSideloadedUsers(t *testing.T) {
 	resetListViewTest(t, "list-tickets")
 	ticket := map[string]interface{}{"subject": "s", "status": "open", "priority": "high", "updated_at": "2026-06-03T17:02:30Z"}
 	body := map[string]interface{}{
@@ -420,15 +419,54 @@ func TestListViewTicketsPinsItemsKeyOverSideloadedUsers(t *testing.T) {
 		"users":   []interface{}{map[string]interface{}{"id": 1}, map[string]interface{}{"id": 2}},
 	}
 	root := transformSuccessBody(body).(map[string]interface{})
-	if got := viper.GetString("table-items-key"); got != "tickets" {
-		t.Fatalf("table-items-key = %q, want tickets", got)
-	}
 	picked := pickObjectArrayField(root).([]interface{})
 	if len(picked) != 1 {
 		t.Fatalf("picked array len = %d, want 1 (the tickets array, not sideloaded users)", len(picked))
 	}
 	if picked[0].(map[string]interface{})["subject"] != "s" {
 		t.Error("picked array is not the tickets array")
+	}
+}
+
+// The curated view (and its row shaping) deliberately does not apply under an
+// explicit -C/--fields selection or a machine format like csv — but the row
+// picker must still choose the command's primary collection over a larger
+// sideloaded array.
+func TestTicketsRowsPreferPrimaryCollectionWithoutCuratedView(t *testing.T) {
+	ticketsAndUsers := func() map[string]interface{} {
+		return map[string]interface{}{
+			"tickets": []interface{}{
+				map[string]interface{}{"subject": "s1", "status": "open"},
+				map[string]interface{}{"subject": "s2", "status": "open"},
+				map[string]interface{}{"subject": "s3", "status": "closed"},
+			},
+			"users": []interface{}{
+				map[string]interface{}{"id": int64(372376685811)},
+				map[string]interface{}{"id": int64(372376685812)},
+				map[string]interface{}{"id": int64(372376685813)},
+				map[string]interface{}{"id": int64(372376685814)},
+			},
+		}
+	}
+	for name, configure := range map[string]func(){
+		"explicit column selection": func() { viper.Set("table-columns", "subject,status") },
+		"csv output":                func() { viper.Set("rsh-output-format", "csv") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetListViewTest(t, "list-tickets")
+			configure()
+			root := transformSuccessBody(ticketsAndUsers()).(map[string]interface{})
+			rows, err := toTableRows(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 3 {
+				t.Fatalf("row count = %d, want 3 tickets (got the sideloaded users array?)", len(rows))
+			}
+			if rows[0]["subject"] != "s1" {
+				t.Errorf("rows[0] = %#v, want the first ticket", rows[0])
+			}
+		})
 	}
 }
 

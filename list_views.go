@@ -312,9 +312,6 @@ func applyListView(body interface{}) interface{} {
 		linkColumn = titles[0]
 	}
 	setListViewConfig(titles, titles[0], linkColumn, view.linkURLKey, "", "")
-	// Point the table renderer at the curated items field: discovery by array
-	// size can pick a sideloaded secondary array instead (tickets vs users).
-	viper.Set("table-items-key", view.itemsKey)
 	return body
 }
 
