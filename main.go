@@ -1668,6 +1668,13 @@ func addOutputFlag() {
 		viper.Set("money-columns", "")
 		viper.Set("report-hourly", false)
 		viper.Set("table-columns-auto", false)
+		viper.Set("table-priority-column", "")
+		viper.Set("table-accent-column", "")
+		viper.Set("table-accent-flag-key", "")
+		// Whether cell accents (e.g. the insights easy-win title highlight) may
+		// color interactive table output. Same gate as the heatmap, minus the
+		// --heatmap flag, which governs only the pivot shading.
+		viper.Set("table-color", heatmapEnabled(true, agentMode, stdoutIsTTY(), os.Getenv("NO_COLOR") != ""))
 		viper.Set("pivot-active", false)
 		viper.Set("pivot-total-rows", 0)
 
@@ -2499,6 +2506,7 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 	contentW := measureContentWidths(rows, keys)
 
 	colWidths := computeColumnWidths(contentW, terminalWidth, maxColWidth)
+	widenPriorityColumn(keys, contentW, colWidths)
 	out, err := buildTableString(rows, keys, colWidths, opts.mode)
 	if err != nil {
 		return nil, err
@@ -2766,6 +2774,55 @@ func distributeRemainder(widths []int, settled []bool, remaining int, unsettled 
 	}
 }
 
+// widenPriorityColumn reallocates width toward the view-designated priority
+// column (e.g. the insights title, which carries the row's meaning): when the
+// even split leaves it narrower than its content, the other columns donate
+// their surplus down to a readable floor (their content width, capped at 16),
+// widest donor first. Total width is preserved, so the table still fits the
+// terminal.
+func widenPriorityColumn(keys []string, contentWidths, colWidths []int) {
+	priority := strings.TrimSpace(viper.GetString("table-priority-column"))
+	if priority == "" {
+		return
+	}
+	target := -1
+	for i, k := range keys {
+		if k == priority {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		return
+	}
+	deficit := contentWidths[target] - colWidths[target]
+	for deficit > 0 {
+		donor, donorSurplus := -1, 0
+		for i := range colWidths {
+			if i == target {
+				continue
+			}
+			floor := contentWidths[i]
+			if floor > 16 {
+				floor = 16
+			}
+			if surplus := colWidths[i] - floor; surplus > donorSurplus {
+				donor, donorSurplus = i, surplus
+			}
+		}
+		if donor < 0 {
+			return
+		}
+		take := donorSurplus
+		if take > deficit {
+			take = deficit
+		}
+		colWidths[donor] -= take
+		colWidths[target] += take
+		deficit -= take
+	}
+}
+
 func tableOverhead(cols int) int {
 	if cols <= 0 {
 		return 0
@@ -2929,6 +2986,7 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 	table.Header = &simpletable.Header{Cells: header}
 
 	heat := newHeatmap(rows, keys)
+	accentColumn, accentFlagKey := tableAccentConfig()
 	for rowIndex, row := range rows {
 		body := make([]*simpletable.Cell, 0, len(keys))
 		for i, k := range keys {
@@ -2937,6 +2995,9 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 			cellText = formatCell(cellText, colWidths[i], mode)
 			if heat != nil {
 				cellText = heat.colorize(rowIndex, k, val, cellText)
+			}
+			if k == accentColumn {
+				cellText = accentCell(row, accentFlagKey, cellText)
 			}
 			// Numbers align right for magnitude comparison; text reads left.
 			align := simpletable.AlignLeft
@@ -2953,6 +3014,32 @@ func buildTableString(rows []map[string]interface{}, keys []string, colWidths []
 	// Replace the U+2800 padding placeholder with real spaces.
 	out = strings.ReplaceAll(out, "\u2800", " ")
 	return out, nil
+}
+
+// tableAccentConfig returns the view-designated accent: the column to color
+// and the hidden per-row flag key that selects which rows get it (e.g. the
+// insights easy-win title highlight). Empty when no accent is configured or
+// color is off for this invocation (agent mode, non-TTY, NO_COLOR).
+func tableAccentConfig() (column, flagKey string) {
+	if !viper.GetBool("table-color") {
+		return "", ""
+	}
+	column = strings.TrimSpace(viper.GetString("table-accent-column"))
+	flagKey = strings.TrimSpace(viper.GetString("table-accent-flag-key"))
+	if column == "" || flagKey == "" {
+		return "", ""
+	}
+	return column, flagKey
+}
+
+// accentCell colors a cell green (bold) when the row's accent flag is a
+// non-empty string. Applied after width formatting, like the heatmap, so the
+// escape codes never count against the column width.
+func accentCell(row map[string]interface{}, flagKey, cellText string) string {
+	if flag, _ := row[flagKey].(string); strings.TrimSpace(flag) == "" {
+		return cellText
+	}
+	return "\x1b[1;32m" + cellText + "\x1b[0m"
 }
 
 type tableHeatmap struct {
