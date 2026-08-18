@@ -40,6 +40,10 @@ GoReleaser also filters merge commits (`Merge ...`) and auto-generated manifest 
 - Manifests (`Formula/dci.rb`, `bucket/dci.json`) are committed to main by CI
 - WinGet manifests submitted automatically via PR to `microsoft/winget-pkgs`
 
+### Versioning
+
+Routine releases bump the **patch** digit (v2.3.0 → v2.3.1), even when they carry `feat:` commits — the CLI releases often, and minor-per-release would race the version to 3.0. Reserve **minor** bumps (v2.4.0) for notable milestones (new command groups, major UX overhauls) and **major** bumps for breaking changes. Policy set 2026-08-18, starting after v2.3.0.
+
 ### Key Files
 
 - Single-file CLI: `main.go` (all logic) + `main_test.go`
