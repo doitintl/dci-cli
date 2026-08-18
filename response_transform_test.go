@@ -114,6 +114,8 @@ func resetInsightConfig(t *testing.T) {
 		viper.Set("table-priority-column", nil)
 		viper.Set("table-accent-column", nil)
 		viper.Set("table-accent-flag-key", nil)
+		viper.Set("table-link-column", nil)
+		viper.Set("table-link-url-key", nil)
 	})
 	invokedCommandName = "list-insights"
 	viper.Set("include-dismissed", false)
@@ -122,6 +124,8 @@ func resetInsightConfig(t *testing.T) {
 	viper.Set("table-priority-column", "")
 	viper.Set("table-accent-column", "")
 	viper.Set("table-accent-flag-key", "")
+	viper.Set("table-link-column", "")
+	viper.Set("table-link-url-key", "")
 }
 
 func insightRow(overrides map[string]interface{}) map[string]interface{} {
@@ -140,6 +144,7 @@ func insightRow(overrides map[string]interface{}) map[string]interface{} {
 		"reportUrl":              "",
 		"tags":                   []interface{}{},
 		"lastStatusChange":       map[string]interface{}{"userId": "u"},
+		"summary":                map[string]interface{}{"potentialDailySavings": float64(0)},
 	}
 	for k, v := range overrides {
 		row[k] = v
@@ -219,12 +224,18 @@ func TestTransformInsightsCuratesDefaultTableView(t *testing.T) {
 	if first["easyWin"] != "✓" {
 		t.Errorf("easyWin = %v, want ✓ for non-empty easyWinDescription", first["easyWin"])
 	}
+	if first["title"] != "Purchase reserved instances (easy win)" {
+		t.Errorf("title = %v, want the (easy win) suffix", first["title"])
+	}
 	second := rows[1].(map[string]interface{})
 	if second["easyWin"] != "" {
 		t.Errorf("easyWin = %v, want empty for empty easyWinDescription", second["easyWin"])
 	}
+	if second["title"] != "Purchase reserved instances" {
+		t.Errorf("title = %v, want unsuffixed for non easy wins", second["title"])
+	}
 
-	want := "title,provider,categories,lastUpdated,source"
+	want := "title,dailySavings,provider,categories,lastUpdated,source"
 	if cols := viper.GetString("table-columns"); cols != want {
 		t.Errorf("table-columns = %q, want %q", cols, want)
 	}
@@ -239,6 +250,64 @@ func TestTransformInsightsCuratesDefaultTableView(t *testing.T) {
 	}
 	if got := viper.GetString("table-accent-flag-key"); got != "easyWin" {
 		t.Errorf("table-accent-flag-key = %q, want easyWin", got)
+	}
+	if got := viper.GetString("table-link-column"); got != "title" {
+		t.Errorf("table-link-column = %q, want title", got)
+	}
+	if got := viper.GetString("table-link-url-key"); got != "reportUrl" {
+		t.Errorf("table-link-url-key = %q, want reportUrl", got)
+	}
+}
+
+func TestTransformInsightsSortsBySavingsDescending(t *testing.T) {
+	resetInsightConfig(t)
+	viper.Set("rsh-output-format", "json") // sorting applies to machine formats too
+	body := insightsBody(
+		insightRow(map[string]interface{}{"key": "none"}),
+		insightRow(map[string]interface{}{"key": "big", "summary": map[string]interface{}{"potentialDailySavings": 50.92}}),
+		insightRow(map[string]interface{}{"key": "small", "summary": map[string]interface{}{"potentialDailySavings": 1.24}}),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["results"].([]interface{})
+	got := []string{}
+	for _, item := range rows {
+		got = append(got, item.(map[string]interface{})["key"].(string))
+	}
+	want := []string{"big", "small", "none"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sorted keys = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestTransformInsightsDailySavingsColumn(t *testing.T) {
+	resetInsightConfig(t)
+	body := insightsBody(
+		insightRow(map[string]interface{}{"summary": map[string]interface{}{"potentialDailySavings": 8.98765}}),
+		insightRow(nil),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["results"].([]interface{})
+	first := rows[0].(map[string]interface{})
+	if first["dailySavings"] != 8.99 {
+		t.Errorf("dailySavings = %v, want 8.99 (rounded to cents)", first["dailySavings"])
+	}
+	second := rows[1].(map[string]interface{})
+	if _, present := second["dailySavings"]; present {
+		t.Errorf("dailySavings = %v, want absent for zero savings (blank cell)", second["dailySavings"])
+	}
+}
+
+func TestLinkCellWrapsOnlyRowsWithURL(t *testing.T) {
+	linked := map[string]interface{}{"reportUrl": "https://example.com/r/1"}
+	plain := map[string]interface{}{"reportUrl": ""}
+	want := "\x1b]8;;https://example.com/r/1\x1b\\Title\x1b]8;;\x1b\\"
+	if got := linkCell(linked, "reportUrl", "Title"); got != want {
+		t.Errorf("linkCell(linked) = %q, want OSC 8 wrapped", got)
+	}
+	if got := linkCell(plain, "reportUrl", "Title"); got != "Title" {
+		t.Errorf("linkCell(plain) = %q, want unchanged", got)
 	}
 }
 

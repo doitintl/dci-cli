@@ -130,10 +130,36 @@ func transformInsightsList(body interface{}) interface{} {
 		}
 	}
 
+	sortInsightsBySavings(results)
+
 	if insightPresentationView() {
 		applyInsightPresentation(results)
 	}
 	return body
+}
+
+// sortInsightsBySavings orders insights by potential daily savings, highest
+// first, so the most valuable insights lead in every output format. The sort
+// is stable: rows without savings keep the API's order.
+func sortInsightsBySavings(rows []interface{}) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		return insightDailySavings(rows[i]) > insightDailySavings(rows[j])
+	})
+}
+
+// insightDailySavings reads summary.potentialDailySavings (documented as USD)
+// from an insight row; 0 when absent.
+func insightDailySavings(item interface{}) float64 {
+	row, ok := item.(map[string]interface{})
+	if !ok {
+		return 0
+	}
+	summary, ok := row["summary"].(map[string]interface{})
+	if !ok {
+		return 0
+	}
+	savings, _ := numericCell(summary["potentialDailySavings"])
+	return savings
 }
 
 // insightPresentationView reports whether the curated insight columns apply:
@@ -168,13 +194,16 @@ var insightHiddenColumns = map[string]bool{
 }
 
 // applyInsightPresentation derives the display columns on each row and pins
-// the default column order: the headline fields first, then every remaining
-// scalar field alphabetically. The order is marked auto-set (like the
-// pivot's) so the terminal-width fit still trims overflow columns. The title
-// column is marked width-priority so it renders untruncated whenever the
-// other columns can spare the space, and easy wins (non-empty
-// easyWinDescription, kept per-row under the hidden easyWin key) render as a
-// green title in interactive tables.
+// the default column order: the headline fields (title, dailySavings from
+// summary.potentialDailySavings, provider, categories) first, then every
+// remaining scalar field alphabetically. The order is marked auto-set (like
+// the pivot's) so the terminal-width fit still trims overflow columns. The
+// title column is marked width-priority so it renders untruncated whenever
+// the other columns can spare the space. Easy wins (non-empty
+// easyWinDescription) get an " (easy win)" title suffix in every
+// presentation format plus a green title in interactive tables (via the
+// hidden per-row easyWin flag), and a row's reportUrl becomes an OSC 8
+// terminal hyperlink on its title.
 func applyInsightPresentation(rows []interface{}) {
 	if len(rows) == 0 {
 		return
@@ -195,20 +224,31 @@ func applyInsightPresentation(rows []interface{}) {
 		if provider, ok := row["cloudProvider"]; ok {
 			row["provider"] = provider
 		}
+		// Rounded to cents; rows without savings leave the cell blank rather
+		// than printing a column of zeros.
+		if savings := insightDailySavings(row); savings > 0 {
+			row["dailySavings"] = math.Round(savings*100) / 100
+		}
 		if present["easyWinDescription"] {
 			marker := ""
 			if desc, _ := row["easyWinDescription"].(string); strings.TrimSpace(desc) != "" {
 				marker = "✓"
+				if title, ok := row["title"].(string); ok && title != "" {
+					row["title"] = title + " (easy win)"
+				}
 			}
 			row["easyWin"] = marker
 		}
 	}
 
-	headline := make([]string, 0, 3)
-	for _, column := range []string{"title", "provider", "categories"} {
+	headline := make([]string, 0, 4)
+	for _, column := range []string{"title", "dailySavings", "provider", "categories"} {
 		source := column
-		if column == "provider" {
+		switch column {
+		case "provider":
 			source = "cloudProvider"
+		case "dailySavings":
+			source = "summary"
 		}
 		if present[source] {
 			headline = append(headline, column)
@@ -232,6 +272,10 @@ func applyInsightPresentation(rows []interface{}) {
 	if present["easyWinDescription"] {
 		viper.Set("table-accent-column", "title")
 		viper.Set("table-accent-flag-key", "easyWin")
+	}
+	if present["reportUrl"] {
+		viper.Set("table-link-column", "title")
+		viper.Set("table-link-url-key", "reportUrl")
 	}
 }
 
