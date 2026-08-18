@@ -30,9 +30,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-// viewContext carries per-invocation data resolved once for all rows.
+// viewContext carries per-invocation data resolved once for all rows:
+// names maps a resolved row field to its id → display-name index.
 type viewContext struct {
-	folderNames map[string]string
+	names map[string]map[string]string
 }
 
 type viewColumn struct {
@@ -56,9 +57,10 @@ type listView struct {
 	// sortField names an epoch-milliseconds row field to sort by, newest
 	// first; empty keeps the API's order.
 	sortField string
-	// needsFolders resolves folderId values to folder names with a single
-	// folders-list call (reports, allocations).
-	needsFolders bool
+	// resolve maps row fields holding resource ids (a string or a []string)
+	// to the list endpoint that names them. Each endpoint is fetched at most
+	// once per invocation, and only when some row actually carries an id.
+	resolve map[string]string
 }
 
 var listViews = map[string]listView{
@@ -68,12 +70,12 @@ var listViews = map[string]listView{
 			{title: "report name", source: "reportName", derive: starredNameCell},
 			{title: "owner"},
 			{title: "updated (UTC)", source: "updateTime"},
-			{title: "folder", source: "folderId", derive: folderCellFor("folderId")},
+			{title: "folder", source: "folderId", derive: nameCellFor("folderId")},
 			{title: "labels", derive: labelNamesCell},
 		},
-		linkURLKey:   "urlUI",
-		sortField:    "updateTime",
-		needsFolders: true,
+		linkURLKey: "urlUI",
+		sortField:  "updateTime",
+		resolve:    map[string]string{"folderId": foldersListPath},
 	},
 	"list-budgets": {
 		itemsKey: "budgets",
@@ -93,30 +95,32 @@ var listViews = map[string]listView{
 			{title: "name"},
 			{title: "owner"},
 			{title: "type"},
-			{title: "folder", source: "folderId", derive: folderCellFor("folderId")},
+			{title: "folder", source: "folderId", derive: nameCellFor("folderId")},
 			{title: "updated (UTC)", source: "updateTime"},
 		},
-		linkURLKey:   "urlUI",
-		sortField:    "updateTime",
-		needsFolders: true,
+		linkURLKey: "urlUI",
+		sortField:  "updateTime",
+		resolve:    map[string]string{"folderId": foldersListPath},
 	},
 	"list-folders": {
 		itemsKey: "folders",
 		columns: []viewColumn{
 			{title: "name"},
 			{title: "description"},
-			{title: "parent folder", source: "parentFolderId", derive: folderCellFor("parentFolderId")},
+			{title: "parent folder", source: "parentFolderId", derive: nameCellFor("parentFolderId")},
 		},
-		needsFolders: true,
+		resolve: map[string]string{"parentFolderId": foldersListPath},
 	},
 	"list-users": {
 		itemsKey: "users",
 		columns: []viewColumn{
 			{title: "email"},
+			{title: "role", source: "roleId", derive: nameCellFor("roleId")},
 			{title: "status"},
 			{title: "last login (UTC)", source: "lastLogin"},
 			{title: "mfa enrolled", source: "mfaEnrolled"},
 		},
+		resolve: map[string]string{"roleId": rolesListPath},
 	},
 	"list-roles": {
 		itemsKey: "roles",
@@ -131,8 +135,10 @@ var listViews = map[string]listView{
 		columns: []viewColumn{
 			{title: "content"},
 			{title: "labels", derive: labelNamesCell},
+			{title: "reports", derive: idListNamesCellFor("reports")},
 			{title: "annotated (UTC)", source: "timestamp"},
 		},
+		resolve: map[string]string{"reports": reportsListPath},
 	},
 	"list-cloud-incidents": {
 		itemsKey: "incidents",
@@ -277,10 +283,8 @@ func applyListView(body interface{}) interface{} {
 		sortRowsByEpochDesc(items, view.sortField)
 	}
 
-	ctx := &viewContext{}
-	if view.needsFolders {
-		ctx.folderNames = resolveFolderNames(items)
-	}
+	ctx := &viewContext{names: map[string]map[string]string{}}
+	resolveViewNames(view, items, ctx)
 	for _, row := range rows {
 		for _, column := range view.columns {
 			if column.derive != nil {
@@ -380,58 +384,99 @@ func reportStarred(row map[string]interface{}) bool {
 }
 
 const foldersListPath = "/analytics/v1/folders"
+const rolesListPath = "/iam/v1/roles"
+const reportsListPath = "/analytics/v1/reports"
 const rootFolderID = "root"
 
-// folderIDFields are the row fields that may hold a folder id needing name
-// resolution (reports/allocations vs the folders list's own parent column).
-var folderIDFields = []string{"folderId", "parentFolderId"}
+// resolveViewNames populates ctx.names for the view's resolve declarations.
+// Each list endpoint is fetched at most once (several fields may share one),
+// and only when some row actually carries an id in one of its fields; ids the
+// fetch does not cover stay raw in the cells. Lookup failures are non-fatal:
+// cells fall back to the raw id.
+func resolveViewNames(view listView, rows []interface{}, ctx *viewContext) {
+	fieldsByPath := map[string][]string{}
+	for field, listPath := range view.resolve {
+		fieldsByPath[listPath] = append(fieldsByPath[listPath], field)
+	}
+	for listPath, fields := range fieldsByPath {
+		if !rowsCarryIDs(rows, fields) {
+			continue
+		}
+		result, err := resolverListFetch(listPath, activeCustomerContext(), resolverMaxPages)
+		if err != nil {
+			continue
+		}
+		names := make(map[string]string, len(result.entries))
+		for _, entry := range result.entries {
+			names[entry.ID] = entry.Name
+		}
+		for _, field := range fields {
+			ctx.names[field] = names
+		}
+	}
+}
 
-// resolveFolderNames resolves folder ids to names with a single folders-list
-// call, skipped entirely when every row sits at the top level. Lookup
-// failures are non-fatal: cells fall back to the raw folder id.
-func resolveFolderNames(rows []interface{}) map[string]string {
-	needed := false
+// rowsCarryIDs reports whether any row holds a resolvable id — a non-empty,
+// non-root string or a non-empty array — in one of the fields.
+func rowsCarryIDs(rows []interface{}, fields []string) bool {
 	for _, item := range rows {
 		row, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		for _, field := range folderIDFields {
-			if id, _ := row[field].(string); id != "" && id != rootFolderID {
-				needed = true
+		for _, field := range fields {
+			switch v := row[field].(type) {
+			case string:
+				if v != "" && v != rootFolderID {
+					return true
+				}
+			case []interface{}:
+				if len(v) > 0 {
+					return true
+				}
 			}
 		}
-		if needed {
-			break
-		}
 	}
-	if !needed {
-		return nil
-	}
-	result, err := resolverListFetch(foldersListPath, activeCustomerContext(), resolverMaxPages)
-	if err != nil {
-		return nil
-	}
-	names := make(map[string]string, len(result.entries))
-	for _, entry := range result.entries {
-		names[entry.ID] = entry.Name
-	}
-	return names
+	return false
 }
 
-// folderCellFor renders a folder column from the given id field: top-level
-// rows get a blank cell rather than a column of "root", resolved ids show the
-// folder name, and unresolved ids stay visible as-is.
-func folderCellFor(field string) func(map[string]interface{}, *viewContext) interface{} {
+// nameCellFor renders an id-holding column as its resolved display name:
+// blank for empty or root ids, the resolved name when known, and the raw id
+// as a visible fallback otherwise.
+func nameCellFor(field string) func(map[string]interface{}, *viewContext) interface{} {
 	return func(row map[string]interface{}, ctx *viewContext) interface{} {
 		id, _ := row[field].(string)
 		if id == "" || id == rootFolderID {
 			return ""
 		}
-		if name, ok := ctx.folderNames[id]; ok && name != "" {
+		if name, ok := ctx.names[field][id]; ok && name != "" {
 			return name
 		}
 		return id
+	}
+}
+
+// idListNamesCellFor renders a []string id column (annotation reports) as
+// comma-joined resolved names, falling back to raw ids item by item.
+func idListNamesCellFor(field string) func(map[string]interface{}, *viewContext) interface{} {
+	return func(row map[string]interface{}, ctx *viewContext) interface{} {
+		items, ok := row[field].([]interface{})
+		if !ok {
+			return ""
+		}
+		names := make([]string, 0, len(items))
+		for _, item := range items {
+			id, _ := item.(string)
+			if id == "" {
+				continue
+			}
+			if name, ok := ctx.names[field][id]; ok && name != "" {
+				names = append(names, name)
+				continue
+			}
+			names = append(names, id)
+		}
+		return strings.Join(names, ", ")
 	}
 }
 

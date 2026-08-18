@@ -42,6 +42,7 @@ type listViewCase struct {
 	columns  string
 	linkURL  string                 // expected table-link-url-key ("" = no link)
 	cells    map[string]interface{} // expected derived/mirrored cells
+	names    []nameCacheEntry       // id → name entries the resolver returns (nil = no lookup expected)
 }
 
 func listViewCases() []listViewCase {
@@ -161,8 +162,11 @@ func listViewCases() []listViewCase {
 				"lastLogin": "2026-03-10T16:16:50.888Z", "mfaEnrolled": nil, "roleId": "r1",
 				"hasAccessKey": true, "userNotifications": []interface{}{int64(2), int64(3)},
 			},
-			columns: "email,status,last login (UTC),mfa enrolled",
-			cells:   map[string]interface{}{"last login (UTC)": "2026-03-10T16:16:50.888Z", "mfa enrolled": nil},
+			columns: "email,role,status,last login (UTC),mfa enrolled",
+			cells: map[string]interface{}{
+				"role": "FinOps Admin", "last login (UTC)": "2026-03-10T16:16:50.888Z", "mfa enrolled": nil,
+			},
+			names: []nameCacheEntry{{ID: "r1", Name: "FinOps Admin"}},
 		},
 		{
 			command:  "list-roles",
@@ -183,8 +187,8 @@ func listViewCases() []listViewCase {
 				"reports":   []interface{}{},
 				"timestamp": "2026-08-18T16:49:18Z", "createTime": "2026-08-18T16:49:19.073488Z",
 			},
-			columns: "content,labels,annotated (UTC)",
-			cells:   map[string]interface{}{"labels": "repo:omni", "annotated (UTC)": "2026-08-18T16:49:18Z"},
+			columns: "content,labels,reports,annotated (UTC)",
+			cells:   map[string]interface{}{"labels": "repo:omni", "reports": "", "annotated (UTC)": "2026-08-18T16:49:18Z"},
 		},
 		{
 			command:  "list-cloud-incidents",
@@ -246,6 +250,28 @@ func listViewCases() []listViewCase {
 	}
 }
 
+func TestListViewAnnotationsResolveReportNames(t *testing.T) {
+	resetListViewTest(t, "list-annotations")
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		if listPath != reportsListPath {
+			t.Fatalf("listPath = %q, want %q", listPath, reportsListPath)
+		}
+		return resolverListResult{entries: []nameCacheEntry{{ID: "RepA0000000000000000", Name: "Monthly AWS Spend"}}}, nil
+	}
+	body := map[string]interface{}{"annotations": []interface{}{
+		map[string]interface{}{
+			"content": "deploy", "labels": []interface{}{},
+			"reports":   []interface{}{"RepA0000000000000000", "UnknownRep0000000000"},
+			"timestamp": "2026-08-18T16:49:18Z",
+		},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["annotations"].([]interface{})[0].(map[string]interface{})
+	if row["reports"] != "Monthly AWS Spend, UnknownRep0000000000" {
+		t.Errorf("reports = %v, want resolved names with raw-id fallback", row["reports"])
+	}
+}
+
 func TestListViewFoldersResolveParentNames(t *testing.T) {
 	resetListViewTest(t, "list-folders")
 	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
@@ -269,6 +295,12 @@ func TestListViewsCurateTier1Commands(t *testing.T) {
 	for _, tc := range listViewCases() {
 		t.Run(tc.command, func(t *testing.T) {
 			resetListViewTest(t, tc.command)
+			if tc.names != nil {
+				entries := tc.names
+				resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+					return resolverListResult{entries: entries}, nil
+				}
+			}
 			body := map[string]interface{}{tc.itemsKey: []interface{}{tc.row}}
 			root := transformSuccessBody(body).(map[string]interface{})
 			row := root[tc.itemsKey].([]interface{})[0].(map[string]interface{})
