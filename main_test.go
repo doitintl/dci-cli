@@ -1685,12 +1685,12 @@ func TestRenderCellTextCurrency(t *testing.T) {
 func TestHeatmapColorizesPivotPeriodCells(t *testing.T) {
 	viper.Set("heatmap", true)
 	viper.Set("pivot-active", true)
-	viper.Set("pivot-columns-auto", false)
+	viper.Set("table-columns-auto", false)
 	viper.Set("pivot-total-rows", 1)
 	t.Cleanup(func() {
 		viper.Set("heatmap", nil)
 		viper.Set("pivot-active", nil)
-		viper.Set("pivot-columns-auto", nil)
+		viper.Set("table-columns-auto", nil)
 		viper.Set("pivot-total-rows", nil)
 	})
 
