@@ -21,6 +21,9 @@ func resolutionTestOperations() []cli.Operation {
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
 		{Name: "update-report", Method: "PATCH", URITemplate: "https://api.doit.com/analytics/v1/reports/{id}",
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}, BodyMediaType: "application/json"},
+		{Name: "list-assets", Method: "GET", URITemplate: "https://api.doit.com/billing/v1/assets"},
+		{Name: "get-asset", Method: "GET", URITemplate: "https://api.doit.com/billing/v1/assets/{id}",
+			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
 		{Name: "list-budgets", Method: "GET", URITemplate: "https://api.doit.com/analytics/v1/budgets"},
 		{Name: "get-budget", Method: "GET", URITemplate: "https://api.doit.com/analytics/v1/budgets/{id}",
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
@@ -47,6 +50,7 @@ func TestBuildResolutionIndex(t *testing.T) {
 		"delete-report": {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports"},
 		"update-report": {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports", hasBody: true},
 		"get-budget":    {listPath: "/analytics/v1/budgets", resource: "budgets", listOperation: "list-budgets"},
+		"get-asset":     {listPath: "/billing/v1/assets", resource: "assets", listOperation: "list-assets"},
 	} {
 		if got := index[operationName]; got != expected {
 			t.Errorf("index[%q] = %+v, want %+v", operationName, got, expected)
@@ -513,6 +517,7 @@ func TestResolvePathArgumentsUsesCustomerContextFlagOverride(t *testing.T) {
 func TestResolvePathArgumentsAmbiguousAndNotFoundErrors(t *testing.T) {
 	for _, testCase := range []struct {
 		name      string
+		input     string
 		entries   []nameCacheEntry
 		truncated bool
 		wantCode  string
@@ -521,20 +526,25 @@ func TestResolvePathArgumentsAmbiguousAndNotFoundErrors(t *testing.T) {
 	}{
 		{
 			name:     "ambiguous",
+			input:    "monthly",
 			entries:  namedEntries("Monthly Spend", "monthly spend by sku"),
 			wantCode: "NAME_AMBIGUOUS",
 			wantExit: exitUsage,
 			wantHint: "id-0",
 		},
 		{
-			name:     "not found",
+			// A multi-word input can only be a name, so a miss stays fatal;
+			// whitespace-free misses fall back to the verbatim argument.
+			name:     "multi-word not found",
+			input:    "monthly spend",
 			entries:  namedEntries("Unrelated"),
 			wantCode: "NAME_NOT_FOUND",
 			wantExit: exitNotFound,
 			wantHint: "list-reports",
 		},
 		{
-			name:      "not found notes the page cap",
+			name:      "multi-word not found notes the page cap",
+			input:     "monthly spend",
 			entries:   namedEntries("Unrelated"),
 			truncated: true,
 			wantCode:  "NAME_NOT_FOUND",
@@ -549,7 +559,7 @@ func TestResolvePathArgumentsAmbiguousAndNotFoundErrors(t *testing.T) {
 			t.Cleanup(resetPathValidationState)
 			setOperationPathParameters(resolutionTestOperations())
 
-			err := resolvePathArguments(resolutionTestCommand("get-report"), []string{"monthly"})
+			err := resolvePathArguments(resolutionTestCommand("get-report"), []string{testCase.input})
 			if err == nil {
 				t.Fatal("resolution unexpectedly succeeded")
 			}
@@ -600,20 +610,120 @@ func TestResolvePathArgumentsPropagatesLookupFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("network failure classifies as NETWORK_ERROR", func(t *testing.T) {
+	t.Run("network failure on a multi-word name classifies as NETWORK_ERROR", func(t *testing.T) {
 		t.Setenv("DCI_NO_RESOLVE", "")
 		stubNameResolution(t, resolverListResult{}, nameResolutionNetworkError{err: errors.New("dial tcp: timeout")})
 		setResolutionIndex(resolutionTestOperations())
 		t.Cleanup(resetPathValidationState)
 		setOperationPathParameters(resolutionTestOperations())
 
-		err := resolvePathArguments(resolutionTestCommand("get-report"), []string{"monthly"})
+		err := resolvePathArguments(resolutionTestCommand("get-report"), []string{"monthly spend"})
 		if got := exitCodeForExecutionError(err, 0); got != exitNetwork {
 			t.Fatalf("exit code = %d, want %d", got, exitNetwork)
 		}
 		detail := structuredErrorForExecution(err, 0)
 		if detail.Code != "NETWORK_ERROR" || !detail.Retryable || !strings.Contains(detail.Hint, "resource id directly") {
 			t.Fatalf("structured error = %+v", detail)
+		}
+	})
+}
+
+// Regression for get-asset g-suite-2319621428: the argument is an exact asset
+// id but does not match the Firestore ID shape, so the resolver used to issue
+// a lookup that /billing/v1/assets rejects with 400 and hard-fail the command.
+// A whitespace-free argument must instead degrade to being sent verbatim when
+// the lookup request fails or matches nothing.
+func TestResolvePathArgumentsFallsBackToVerbatimArgument(t *testing.T) {
+	const assetID = "g-suite-2319621428"
+	for _, testCase := range []struct {
+		name     string
+		result   resolverListResult
+		fetchErr error
+	}{
+		{
+			name: "lookup rejected with 400 falls back",
+			fetchErr: consoleAPIError{
+				status:  http.StatusBadRequest,
+				message: "name lookup on /billing/v1/assets failed: API returned 400 Bad Request",
+			},
+		},
+		{
+			name:     "lookup network failure falls back",
+			fetchErr: nameResolutionNetworkError{err: errors.New("dial tcp: timeout")},
+		},
+		{
+			name:   "lookup miss falls back",
+			result: resolverListResult{entries: namedEntries("Google Workspace Business Plus")},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("DCI_NO_RESOLVE", "")
+			calls := stubNameResolution(t, testCase.result, testCase.fetchErr)
+			setResolutionIndex(resolutionTestOperations())
+			t.Cleanup(resetPathValidationState)
+			setOperationPathParameters(resolutionTestOperations())
+
+			command := resolutionTestCommand("get-asset")
+			args := []string{assetID}
+			if err := resolvePathArguments(command, args); err != nil {
+				t.Fatalf("fallback unexpectedly failed: %v", err)
+			}
+			if args[0] != assetID {
+				t.Fatalf("args[0] = %q, want the verbatim argument", args[0])
+			}
+			if len(*calls) != 1 || (*calls)[0].listPath != "/billing/v1/assets" {
+				t.Fatalf("fetch calls = %+v", *calls)
+			}
+			if idShapedPathArgument != assetID {
+				t.Fatalf("idShapedPathArgument = %q, want the 404 hint armed", idShapedPathArgument)
+			}
+			if _, ok := resolvedTargets["get-asset"]; ok {
+				t.Fatal("fallback must not record a resolved target")
+			}
+		})
+	}
+
+	t.Run("--name keeps the lookup miss fatal", func(t *testing.T) {
+		t.Setenv("DCI_NO_RESOLVE", "")
+		stubNameResolution(t, resolverListResult{entries: namedEntries("Unrelated")}, nil)
+		setResolutionIndex(resolutionTestOperations())
+		t.Cleanup(resetPathValidationState)
+		setOperationPathParameters(resolutionTestOperations())
+
+		command := resolutionTestCommand("get-asset")
+		_ = command.Flags().Set("name", "true")
+		err := resolvePathArguments(command, []string{assetID})
+		if err == nil || !strings.Contains(err.Error(), "no asset found matching") {
+			t.Fatalf("err = %v, want NAME_NOT_FOUND", err)
+		}
+	})
+
+	t.Run("lookup failure on a multi-word name stays fatal", func(t *testing.T) {
+		t.Setenv("DCI_NO_RESOLVE", "")
+		lookupErr := consoleAPIError{status: http.StatusBadRequest, message: "name lookup on /analytics/v1/reports failed: API returned 400 Bad Request"}
+		stubNameResolution(t, resolverListResult{}, lookupErr)
+		setResolutionIndex(resolutionTestOperations())
+		t.Cleanup(resetPathValidationState)
+		setOperationPathParameters(resolutionTestOperations())
+
+		err := resolvePathArguments(resolutionTestCommand("get-report"), []string{"monthly spend"})
+		var statusError consoleAPIError
+		if !errors.As(err, &statusError) || statusError.status != lookupErr.status {
+			t.Fatalf("err = %v, want the lookup error propagated", err)
+		}
+	})
+
+	t.Run("ambiguous match never falls back", func(t *testing.T) {
+		t.Setenv("DCI_NO_RESOLVE", "")
+		stubNameResolution(t, resolverListResult{entries: namedEntries("Monthly Spend", "monthly spend by sku")}, nil)
+		setResolutionIndex(resolutionTestOperations())
+		t.Cleanup(resetPathValidationState)
+		setOperationPathParameters(resolutionTestOperations())
+
+		err := resolvePathArguments(resolutionTestCommand("get-report"), []string{"monthly"})
+		var resolutionError nameResolutionError
+		if !errors.As(err, &resolutionError) || resolutionError.StructuredError().Code != "NAME_AMBIGUOUS" {
+			t.Fatalf("err = %v, want NAME_AMBIGUOUS", err)
 		}
 	})
 }
@@ -732,12 +842,14 @@ func TestFetchResourceNamesPagingHeadersAndBudgetCap(t *testing.T) {
 		t.Fatalf("requests = %v", requests)
 	}
 
-	requests = nil
-	if _, err := fetchResourceNames("/analytics/v1/budgets", "acme.com", 1); err != nil {
-		t.Fatal(err)
-	}
-	if len(requests) != 1 || !strings.Contains(requests[0], "maxResults=250") {
-		t.Fatalf("budget requests = %v", requests)
+	for _, cappedPath := range []string{"/analytics/v1/budgets", "/billing/v1/assets"} {
+		requests = nil
+		if _, err := fetchResourceNames(cappedPath, "acme.com", 1); err != nil {
+			t.Fatal(err)
+		}
+		if len(requests) != 1 || !strings.Contains(requests[0], "maxResults=250") {
+			t.Fatalf("%s requests = %v", cappedPath, requests)
+		}
 	}
 }
 

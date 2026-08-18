@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,8 +66,9 @@ type resolvedTargetPayload struct {
 // destructive confirmation can display the true target.
 var resolvedTargets = map[string]resolvedTarget{}
 
-// idShapedPathArgument remembers a positional argument that skipped resolution
-// because it matched the ID shape, so a later 404 can hint at --name.
+// idShapedPathArgument remembers a positional argument that reached the API
+// verbatim — it matched the ID shape, or resolution degraded to passing it
+// through — so a later 404 can hint at --name.
 var idShapedPathArgument string
 
 func resetNameResolutionState() {
@@ -173,12 +175,49 @@ func resolvePathArguments(cmd *cobra.Command, args []string) error {
 	}
 	resolved, err := resolveResourceName(input, target, resolutionCustomerContext(cmd))
 	if err != nil {
+		if !boolFlagSet(cmd, "name") && resolutionFallsBackToVerbatim(err, input) {
+			idShapedPathArgument = input
+			announceResolutionFallback(input, singularResourceName(target.resource), err)
+			return nil
+		}
 		return err
 	}
 	args[0] = resolved.id
 	resolvedTargets[cmd.Name()] = resolved
 	announceResolution(resolved)
 	return nil
+}
+
+// resolutionFallsBackToVerbatim reports whether a failed resolution should
+// degrade to sending the positional argument verbatim instead of failing the
+// command. Only a whitespace-free argument can fall back: it may simply be a
+// resource id whose shape the strict Firestore ID gate does not recognize
+// (asset ids like "g-suite-2319621428"), while an argument with spaces can
+// only be a name, so its resolution errors stay fatal and descriptive. The
+// fallback covers a lookup request that itself failed — some list endpoints
+// reject the lookup's paging parameters, and the real request will surface
+// the underlying problem if it persists — and a lookup that answered but
+// matched nothing. An ambiguous match or a cancelled selection means the
+// argument matched real names and must not be sent verbatim, and an
+// authentication failure keeps its actionable error.
+func resolutionFallsBackToVerbatim(err error, input string) bool {
+	if len(strings.Fields(input)) > 1 {
+		return false
+	}
+	var resolutionError nameResolutionError
+	if errors.As(err, &resolutionError) {
+		return resolutionError.detail.Code == "NAME_NOT_FOUND"
+	}
+	var networkError nameResolutionNetworkError
+	var statusError consoleAPIError
+	return errors.As(err, &networkError) || errors.As(err, &statusError)
+}
+
+func announceResolutionFallback(input, resource string, lookupErr error) {
+	if agentMode {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "note: %s; using %q as the %s id\n", lookupErr.Error(), input, resource)
 }
 
 // boolFlagSet reports whether a boolean flag is set to true. An operation-local
@@ -297,7 +336,7 @@ func idShapedNotFoundHint() string {
 	if idShapedPathArgument == "" {
 		return ""
 	}
-	return fmt.Sprintf("If %q was a resource name, it matched the ID format; re-run with --name to force name lookup.", idShapedPathArgument)
+	return fmt.Sprintf("If %q was a resource name rather than an id, re-run with --name to force name lookup.", idShapedPathArgument)
 }
 
 const resolverMaxPages = 3
@@ -532,8 +571,9 @@ func fetchResourceNames(listPath, context string, maxPages int) (resolverListRes
 	if err != nil {
 		return resolverListResult{}, err
 	}
+	// The budgets and assets endpoints reject maxResults above 250.
 	maxResults := "500"
-	if strings.HasSuffix(listPath, "/budgets") {
+	if strings.HasSuffix(listPath, "/budgets") || strings.HasSuffix(listPath, "/assets") {
 		maxResults = "250"
 	}
 	entries := []nameCacheEntry{}
