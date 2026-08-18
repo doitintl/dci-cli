@@ -142,6 +142,29 @@ dci list-budgets --table-mode wrap
 dci list-budgets --table-columns id,name,amount
 ```
 
+### Timestamps and Timezones
+
+Table output shows event timestamps — created, updated, acknowledged, and
+similar moments — in your local timezone, with a one-line note on stderr
+naming the zone. Everything else stays in UTC by design:
+
+- **Report period columns** (daily/hourly cost buckets) and **anomaly usage
+  windows** label UTC billing buckets; shifting them would move costs onto
+  the wrong day.
+- **Calendar dates** — contract terms, invoice dates, budget periods —
+  render as plain dates.
+- **Machine formats** (`json`, `yaml`, `csv`, `toon`) and agent mode always
+  emit UTC or raw epoch values, so scripted output is identical on every
+  machine.
+
+```bash
+# Keep table timestamps in UTC
+dci list-budgets --utc
+
+# Display in a specific timezone instead of the system one
+DCI_TZ=Europe/Berlin dci list-budgets
+```
+
 ## Agent Mode
 
 `dci` adapts its output depending on whether a human or an AI agent is driving it.

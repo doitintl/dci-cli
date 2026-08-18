@@ -29,6 +29,9 @@ func transformSuccessBody(body interface{}) interface{} {
 	body = normalizeIntegralNumbers(body)
 	body = nullListsToEmpty(body)
 	body = transformInsightsList(body)
+	// Before applyListView: the view's title rewrite consults the UTC-label
+	// registry to keep anomaly window columns labeled and rendered in UTC.
+	markAnomalyWindowColumns()
 	body = applyListView(body)
 
 	container, rows, schema, ok := reportResultContainer(body)
@@ -142,6 +145,23 @@ func transformInsightsList(body interface{}) interface{} {
 		applyInsightPresentation(results)
 	}
 	return body
+}
+
+// markAnomalyWindowColumns flags the anomaly usage-window boundaries as UTC
+// label columns for the table renderer. Per the API contract, startTime is
+// the anomaly's *usage start time* at Daily/Hourly bucket grain — a
+// data-bucket label, not a detection moment — so unlike other epoch-ms
+// metadata it must never render in the viewer's zone: an hourly anomaly
+// starting 01:00 UTC would relabel onto the previous local day. The other
+// anomaly time fields (acknowledgedAt, notification timestamps) are genuine
+// instants and stay on the localizing path.
+func markAnomalyWindowColumns() {
+	switch invokedCommandName {
+	case "list-anomalies", "get-anomaly":
+		// Raw field names cover detail views and explicit -C selections;
+		// "started (UTC)" covers the curated list view's renamed column.
+		viper.Set("utc-label-columns", "startTime,endTime,started (UTC)")
+	}
 }
 
 // sortInsightsBySavings orders insights by potential daily savings, highest

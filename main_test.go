@@ -1541,12 +1541,18 @@ func TestDisplayTimestampCellRawNumbersPreservesEpoch(t *testing.T) {
 	t.Cleanup(func() { viper.Set("raw-numbers", nil) })
 
 	const epoch = float64(1786356000)
-	if got := displayTimestampCell(epoch, "timestamp"); got != "2026-08-10T10:00:00Z" {
+	if got := displayTimestampCell(epoch, "timestamp", labelRFC3339); got != "2026-08-10T10:00:00Z" {
 		t.Errorf("displayTimestampCell = %v, want RFC3339 timestamp", got)
 	}
+	if got := displayTimestampCell(epoch, "timestamp", labelDisplay); got != "2026-08-10 10:00" {
+		t.Errorf("display-style displayTimestampCell = %v, want terminal label", got)
+	}
 	viper.Set("raw-numbers", true)
-	if got := displayTimestampCell(epoch, "timestamp"); got != epoch {
+	if got := displayTimestampCell(epoch, "timestamp", labelRFC3339); got != epoch {
 		t.Errorf("raw displayTimestampCell = %v, want %v", got, epoch)
+	}
+	if got := displayTimestampCell(epoch, "timestamp", labelDisplay); got != epoch {
+		t.Errorf("raw display-style displayTimestampCell = %v, want %v", got, epoch)
 	}
 }
 
@@ -3080,5 +3086,276 @@ func TestJSONApplicationError(t *testing.T) {
 				t.Errorf("jsonApplicationError() msg = %q, want %q", msg, tt.wantMsg)
 			}
 		})
+	}
+}
+
+// --- local-timezone display tests ---
+
+// withDisplayZone points the instant-display resolver at a fixed IANA zone
+// with table output active, restoring the prior state on cleanup. Tests use
+// this instead of mutating TZ: time.Local is fixed at process init, so env
+// changes cannot leak in, and the resolver var is the injection point the
+// production PreRun uses anyway.
+func withDisplayZone(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatalf("LoadLocation(%q): %v", name, err)
+	}
+	prevLoc := displayTimeLocation
+	prevFormat := viper.Get("rsh-output-format")
+	prevShown := localizedInstantShown
+	displayTimeLocation = loc
+	viper.Set("rsh-output-format", "table")
+	t.Cleanup(func() {
+		displayTimeLocation = prevLoc
+		viper.Set("rsh-output-format", prevFormat)
+		localizedInstantShown = prevShown
+	})
+	return loc
+}
+
+func TestDisplayLocationDefaultsToUTCWhenUnresolved(t *testing.T) {
+	prev := displayTimeLocation
+	displayTimeLocation = nil
+	t.Cleanup(func() { displayTimeLocation = prev })
+	viper.Set("rsh-output-format", "table")
+	t.Cleanup(func() { viper.Set("rsh-output-format", nil) })
+
+	if got := displayLocation(); got != time.UTC {
+		t.Errorf("unresolved displayLocation() = %v, want UTC", got)
+	}
+}
+
+func TestDisplayLocationMachineContextsStayUTC(t *testing.T) {
+	withDisplayZone(t, "Asia/Jerusalem")
+
+	for _, format := range []string{"json", "yaml", "csv", "toon", ""} {
+		viper.Set("rsh-output-format", format)
+		if got := displayLocation(); got != time.UTC {
+			t.Errorf("displayLocation() with format %q = %v, want UTC", format, got)
+		}
+	}
+
+	viper.Set("rsh-output-format", "table")
+	if got := displayLocation(); got == time.UTC {
+		t.Error("displayLocation() with table format = UTC, want Asia/Jerusalem")
+	}
+
+	viper.Set("display-utc", true)
+	t.Cleanup(func() { viper.Set("display-utc", nil) })
+	if got := displayLocation(); got != time.UTC {
+		t.Errorf("displayLocation() with --utc = %v, want UTC", got)
+	}
+	viper.Set("display-utc", false)
+
+	prevAgent := agentMode
+	agentMode = true
+	t.Cleanup(func() { agentMode = prevAgent })
+	if got := displayLocation(); got != time.UTC {
+		t.Errorf("displayLocation() in agent mode = %v, want UTC", got)
+	}
+}
+
+func TestPrettifyTimestampLocalizesInstants(t *testing.T) {
+	tests := []struct {
+		zone string
+		in   string
+		want string
+	}{
+		{"Asia/Jerusalem", "2026-08-18T02:30:59Z", "2026-08-18 05:30"},
+		{"Asia/Kolkata", "2026-08-18T02:30:59Z", "2026-08-18 08:00"},
+		{"Pacific/Chatham", "2026-08-18T02:30:59Z", "2026-08-18 15:15"},
+		// Late-evening UTC instants cross into the next local day — correct
+		// for instants, which is exactly why labels never take this path.
+		{"Pacific/Chatham", "2026-08-18T23:30:00Z", "2026-08-19 12:15"},
+		// US spring-forward (2026-03-08 07:00Z): EST before, EDT after.
+		{"America/New_York", "2026-03-08T06:59:00Z", "2026-03-08 01:59"},
+		{"America/New_York", "2026-03-08T07:30:00Z", "2026-03-08 03:30"},
+		// US fall-back (2026-11-01): two UTC instants share a wall time.
+		{"America/New_York", "2026-11-01T05:30:00Z", "2026-11-01 01:30"},
+		{"America/New_York", "2026-11-01T06:30:00Z", "2026-11-01 01:30"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.zone+"/"+tt.in, func(t *testing.T) {
+			withDisplayZone(t, tt.zone)
+			if got := prettifyTimestamp(tt.in); got != tt.want {
+				t.Errorf("prettifyTimestamp(%q) in %s = %q, want %q", tt.in, tt.zone, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPrettifyTimestampMidnightStaysBareUTCDate(t *testing.T) {
+	// Midnight UTC is date-valued (contract terms, invoice dates, budget
+	// periods): bare UTC date in every zone, never shifted.
+	for _, zone := range []string{"Asia/Jerusalem", "Pacific/Chatham", "America/New_York"} {
+		withDisplayZone(t, zone)
+		if got := prettifyTimestamp("2026-06-01T00:00:00Z"); got != "2026-06-01" {
+			t.Errorf("midnight in %s = %q, want bare UTC date", zone, got)
+		}
+	}
+}
+
+func TestPrettifyTimestampSetsZoneNoteFlagOnlyWhenShifted(t *testing.T) {
+	withDisplayZone(t, "Asia/Jerusalem")
+	localizedInstantShown = false
+	prettifyTimestamp("2026-06-01T00:00:00Z") // midnight: date-valued, no shift
+	if localizedInstantShown {
+		t.Error("midnight collapse should not flag a localized instant")
+	}
+	prettifyTimestamp("2026-08-18T02:30:59Z")
+	if !localizedInstantShown {
+		t.Error("localized instant did not set the zone-note flag")
+	}
+}
+
+func TestReportLabelsImmuneToDisplayZone(t *testing.T) {
+	withDisplayZone(t, "Pacific/Chatham")
+	viper.Set("raw-numbers", false)
+	t.Cleanup(func() { viper.Set("raw-numbers", nil) })
+
+	daily := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC).Unix()
+	hourly := time.Date(2026, 8, 9, 1, 0, 0, 0, time.UTC).Unix()
+
+	if got := displayTimestampCell(float64(daily), "timestamp", labelDisplay); got != "2026-05-01" {
+		t.Errorf("daily label under Chatham = %v, want bare UTC date", got)
+	}
+	viper.Set("report-hourly", true)
+	t.Cleanup(func() { viper.Set("report-hourly", nil) })
+	if got := displayTimestampCell(float64(hourly), "timestamp", labelDisplay); got != "2026-08-09 01:00" {
+		t.Errorf("hourly label under Chatham = %v, want UTC hour label", got)
+	}
+	viper.Set("report-hourly", false)
+
+	// Machine style keeps full RFC3339 UTC regardless of zone.
+	if got := displayTimestampCell(float64(daily), "timestamp", labelRFC3339); got != "2026-05-01T00:00:00Z" {
+		t.Errorf("machine label under Chatham = %v, want RFC3339 Z", got)
+	}
+	// Terminal label text is immune to the instant path by construction.
+	if got := prettifyTimestamp("2026-08-09 01:00"); got != "2026-08-09 01:00" {
+		t.Errorf("terminal label re-entered the instant path: %q", got)
+	}
+}
+
+func TestCSVReportTimestampsStayRFC3339UnderZone(t *testing.T) {
+	withDisplayZone(t, "Pacific/Chatham")
+	viper.Set("table-columns", "")
+	t.Cleanup(func() { viper.Set("table-columns", nil) })
+
+	body := map[string]interface{}{
+		"result": map[string]interface{}{
+			"rows": []interface{}{
+				[]interface{}{"svc", 12.5, float64(1782864000)},
+			},
+			"schema": []interface{}{
+				map[string]interface{}{"name": "service_description", "type": "string"},
+				map[string]interface{}{"name": "cost", "type": "float"},
+				map[string]interface{}{"name": "timestamp", "type": "timestamp"},
+			},
+		},
+	}
+	out, err := dciCSVContentType{}.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Unix(1782864000, 0).UTC().Format(time.RFC3339)
+	if !strings.Contains(string(out), want) {
+		t.Errorf("CSV under Chatham = %q, want RFC3339 UTC %q", out, want)
+	}
+}
+
+func TestAnomalyWindowColumnsStayUTCWhileInstantsLocalize(t *testing.T) {
+	withDisplayZone(t, "Asia/Jerusalem")
+	viper.Set("raw-numbers", false)
+	viper.Set("utc-label-columns", "startTime,endTime")
+	t.Cleanup(func() {
+		viper.Set("raw-numbers", nil)
+		viper.Set("utc-label-columns", "")
+	})
+
+	hourlyStart := float64(time.Date(2026, 8, 12, 1, 0, 0, 0, time.UTC).UnixMilli())
+	if got := tableCellText("startTime", hourlyStart); got != "2026-08-12 01:00" {
+		t.Errorf("hourly anomaly startTime = %q, want UTC label (no +03:00 shift)", got)
+	}
+	dailyStart := float64(time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC).UnixMilli())
+	if got := tableCellText("startTime", dailyStart); got != "2026-08-12" {
+		t.Errorf("daily anomaly startTime = %q, want bare UTC date", got)
+	}
+	// Sibling instants on the same row keep localizing.
+	if got := tableCellText("acknowledgedAt", "2026-08-12T09:15:30Z"); got != "2026-08-12 12:15" {
+		t.Errorf("acknowledgedAt = %q, want localized instant", got)
+	}
+}
+
+func TestMarkAnomalyWindowColumns(t *testing.T) {
+	prev := invokedCommandName
+	t.Cleanup(func() {
+		invokedCommandName = prev
+		viper.Set("utc-label-columns", "")
+	})
+
+	viper.Set("utc-label-columns", "")
+	invokedCommandName = "list-anomalies"
+	markAnomalyWindowColumns()
+	if got := viper.GetString("utc-label-columns"); got != "startTime,endTime,started (UTC)" {
+		t.Errorf("list-anomalies utc-label-columns = %q", got)
+	}
+
+	viper.Set("utc-label-columns", "")
+	invokedCommandName = "list-budgets"
+	markAnomalyWindowColumns()
+	if got := viper.GetString("utc-label-columns"); got != "" {
+		t.Errorf("list-budgets utc-label-columns = %q, want empty", got)
+	}
+}
+
+func TestMidnightEpochMsCalendarDatesStayBareUnderZone(t *testing.T) {
+	// Budget startPeriod / invoice dueDate style: epoch ms at midnight UTC.
+	withDisplayZone(t, "Pacific/Chatham")
+	viper.Set("raw-numbers", false)
+	t.Cleanup(func() { viper.Set("raw-numbers", nil) })
+
+	if got := formatTableValue(1785542400000.0); got != "2026-08-01" {
+		t.Errorf("midnight epoch-ms under Chatham = %q, want bare UTC date", got)
+	}
+}
+
+func TestResolveDisplayLocation(t *testing.T) {
+	if got := resolveDisplayLocation(""); got != time.Local {
+		t.Errorf("empty DCI_TZ = %v, want time.Local", got)
+	}
+	if got := resolveDisplayLocation("Europe/Berlin"); got.String() != "Europe/Berlin" {
+		t.Errorf("DCI_TZ=Europe/Berlin = %v", got)
+	}
+	if got := resolveDisplayLocation("Not/AZone"); got != time.Local {
+		t.Errorf("invalid DCI_TZ = %v, want time.Local fallback", got)
+	}
+}
+
+func TestMaybeNoteDisplayZone(t *testing.T) {
+	withDisplayZone(t, "Asia/Kolkata")
+	oldStderr := cli.Stderr
+	var stderr strings.Builder
+	cli.Stderr = &stderr
+	t.Cleanup(func() { cli.Stderr = oldStderr })
+
+	localizedInstantShown = false
+	maybeNoteDisplayZone()
+	if stderr.Len() != 0 {
+		t.Errorf("note emitted without a localized instant: %q", stderr.String())
+	}
+
+	localizedInstantShown = true
+	maybeNoteDisplayZone()
+	want := "note: times shown in Asia/Kolkata (UTC+05:30); pass --utc for UTC\n"
+	if stderr.String() != want {
+		t.Errorf("zone note = %q, want %q", stderr.String(), want)
+	}
+
+	// Flag is consumed: a second call stays silent.
+	maybeNoteDisplayZone()
+	if stderr.String() != want {
+		t.Errorf("zone note repeated: %q", stderr.String())
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -291,21 +292,20 @@ func applyListView(body interface{}) interface{} {
 
 	ctx := &viewContext{names: map[string]map[string]string{}}
 	resolveViewNames(view, items, ctx)
-	for _, row := range rows {
-		for _, column := range view.columns {
-			if column.derive != nil {
-				row[column.title] = column.derive(row, ctx)
-				continue
-			}
-			if column.source != "" && column.source != column.title {
-				row[column.title] = row[column.source]
-			}
-		}
-	}
-
 	titles := make([]string, len(view.columns))
 	for i, column := range view.columns {
-		titles[i] = column.title
+		titles[i] = displayTimeColumnTitle(column.title, column.source)
+	}
+	for _, row := range rows {
+		for i, column := range view.columns {
+			if column.derive != nil {
+				row[titles[i]] = column.derive(row, ctx)
+				continue
+			}
+			if column.source != "" && column.source != titles[i] {
+				row[titles[i]] = row[column.source]
+			}
+		}
 	}
 	linkColumn := ""
 	if view.linkURLKey != "" {
@@ -334,6 +334,23 @@ func setListViewConfig(columns []string, priorityColumn, linkColumn, linkURLKey,
 		viper.Set("table-accent-column", accentColumn)
 		viper.Set("table-accent-flag-key", accentFlagKey)
 	}
+}
+
+// displayTimeColumnTitle keeps curated view titles honest about the zone
+// their cells render in. Registry titles carry the canonical " (UTC)" suffix;
+// when instants localize (human table view in a non-UTC zone) the suffix
+// becomes " (local)" — the stderr zone note names the exact zone. UTC-label
+// columns (anomaly usage windows, registered in utc-label-columns) keep both
+// the "(UTC)" title and UTC values, and machine/agent contexts resolve to
+// UTC so their titles and bytes never change.
+func displayTimeColumnTitle(title, source string) string {
+	if !strings.HasSuffix(title, " (UTC)") || displayLocation() == time.UTC {
+		return title
+	}
+	if utcLabelColumn(title) || (source != "" && utcLabelColumn(source)) {
+		return title
+	}
+	return strings.TrimSuffix(title, " (UTC)") + " (local)"
 }
 
 // sortRowsByEpochDesc orders rows by an epoch-milliseconds field, newest
