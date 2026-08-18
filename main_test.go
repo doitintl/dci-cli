@@ -2229,6 +2229,7 @@ func TestOutputFlagValidation(t *testing.T) {
 		cli.Root = oldRoot
 		viper.Reset()
 	})
+	stubDestructiveMetadata(t)
 
 	tests := []struct {
 		value   string
@@ -2449,6 +2450,26 @@ func writeContextFile(t *testing.T, dir, ctx string) {
 	}
 }
 
+// stubDestructiveMetadata marks destructive-operation metadata as already
+// loaded (with an empty command set), so tests that execute commands through
+// addOutputFlag's PersistentPreRunE never reach the real metadata load —
+// cli.Load requires cli.Init state that unit tests don't have. Previous state
+// is restored on cleanup so the stub itself stays order-independent.
+func stubDestructiveMetadata(t *testing.T) {
+	t.Helper()
+	oldSet := destructiveCommandSet
+	oldRead := destructiveMetadataRead
+	oldErr := destructiveMetadataErr
+	destructiveCommandSet = map[string]bool{}
+	destructiveMetadataRead = true
+	destructiveMetadataErr = nil
+	t.Cleanup(func() {
+		destructiveCommandSet = oldSet
+		destructiveMetadataRead = oldRead
+		destructiveMetadataErr = oldErr
+	})
+}
+
 // setupTestCache replaces cli.Cache with a fresh in-memory viper instance and
 // restores the original on test cleanup.
 func setupTestCache(t *testing.T) {
@@ -2635,6 +2656,7 @@ func TestCustomerContextFlagOverride(t *testing.T) {
 		viper.Reset()
 		t.Cleanup(viper.Reset)
 		t.Cleanup(func() { customerContextFlagValue = "" })
+		stubDestructiveMetadata(t)
 
 		oldRoot := cli.Root
 		root := &cobra.Command{Use: "dci"}
