@@ -243,14 +243,20 @@ var listViews = map[string]listView{
 			{title: "updated (UTC)", source: "updateTime"},
 		},
 	},
+	// The tickets response shape differs by caller: customers receive the
+	// documented TicketListItem contract (severity, updateTime epoch ms,
+	// urlUI), while DoiT-employee (doer) sessions receive the raw Zendesk
+	// shape (priority, updated_at RFC3339, no urlUI). The view maps both
+	// into the customer contract's column names.
 	"list-tickets": {
 		itemsKey: "tickets",
 		columns: []viewColumn{
 			{title: "subject"},
 			{title: "status"},
-			{title: "priority"},
-			{title: "updated (UTC)", source: "updated_at"},
+			{title: "severity", derive: firstOfCell("severity", "priority")},
+			{title: "updated (UTC)", derive: firstOfCell("updateTime", "updated_at")},
 		},
+		linkURLKey: "urlUI",
 	},
 }
 
@@ -358,6 +364,19 @@ func epochCell(source string) func(map[string]interface{}, *viewContext) interfa
 			return ""
 		}
 		return row[source]
+	}
+}
+
+// firstOfCell mirrors the first of the given fields present on the row, for
+// endpoints whose response shape differs by caller.
+func firstOfCell(fields ...string) func(map[string]interface{}, *viewContext) interface{} {
+	return func(row map[string]interface{}, _ *viewContext) interface{} {
+		for _, field := range fields {
+			if value, ok := row[field]; ok && value != nil {
+				return value
+			}
+		}
+		return nil
 	}
 }
 

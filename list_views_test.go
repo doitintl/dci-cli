@@ -144,6 +144,21 @@ func listViewCases() []listViewCase {
 			cells:   map[string]interface{}{"updated (UTC)": "2026-07-06T11:45:41.503007Z"},
 		},
 		{
+			// The documented customer contract (TicketListItem).
+			command:  "list-tickets",
+			itemsKey: "tickets",
+			row: map[string]interface{}{
+				"id": int64(306123), "subject": "App Engine CreateVersion failures",
+				"status": "closed", "severity": "high", "requester": "someone@example.com",
+				"createTime": int64(1746718583000), "updateTime": int64(1748970150000),
+				"urlUI": "https://console.example.com/support/tickets/306123",
+			},
+			columns: "subject,status,severity,updated (UTC)",
+			linkURL: "urlUI",
+			cells:   map[string]interface{}{"severity": "high", "updated (UTC)": int64(1748970150000)},
+		},
+		{
+			// The raw Zendesk shape DoiT-employee (doer) sessions receive.
 			command:  "list-tickets",
 			itemsKey: "tickets",
 			row: map[string]interface{}{
@@ -151,8 +166,9 @@ func listViewCases() []listViewCase {
 				"status": "closed", "priority": "high",
 				"created_at": "2026-05-08T15:36:23Z", "updated_at": "2026-06-03T17:02:30Z",
 			},
-			columns: "subject,status,priority,updated (UTC)",
-			cells:   map[string]interface{}{"updated (UTC)": "2026-06-03T17:02:30Z"},
+			columns: "subject,status,severity,updated (UTC)",
+			linkURL: "urlUI",
+			cells:   map[string]interface{}{"severity": "high", "updated (UTC)": "2026-06-03T17:02:30Z"},
 		},
 		{
 			command:  "list-users",
