@@ -555,10 +555,10 @@ func TestRefreshNameCacheWritesFirstPages(t *testing.T) {
 
 	refreshNameCache(configDir)
 
-	if len(fetched) != 2 {
+	if len(fetched) != 3 {
 		t.Fatalf("fetched = %+v", fetched)
 	}
-	if fetched[0].listPath != "/analytics/v1/budgets" || fetched[1].listPath != "/analytics/v1/reports" {
+	if fetched[0].listPath != "/analytics/v1/budgets" || fetched[1].listPath != "/analytics/v1/reports" || fetched[2].listPath != "/billing/v1/assets" {
 		t.Fatalf("fetched = %+v", fetched)
 	}
 	for _, call := range fetched {

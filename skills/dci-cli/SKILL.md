@@ -39,6 +39,7 @@ Use `--fields id,name` to project list or detail responses before output, and us
 
 - Positional resource arguments accept names, not just IDs: exact match, unique case-insensitive substring, or close-typo fuzzy (`dci get-report "monthly aws"`). Prefer IDs when known — deterministic and no lookup round-trip; use names when exploring or when the user gave one.
 - `NAME_AMBIGUOUS` (exit 2) lists up to 10 `name (id)` candidates in the message: pick the intended ID and re-run. Never re-guess with another fuzzy string. `NAME_NOT_FOUND` (exit 20): browse with the `list-*` command from the hint; the hint says when the client-side scan was truncated (>1500 items).
+- An argument without spaces that matches no name — or whose lookup request fails — is sent to the API verbatim, so exact IDs that don't match the 20-char shape (e.g. asset IDs like `g-suite-2319621428`) work without `--id`; a 404 on that request hints at `--name`. `NAME_NOT_FOUND` therefore only surfaces for multi-word names or under `--name`.
 - Escape hatches: `--id` treats positionals as literal IDs, `--name` forces a lookup when a real name matches the 20-char ID shape, and `DCI_NO_RESOLVE=1` disables resolution entirely for scripts.
 - `dci commands --json` marks resolvable commands with `resolvesNames: true`.
 
