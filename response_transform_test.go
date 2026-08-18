@@ -111,11 +111,17 @@ func resetInsightConfig(t *testing.T) {
 		viper.Set("include-dismissed", nil)
 		viper.Set("rsh-output-format", nil)
 		viper.Set("table-columns-auto", nil)
+		viper.Set("table-priority-column", nil)
+		viper.Set("table-accent-column", nil)
+		viper.Set("table-accent-flag-key", nil)
 	})
 	invokedCommandName = "list-insights"
 	viper.Set("include-dismissed", false)
 	viper.Set("rsh-output-format", "table")
 	viper.Set("table-columns-auto", false)
+	viper.Set("table-priority-column", "")
+	viper.Set("table-accent-column", "")
+	viper.Set("table-accent-flag-key", "")
 }
 
 func insightRow(overrides map[string]interface{}) map[string]interface{} {
@@ -218,12 +224,88 @@ func TestTransformInsightsCuratesDefaultTableView(t *testing.T) {
 		t.Errorf("easyWin = %v, want empty for empty easyWinDescription", second["easyWin"])
 	}
 
-	want := "title,shortDescription,provider,categories,easyWin,lastUpdated,reportUrl,source,tags"
+	want := "title,provider,categories,lastUpdated,source"
 	if cols := viper.GetString("table-columns"); cols != want {
 		t.Errorf("table-columns = %q, want %q", cols, want)
 	}
 	if !viper.GetBool("table-columns-auto") {
 		t.Error("table-columns-auto = false, want true (order stays fit-eligible)")
+	}
+	if got := viper.GetString("table-priority-column"); got != "title" {
+		t.Errorf("table-priority-column = %q, want title", got)
+	}
+	if got := viper.GetString("table-accent-column"); got != "title" {
+		t.Errorf("table-accent-column = %q, want title", got)
+	}
+	if got := viper.GetString("table-accent-flag-key"); got != "easyWin" {
+		t.Errorf("table-accent-flag-key = %q, want easyWin", got)
+	}
+}
+
+func TestWidenPriorityColumnTakesSurplusFromWidestDonor(t *testing.T) {
+	t.Cleanup(func() { viper.Set("table-priority-column", nil) })
+	viper.Set("table-priority-column", "title")
+	keys := []string{"title", "provider", "source"}
+	contentWidths := []int{90, 8, 25}
+	colWidths := []int{45, 8, 25}
+	widenPriorityColumn(keys, contentWidths, colWidths)
+	if colWidths[1] != 8 {
+		t.Errorf("provider width = %d, want 8 (already at content width)", colWidths[1])
+	}
+	if colWidths[2] != 16 {
+		t.Errorf("source width = %d, want 16 (donated down to floor)", colWidths[2])
+	}
+	if colWidths[0] != 54 {
+		t.Errorf("title width = %d, want 54 (45 + 9 donated)", colWidths[0])
+	}
+}
+
+func TestWidenPriorityColumnNoopWhenUnsetOrFitting(t *testing.T) {
+	t.Cleanup(func() { viper.Set("table-priority-column", nil) })
+	viper.Set("table-priority-column", "")
+	widths := []int{10, 20}
+	widenPriorityColumn([]string{"a", "b"}, []int{30, 20}, widths)
+	if widths[0] != 10 || widths[1] != 20 {
+		t.Errorf("widths = %v, want unchanged without a priority column", widths)
+	}
+
+	viper.Set("table-priority-column", "a")
+	fitting := []int{30, 20}
+	widenPriorityColumn([]string{"a", "b"}, []int{30, 20}, fitting)
+	if fitting[0] != 30 || fitting[1] != 20 {
+		t.Errorf("widths = %v, want unchanged when priority column already fits", fitting)
+	}
+}
+
+func TestAccentCellColorsFlaggedRowsOnly(t *testing.T) {
+	flagged := map[string]interface{}{"easyWin": "✓"}
+	plain := map[string]interface{}{"easyWin": ""}
+	if got := accentCell(flagged, "easyWin", "Title"); got != "\x1b[1;32mTitle\x1b[0m" {
+		t.Errorf("accentCell(flagged) = %q, want green-wrapped", got)
+	}
+	if got := accentCell(plain, "easyWin", "Title"); got != "Title" {
+		t.Errorf("accentCell(plain) = %q, want unchanged", got)
+	}
+}
+
+func TestTableAccentConfigRespectsColorGate(t *testing.T) {
+	t.Cleanup(func() {
+		viper.Set("table-color", nil)
+		viper.Set("table-accent-column", nil)
+		viper.Set("table-accent-flag-key", nil)
+	})
+	viper.Set("table-accent-column", "title")
+	viper.Set("table-accent-flag-key", "easyWin")
+
+	viper.Set("table-color", false)
+	if column, _ := tableAccentConfig(); column != "" {
+		t.Errorf("accent column = %q, want disabled when color is off", column)
+	}
+
+	viper.Set("table-color", true)
+	column, flagKey := tableAccentConfig()
+	if column != "title" || flagKey != "easyWin" {
+		t.Errorf("accent = %q/%q, want title/easyWin when color is on", column, flagKey)
 	}
 }
 

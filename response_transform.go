@@ -150,23 +150,31 @@ func insightPresentationView() bool {
 }
 
 // insightHiddenColumns are list-insights fields kept out of the default
-// column set: long-form prose (detailedDescriptionMdx; easyWinDescription is
-// folded into the easyWin marker), internal identifiers (key,
-// cloudFlowTemplateId), displayStatus (dismissed rows are filtered instead),
-// and cloudProvider (shown as provider).
+// column set: prose (detailedDescriptionMdx, shortDescription;
+// easyWinDescription is folded into the title highlight), internal
+// identifiers (key, cloudFlowTemplateId), displayStatus (dismissed rows are
+// filtered instead), low-signal extras (reportUrl, tags), and cloudProvider
+// (shown as provider).
 var insightHiddenColumns = map[string]bool{
 	"detailedDescriptionMdx": true,
+	"shortDescription":       true,
 	"cloudFlowTemplateId":    true,
 	"easyWinDescription":     true,
 	"key":                    true,
 	"displayStatus":          true,
 	"cloudProvider":          true,
+	"reportUrl":              true,
+	"tags":                   true,
 }
 
-// applyInsightPresentation derives the display columns on each row (provider,
-// easyWin) and pins the default column order: the headline fields first, then
-// every remaining scalar field alphabetically. The order is marked auto-set
-// (like the pivot's) so the terminal-width fit still trims overflow columns.
+// applyInsightPresentation derives the display columns on each row and pins
+// the default column order: the headline fields first, then every remaining
+// scalar field alphabetically. The order is marked auto-set (like the
+// pivot's) so the terminal-width fit still trims overflow columns. The title
+// column is marked width-priority so it renders untruncated whenever the
+// other columns can spare the space, and easy wins (non-empty
+// easyWinDescription, kept per-row under the hidden easyWin key) render as a
+// green title in interactive tables.
 func applyInsightPresentation(rows []interface{}) {
 	if len(rows) == 0 {
 		return
@@ -196,14 +204,11 @@ func applyInsightPresentation(rows []interface{}) {
 		}
 	}
 
-	headline := make([]string, 0, 5)
-	for _, column := range []string{"title", "shortDescription", "provider", "categories", "easyWin"} {
+	headline := make([]string, 0, 3)
+	for _, column := range []string{"title", "provider", "categories"} {
 		source := column
-		switch column {
-		case "provider":
+		if column == "provider" {
 			source = "cloudProvider"
-		case "easyWin":
-			source = "easyWinDescription"
 		}
 		if present[source] {
 			headline = append(headline, column)
@@ -211,7 +216,7 @@ func applyInsightPresentation(rows []interface{}) {
 	}
 	rest := make([]string, 0, len(present))
 	for column := range present {
-		if insightHiddenColumns[column] || column == "title" || column == "shortDescription" || column == "categories" {
+		if insightHiddenColumns[column] || column == "title" || column == "categories" {
 			continue
 		}
 		if insightColumnContainsObject(rows, column) {
@@ -223,6 +228,11 @@ func applyInsightPresentation(rows []interface{}) {
 
 	viper.Set("table-columns", strings.Join(append(headline, rest...), ","))
 	viper.Set("table-columns-auto", true)
+	viper.Set("table-priority-column", "title")
+	if present["easyWinDescription"] {
+		viper.Set("table-accent-column", "title")
+		viper.Set("table-accent-flag-key", "easyWin")
+	}
 }
 
 func insightColumnContainsObject(rows []interface{}, key string) bool {
