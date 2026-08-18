@@ -32,7 +32,7 @@ Use `--fields id,name` to project list or detail responses before output, and us
 ## Insights
 
 - `list-insights` excludes dismissed insights by default; pass `--include-dismissed` to keep them (`dismissedOmitted` marks how many were removed). Results are sorted by `summary.potentialDailySavings` (USD) descending in every output format.
-- The default table/TOON view shows `title`, `dailySavings` (USD, from `summary.potentialDailySavings`; blank when zero), `provider` (from `cloudProvider`), `categories`, `lastUpdated`, and `source`, with the title column given width priority so it renders untruncated where possible. Easy wins (non-empty `easyWinDescription`) carry an " (easy win)" title suffix in table and TOON views, plus a green title in interactive tables; a row's `reportUrl` becomes a terminal hyperlink on the title. `--output json` and explicit `-C`/`--fields` selections keep the raw field names.
+- The default table/TOON view shows `title`, `dailySavings` (from `summary.potentialDailySavings`, formatted as USD like `$500.00`; blank when zero), `provider` (from `cloudProvider`), `categories`, `lastUpdated`, and `source`, with the title column given width priority so it renders untruncated where possible. Easy wins (non-empty `easyWinDescription`) carry an " (easy win)" title suffix in table and TOON views, plus a green title in interactive tables; a row's `reportUrl` becomes a terminal hyperlink on the title. `--output json` and explicit `-C`/`--fields` selections keep the raw field names.
 - Server-side filters already exist as flags: `--cloud-provider aws|gcp|azure`, `--source <source>` (repeatable), `--easy-win`, `--category`, `--priority`, `--tag`, `--search-term`.
 
 ## Resource Names
