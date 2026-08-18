@@ -24,6 +24,7 @@ package main
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -67,7 +68,7 @@ var listViews = map[string]listView{
 			{title: "report name", source: "reportName", derive: starredNameCell},
 			{title: "owner"},
 			{title: "updated (UTC)", source: "updateTime"},
-			{title: "folder", source: "folderId", derive: folderNameCell},
+			{title: "folder", source: "folderId", derive: folderCellFor("folderId")},
 			{title: "labels", derive: labelNamesCell},
 		},
 		linkURLKey:   "urlUI",
@@ -92,12 +93,97 @@ var listViews = map[string]listView{
 			{title: "name"},
 			{title: "owner"},
 			{title: "type"},
-			{title: "folder", source: "folderId", derive: folderNameCell},
+			{title: "folder", source: "folderId", derive: folderCellFor("folderId")},
 			{title: "updated (UTC)", source: "updateTime"},
 		},
 		linkURLKey:   "urlUI",
 		sortField:    "updateTime",
 		needsFolders: true,
+	},
+	"list-folders": {
+		itemsKey: "folders",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "description"},
+			{title: "parent folder", source: "parentFolderId", derive: folderCellFor("parentFolderId")},
+		},
+		needsFolders: true,
+	},
+	"list-users": {
+		itemsKey: "users",
+		columns: []viewColumn{
+			{title: "email"},
+			{title: "status"},
+			{title: "last login (UTC)", source: "lastLogin"},
+			{title: "mfa enrolled", source: "mfaEnrolled"},
+		},
+	},
+	"list-roles": {
+		itemsKey: "roles",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "type"},
+			{title: "description"},
+		},
+	},
+	"list-annotations": {
+		itemsKey: "annotations",
+		columns: []viewColumn{
+			{title: "content"},
+			{title: "labels", derive: labelNamesCell},
+			{title: "annotated (UTC)", source: "timestamp"},
+		},
+	},
+	"list-cloud-incidents": {
+		itemsKey: "incidents",
+		columns: []viewColumn{
+			{title: "title"},
+			{title: "platform"},
+			{title: "product"},
+			{title: "status"},
+			{title: "created (UTC)", source: "createTime"},
+		},
+	},
+	"list-commitments": {
+		itemsKey: "commitments",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "provider", source: "cloudProvider"},
+			{title: "commitment", source: "totalCommitmentValue", derive: moneyCell("totalCommitmentValue")},
+			{title: "attainment", source: "totalCurrentAttainment", derive: moneyCell("totalCurrentAttainment")},
+			{title: "forecast", source: "totalForecastValue", derive: moneyCell("totalForecastValue")},
+			{title: "start", source: "startDate"},
+			{title: "end", source: "endDate"},
+		},
+	},
+	"list-cloudflows": {
+		itemsKey: "items",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "published"},
+			{title: "trigger", source: "triggerType"},
+			{title: "run status", source: "lastExecutionStatus"},
+			{title: "last run (UTC)", source: "lastExecutedTime"},
+			{title: "next run (UTC)", source: "nextRun"},
+		},
+	},
+	"list-budget-suggestions": {
+		itemsKey: "items",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "amount", derive: suggestionAmountCell},
+			{title: "confidence"},
+			{title: "interval", source: "timeInterval"},
+			{title: "status"},
+		},
+	},
+	"list-datahub-datasets": {
+		itemsKey: "datasets",
+		columns: []viewColumn{
+			{title: "name"},
+			{title: "updated (UTC)", source: "lastUpdated"},
+			{title: "updated by", source: "updatedBy"},
+		},
 	},
 	"list-anomalies": {
 		itemsKey: "anomalies",
@@ -296,6 +382,10 @@ func reportStarred(row map[string]interface{}) bool {
 const foldersListPath = "/analytics/v1/folders"
 const rootFolderID = "root"
 
+// folderIDFields are the row fields that may hold a folder id needing name
+// resolution (reports/allocations vs the folders list's own parent column).
+var folderIDFields = []string{"folderId", "parentFolderId"}
+
 // resolveFolderNames resolves folder ids to names with a single folders-list
 // call, skipped entirely when every row sits at the top level. Lookup
 // failures are non-fatal: cells fall back to the raw folder id.
@@ -306,8 +396,12 @@ func resolveFolderNames(rows []interface{}) map[string]string {
 		if !ok {
 			continue
 		}
-		if id, _ := row["folderId"].(string); id != "" && id != rootFolderID {
-			needed = true
+		for _, field := range folderIDFields {
+			if id, _ := row[field].(string); id != "" && id != rootFolderID {
+				needed = true
+			}
+		}
+		if needed {
 			break
 		}
 	}
@@ -325,18 +419,52 @@ func resolveFolderNames(rows []interface{}) map[string]string {
 	return names
 }
 
-// folderNameCell renders the folder column: top-level rows get a blank cell
-// rather than a column of "root", resolved ids show the folder name, and
-// unresolved ids stay visible as-is.
-func folderNameCell(row map[string]interface{}, ctx *viewContext) interface{} {
-	id, _ := row["folderId"].(string)
-	if id == "" || id == rootFolderID {
-		return ""
+// folderCellFor renders a folder column from the given id field: top-level
+// rows get a blank cell rather than a column of "root", resolved ids show the
+// folder name, and unresolved ids stay visible as-is.
+func folderCellFor(field string) func(map[string]interface{}, *viewContext) interface{} {
+	return func(row map[string]interface{}, ctx *viewContext) interface{} {
+		id, _ := row[field].(string)
+		if id == "" || id == rootFolderID {
+			return ""
+		}
+		if name, ok := ctx.folderNames[id]; ok && name != "" {
+			return name
+		}
+		return id
 	}
-	if name, ok := ctx.folderNames[id]; ok && name != "" {
-		return name
+}
+
+// moneyCell renders a monetary field with the row's currency symbol, for
+// display titles the money-name heuristic doesn't cover (the commitments
+// view's commitment/attainment/forecast columns). --raw-numbers keeps the
+// plain value, matching renderCellText's behavior for money-named columns.
+func moneyCell(source string) func(map[string]interface{}, *viewContext) interface{} {
+	return func(row map[string]interface{}, _ *viewContext) interface{} {
+		amount, ok := numericCell(row[source])
+		currency, _ := row["currency"].(string)
+		if !ok || currency == "" || viper.GetBool("raw-numbers") {
+			return row[source]
+		}
+		return formatMoney(amount, currency)
 	}
-	return id
+}
+
+// suggestionAmountCell folds a budget suggestion's amount object
+// ({"amount": "3120", "currency": "USD"}) into one money cell; anything
+// unexpected falls back to the raw inner amount.
+func suggestionAmountCell(row map[string]interface{}, _ *viewContext) interface{} {
+	amount, ok := row["amount"].(map[string]interface{})
+	if !ok {
+		return row["amount"]
+	}
+	raw, _ := amount["amount"].(string)
+	currency, _ := amount["currency"].(string)
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || currency == "" || viper.GetBool("raw-numbers") {
+		return amount["amount"]
+	}
+	return formatMoney(value, currency)
 }
 
 // labelNamesCell folds the labels array ({id, name} objects) into the

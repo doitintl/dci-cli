@@ -153,6 +153,115 @@ func listViewCases() []listViewCase {
 			columns: "subject,status,priority,updated (UTC)",
 			cells:   map[string]interface{}{"updated (UTC)": "2026-06-03T17:02:30Z"},
 		},
+		{
+			command:  "list-users",
+			itemsKey: "users",
+			row: map[string]interface{}{
+				"id": "hVOgqIg3NjSRQg8i0KJW", "email": "someone@example.com", "status": "Active",
+				"lastLogin": "2026-03-10T16:16:50.888Z", "mfaEnrolled": nil, "roleId": "r1",
+				"hasAccessKey": true, "userNotifications": []interface{}{int64(2), int64(3)},
+			},
+			columns: "email,status,last login (UTC),mfa enrolled",
+			cells:   map[string]interface{}{"last login (UTC)": "2026-03-10T16:16:50.888Z", "mfa enrolled": nil},
+		},
+		{
+			command:  "list-roles",
+			itemsKey: "roles",
+			row: map[string]interface{}{
+				"id": "59w2TJPTCa3XPsJ3KITY", "name": "FinOps Admin", "type": "preset",
+				"description": "Full analytics access", "permissions": []interface{}{"p1"},
+			},
+			columns: "name,type,description",
+			cells:   map[string]interface{}{"name": "FinOps Admin"},
+		},
+		{
+			command:  "list-annotations",
+			itemsKey: "annotations",
+			row: map[string]interface{}{
+				"id": "g6rAMFoNN0MmAAZ4JsSK", "content": "deploy103.60.0",
+				"labels":    []interface{}{map[string]interface{}{"id": "l1", "name": "repo:omni"}},
+				"reports":   []interface{}{},
+				"timestamp": "2026-08-18T16:49:18Z", "createTime": "2026-08-18T16:49:19.073488Z",
+			},
+			columns: "content,labels,annotated (UTC)",
+			cells:   map[string]interface{}{"labels": "repo:omni", "annotated (UTC)": "2026-08-18T16:49:18Z"},
+		},
+		{
+			command:  "list-cloud-incidents",
+			itemsKey: "incidents",
+			row: map[string]interface{}{
+				"id": "i1", "title": "GKE control plane degradation", "platform": "google-cloud",
+				"product": "GKE", "status": "closed", "createTime": int64(1786924800000),
+			},
+			columns: "title,platform,product,status,created (UTC)",
+			cells:   map[string]interface{}{"created (UTC)": int64(1786924800000)},
+		},
+		{
+			command:  "list-commitments",
+			itemsKey: "commitments",
+			row: map[string]interface{}{
+				"id": "PQqsrbE3x8dXeckBvD1f", "name": "2026 Contract", "cloudProvider": "google-cloud",
+				"currency": "USD", "totalCommitmentValue": int64(4000000),
+				"totalCurrentAttainment": 2673691.487, "totalForecastValue": int64(4355238),
+				"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-12-31T00:00:00Z",
+				"updateTime": int64(1774901273698),
+			},
+			columns: "name,provider,commitment,attainment,forecast,start,end",
+			cells: map[string]interface{}{
+				"provider": "google-cloud", "commitment": "$4,000,000",
+				"attainment": "$2,673,691", "start": "2026-01-01T00:00:00Z",
+			},
+		},
+		{
+			command:  "list-cloudflows",
+			itemsKey: "items",
+			row: map[string]interface{}{
+				"id": "G2zdE9inbvwxBc38FCVc", "name": "Delete unused IPs", "published": true,
+				"triggerType": "triggerNode", "lastExecutionStatus": "complete",
+				"lastExecutedTime": "2026-08-14T13:10:29.705Z", "nextRun": "2026-08-16T13:00:00Z",
+			},
+			columns: "name,published,trigger,run status,last run (UTC),next run (UTC)",
+			cells:   map[string]interface{}{"trigger": "triggerNode", "run status": "complete"},
+		},
+		{
+			command:  "list-budget-suggestions",
+			itemsKey: "items",
+			row: map[string]interface{}{
+				"id": "BYRp0IQy6hLM2fPlDAwj", "name": "AWS — OpenSearch",
+				"amount":     map[string]interface{}{"amount": "3120", "currency": "USD"},
+				"confidence": "high", "timeInterval": "month", "status": "pending",
+			},
+			columns: "name,amount,confidence,interval,status",
+			cells:   map[string]interface{}{"amount": "$3,120", "interval": "month"},
+		},
+		{
+			command:  "list-datahub-datasets",
+			itemsKey: "datasets",
+			row: map[string]interface{}{
+				"name": "team-dataset", "lastUpdated": "2026-07-30T08:23:00Z", "updatedBy": "someone@example.com",
+			},
+			columns: "name,updated (UTC),updated by",
+			cells:   map[string]interface{}{"updated (UTC)": "2026-07-30T08:23:00Z", "updated by": "someone@example.com"},
+		},
+	}
+}
+
+func TestListViewFoldersResolveParentNames(t *testing.T) {
+	resetListViewTest(t, "list-folders")
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		return resolverListResult{entries: []nameCacheEntry{{ID: "ParentFolderId0000000", Name: "FinOps"}}}, nil
+	}
+	body := map[string]interface{}{"folders": []interface{}{
+		map[string]interface{}{"name": "child", "parentFolderId": "ParentFolderId0000000", "description": ""},
+		map[string]interface{}{"name": "top", "parentFolderId": "root", "description": ""},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["folders"].([]interface{})
+	if got := rows[0].(map[string]interface{})["parent folder"]; got != "FinOps" {
+		t.Errorf("parent folder = %v, want the resolved name", got)
+	}
+	if got := rows[1].(map[string]interface{})["parent folder"]; got != "" {
+		t.Errorf("parent folder = %v, want blank for root", got)
 	}
 }
 
