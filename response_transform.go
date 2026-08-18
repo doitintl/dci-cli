@@ -27,6 +27,7 @@ import (
 func transformSuccessBody(body interface{}) interface{} {
 	body = normalizeIntegralNumbers(body)
 	body = nullListsToEmpty(body)
+	body = transformInsightsList(body)
 
 	container, rows, schema, ok := reportResultContainer(body)
 	if !ok {
@@ -87,10 +88,162 @@ func transformSuccessBody(body interface{}) interface{} {
 	return body
 }
 
+// transformInsightsList shapes list-insights responses. Dismissed insights are
+// dropped from the results by default — they are noise in a "what should I act
+// on" listing — with --include-dismissed restoring them and a dismissedOmitted
+// marker recording how many were removed (mirrors emptyRowsDropped on
+// reports). The default table/TOON view additionally gets a curated column
+// set: title and shortDescription lead, cloudProvider is shown as provider, an
+// easyWin marker is derived from easyWinDescription, and long-form or internal
+// fields (detailedDescriptionMdx, key, cloudFlowTemplateId, displayStatus)
+// stay out of the default columns. Machine formats (json, yaml, csv) and
+// explicit -C/--fields selections keep the raw field names.
+func transformInsightsList(body interface{}) interface{} {
+	if invokedCommandName != "list-insights" {
+		return body
+	}
+	root, ok := body.(map[string]interface{})
+	if !ok {
+		return body
+	}
+	results, ok := root["results"].([]interface{})
+	if !ok {
+		return body
+	}
+
+	if !viper.GetBool("include-dismissed") {
+		kept := make([]interface{}, 0, len(results))
+		dropped := 0
+		for _, item := range results {
+			if row, ok := item.(map[string]interface{}); ok {
+				if status, _ := row["displayStatus"].(string); strings.EqualFold(strings.TrimSpace(status), "dismissed") {
+					dropped++
+					continue
+				}
+			}
+			kept = append(kept, item)
+		}
+		if dropped > 0 {
+			results = kept
+			root["results"] = kept
+			root["dismissedOmitted"] = int64(dropped)
+		}
+	}
+
+	if insightPresentationView() {
+		applyInsightPresentation(results)
+	}
+	return body
+}
+
+// insightPresentationView reports whether the curated insight columns apply:
+// table-like formats only (table, auto, toon — same set shouldPivotReportRows
+// treats as presentational), and only when the user has not made an explicit
+// column selection via -C or --fields.
+func insightPresentationView() bool {
+	switch strings.TrimSpace(viper.GetString("rsh-output-format")) {
+	case "table", "auto", "toon":
+	default:
+		return false
+	}
+	return strings.TrimSpace(viper.GetString("table-columns")) == ""
+}
+
+// insightHiddenColumns are list-insights fields kept out of the default
+// column set: long-form prose (detailedDescriptionMdx; easyWinDescription is
+// folded into the easyWin marker), internal identifiers (key,
+// cloudFlowTemplateId), displayStatus (dismissed rows are filtered instead),
+// and cloudProvider (shown as provider).
+var insightHiddenColumns = map[string]bool{
+	"detailedDescriptionMdx": true,
+	"cloudFlowTemplateId":    true,
+	"easyWinDescription":     true,
+	"key":                    true,
+	"displayStatus":          true,
+	"cloudProvider":          true,
+}
+
+// applyInsightPresentation derives the display columns on each row (provider,
+// easyWin) and pins the default column order: the headline fields first, then
+// every remaining scalar field alphabetically. The order is marked auto-set
+// (like the pivot's) so the terminal-width fit still trims overflow columns.
+func applyInsightPresentation(rows []interface{}) {
+	if len(rows) == 0 {
+		return
+	}
+	present := map[string]bool{}
+	for _, item := range rows {
+		row, ok := item.(map[string]interface{})
+		if !ok {
+			return // not an insight list shape; leave the response raw
+		}
+		for k := range row {
+			present[k] = true
+		}
+	}
+
+	for _, item := range rows {
+		row := item.(map[string]interface{})
+		if provider, ok := row["cloudProvider"]; ok {
+			row["provider"] = provider
+		}
+		if present["easyWinDescription"] {
+			marker := ""
+			if desc, _ := row["easyWinDescription"].(string); strings.TrimSpace(desc) != "" {
+				marker = "✓"
+			}
+			row["easyWin"] = marker
+		}
+	}
+
+	headline := make([]string, 0, 5)
+	for _, column := range []string{"title", "shortDescription", "provider", "categories", "easyWin"} {
+		source := column
+		switch column {
+		case "provider":
+			source = "cloudProvider"
+		case "easyWin":
+			source = "easyWinDescription"
+		}
+		if present[source] {
+			headline = append(headline, column)
+		}
+	}
+	rest := make([]string, 0, len(present))
+	for column := range present {
+		if insightHiddenColumns[column] || column == "title" || column == "shortDescription" || column == "categories" {
+			continue
+		}
+		if insightColumnContainsObject(rows, column) {
+			continue
+		}
+		rest = append(rest, column)
+	}
+	sort.Strings(rest)
+
+	viper.Set("table-columns", strings.Join(append(headline, rest...), ","))
+	viper.Set("table-columns-auto", true)
+}
+
+func insightColumnContainsObject(rows []interface{}, key string) bool {
+	for _, item := range rows {
+		if row, ok := item.(map[string]interface{}); ok && containsObject(row[key]) {
+			return true
+		}
+	}
+	return false
+}
+
 // requestReportCurrency is the currency resolved from the request body of the
 // current invocation (set by preflight for query-style commands; "" when the
 // command carries no report config).
 var requestReportCurrency string
+
+// invokedCommandName is the leaf cobra command of the current invocation (set
+// by the dci PersistentPreRunE; "" outside a normal command run), letting the
+// response pipeline key command-specific shaping without guessing from the
+// body shape.
+var invokedCommandName string
 
 func requestCurrencyContext() string {
 	return requestReportCurrency

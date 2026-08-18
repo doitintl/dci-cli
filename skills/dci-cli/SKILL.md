@@ -29,6 +29,11 @@ Use `--fields id,name` to project list or detail responses before output, and us
 - Rows with a null group and zero metrics are dropped by default; pass `--include-empty-rows` to keep them (`emptyRowsDropped` marks how many were removed).
 - Report results include a `currency` field when the query config specifies one — always report monetary values with their currency. Human tables render known-currency amounts with the currency sign rounded to whole units; `--raw-numbers` restores exact values.
 
+## Insights
+
+- `list-insights` excludes dismissed insights by default; pass `--include-dismissed` to keep them (`dismissedOmitted` marks how many were removed).
+- The default table/TOON view leads with `title` and `shortDescription`, shows `cloudProvider` as `provider`, and derives an `easyWin` marker (`✓`) from `easyWinDescription`; long-form fields (`detailedDescriptionMdx`, `easyWinDescription`) and internal identifiers (`key`, `cloudFlowTemplateId`, `displayStatus`) stay out of the default columns. `--output json` and explicit `-C`/`--fields` selections keep the raw field names.
+
 ## Resource Names
 
 - Positional resource arguments accept names, not just IDs: exact match, unique case-insensitive substring, or close-typo fuzzy (`dci get-report "monthly aws"`). Prefer IDs when known — deterministic and no lookup round-trip; use names when exploring or when the user gave one.

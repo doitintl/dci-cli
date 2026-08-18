@@ -146,7 +146,7 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 		order = append(order, periods...)
 		order = append(order, "total", "trend")
 		viper.Set("table-columns", strings.Join(order, ","))
-		viper.Set("pivot-columns-auto", true)
+		viper.Set("table-columns-auto", true)
 	}
 
 	// When the pivoted metric is monetary and the currency is known, the

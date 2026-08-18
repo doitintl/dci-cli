@@ -295,6 +295,7 @@ func run() (exitCode int) {
 	resolvedCustomerContext = ""
 	helpFullRequested = false
 	requestReportCurrency = ""
+	invokedCommandName = ""
 	bufferedRequestBody = nil
 	configuredAPIBase = ""
 	nonJSONErrorResponse = false
@@ -1608,6 +1609,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("pivot", false, "Force the pivot report view (groups as rows, time periods as columns, with totals) for any output format or mode")
 	dciCmd.PersistentFlags().Bool("flat", false, "Render report results as flat rows instead of the default interactive pivot view")
 	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
+	dciCmd.PersistentFlags().Bool("include-dismissed", false, "Keep dismissed insights in list-insights results (excluded by default)")
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
 	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
 	dciCmd.PersistentFlags().Bool("id", false, "Treat positional resource arguments as literal IDs and skip name resolution")
@@ -1622,6 +1624,9 @@ func addOutputFlag() {
 				return err
 			}
 		}
+		// Record the leaf command so response transforms can apply
+		// command-specific shaping (e.g. the list-insights view).
+		invokedCommandName = cmd.Name()
 
 		outFlag := cmd.Flags().Lookup("output")
 		if outFlag == nil || !outFlag.Changed {
@@ -1662,7 +1667,7 @@ func addOutputFlag() {
 		viper.Set("report-currency", "")
 		viper.Set("money-columns", "")
 		viper.Set("report-hourly", false)
-		viper.Set("pivot-columns-auto", false)
+		viper.Set("table-columns-auto", false)
 		viper.Set("pivot-active", false)
 		viper.Set("pivot-total-rows", 0)
 
@@ -1676,6 +1681,7 @@ func addOutputFlag() {
 			"pivot":              "pivot-rows",
 			"flat":               "flat-rows",
 			"include-empty-rows": "include-empty-rows",
+			"include-dismissed":  "include-dismissed",
 			"raw-numbers":        "raw-numbers",
 		} {
 			value := false
@@ -2481,9 +2487,10 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 	// every column into unreadable "…" stubs. Keep only as many columns as
 	// render readably and report the rest through the same hidden-columns
 	// hint used for object columns. An explicit -C selection or wrap mode
-	// keeps every requested column; the pivot's auto-generated column order
-	// is not a user selection, so it stays fit-eligible.
-	if (len(opts.columns) == 0 || viper.GetBool("pivot-columns-auto")) && opts.mode == "fit" {
+	// keeps every requested column; an auto-generated column order (the
+	// pivot's, or the list-insights default view's) is not a user selection,
+	// so it stays fit-eligible.
+	if (len(opts.columns) == 0 || viper.GetBool("table-columns-auto")) && opts.mode == "fit" {
 		var hiddenForWidth []string
 		keys, hiddenForWidth = fitColumnsToTerminal(rows, keys, terminalWidth)
 		hidden = append(hidden, hiddenForWidth...)

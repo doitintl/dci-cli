@@ -102,6 +102,162 @@ func TestNullFieldsOnDetailResponsesStayNull(t *testing.T) {
 	}
 }
 
+func resetInsightConfig(t *testing.T) {
+	t.Helper()
+	resetTransformConfig(t)
+	oldCommand := invokedCommandName
+	t.Cleanup(func() {
+		invokedCommandName = oldCommand
+		viper.Set("include-dismissed", nil)
+		viper.Set("rsh-output-format", nil)
+		viper.Set("table-columns-auto", nil)
+	})
+	invokedCommandName = "list-insights"
+	viper.Set("include-dismissed", false)
+	viper.Set("rsh-output-format", "table")
+	viper.Set("table-columns-auto", false)
+}
+
+func insightRow(overrides map[string]interface{}) map[string]interface{} {
+	row := map[string]interface{}{
+		"title":                  "Purchase reserved instances",
+		"shortDescription":       "Savings from commitments",
+		"detailedDescriptionMdx": "Long **markdown** prose",
+		"cloudProvider":          "aws",
+		"cloudFlowTemplateId":    "",
+		"categories":             []interface{}{"FinOps"},
+		"easyWinDescription":     "",
+		"key":                    "reserved-instances",
+		"displayStatus":          "actionable",
+		"source":                 "aws-cost-optimization-hub",
+		"lastUpdated":            "2026-08-18T02:30:59Z",
+		"reportUrl":              "",
+		"tags":                   []interface{}{},
+		"lastStatusChange":       map[string]interface{}{"userId": "u"},
+	}
+	for k, v := range overrides {
+		row[k] = v
+	}
+	return row
+}
+
+func insightsBody(rows ...map[string]interface{}) map[string]interface{} {
+	items := make([]interface{}, len(rows))
+	for i, row := range rows {
+		items[i] = row
+	}
+	return map[string]interface{}{
+		"pagination": map[string]interface{}{"pageToken": "", "rowCount": int64(len(rows))},
+		"results":    items,
+	}
+}
+
+func TestTransformInsightsDropsDismissedByDefault(t *testing.T) {
+	resetInsightConfig(t)
+	body := insightsBody(
+		insightRow(map[string]interface{}{"displayStatus": "dismissed", "key": "gone"}),
+		insightRow(nil),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	results := root["results"].([]interface{})
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1 (dismissed row dropped)", len(results))
+	}
+	if omitted, _ := root["dismissedOmitted"].(int64); omitted != 1 {
+		t.Errorf("dismissedOmitted = %v, want 1", root["dismissedOmitted"])
+	}
+}
+
+func TestTransformInsightsKeepsDismissedWhenRequested(t *testing.T) {
+	resetInsightConfig(t)
+	viper.Set("include-dismissed", true)
+	body := insightsBody(
+		insightRow(map[string]interface{}{"displayStatus": "dismissed"}),
+		insightRow(nil),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	if results := root["results"].([]interface{}); len(results) != 2 {
+		t.Fatalf("results = %d, want 2 with --include-dismissed", len(results))
+	}
+	if _, present := root["dismissedOmitted"]; present {
+		t.Error("dismissedOmitted set with --include-dismissed")
+	}
+}
+
+func TestTransformInsightsIgnoresOtherCommands(t *testing.T) {
+	resetInsightConfig(t)
+	invokedCommandName = "list-anomalies"
+	body := insightsBody(insightRow(map[string]interface{}{"displayStatus": "dismissed"}))
+	root := transformSuccessBody(body).(map[string]interface{})
+	if results := root["results"].([]interface{}); len(results) != 1 {
+		t.Fatalf("results = %d, want 1 (other commands untouched)", len(results))
+	}
+	if cols := viper.GetString("table-columns"); cols != "" {
+		t.Errorf("table-columns = %q, want unset for other commands", cols)
+	}
+}
+
+func TestTransformInsightsCuratesDefaultTableView(t *testing.T) {
+	resetInsightConfig(t)
+	body := insightsBody(
+		insightRow(map[string]interface{}{"easyWinDescription": "Quick fix", "cloudProvider": "gcp"}),
+		insightRow(nil),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["results"].([]interface{})
+
+	first := rows[0].(map[string]interface{})
+	if first["provider"] != "gcp" {
+		t.Errorf("provider = %v, want gcp", first["provider"])
+	}
+	if first["easyWin"] != "✓" {
+		t.Errorf("easyWin = %v, want ✓ for non-empty easyWinDescription", first["easyWin"])
+	}
+	second := rows[1].(map[string]interface{})
+	if second["easyWin"] != "" {
+		t.Errorf("easyWin = %v, want empty for empty easyWinDescription", second["easyWin"])
+	}
+
+	want := "title,shortDescription,provider,categories,easyWin,lastUpdated,reportUrl,source,tags"
+	if cols := viper.GetString("table-columns"); cols != want {
+		t.Errorf("table-columns = %q, want %q", cols, want)
+	}
+	if !viper.GetBool("table-columns-auto") {
+		t.Error("table-columns-auto = false, want true (order stays fit-eligible)")
+	}
+}
+
+func TestTransformInsightsMachineFormatsKeepRawFields(t *testing.T) {
+	resetInsightConfig(t)
+	viper.Set("rsh-output-format", "json")
+	body := insightsBody(insightRow(nil))
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["results"].([]interface{})[0].(map[string]interface{})
+	if _, present := row["provider"]; present {
+		t.Error("provider derived for json output, want raw fields only")
+	}
+	if _, present := row["easyWin"]; present {
+		t.Error("easyWin derived for json output, want raw fields only")
+	}
+	if cols := viper.GetString("table-columns"); cols != "" {
+		t.Errorf("table-columns = %q, want unset for json output", cols)
+	}
+}
+
+func TestTransformInsightsExplicitColumnsKeepRawFields(t *testing.T) {
+	resetInsightConfig(t)
+	viper.Set("table-columns", "key,title")
+	body := insightsBody(insightRow(nil))
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["results"].([]interface{})[0].(map[string]interface{})
+	if _, present := row["provider"]; present {
+		t.Error("provider derived despite explicit -C selection")
+	}
+	if cols := viper.GetString("table-columns"); cols != "key,title" {
+		t.Errorf("table-columns = %q, want user selection preserved", cols)
+	}
+}
+
 func TestTransformSortsReportRowsDeterministically(t *testing.T) {
 	resetTransformConfig(t)
 	shuffled := reportBody(

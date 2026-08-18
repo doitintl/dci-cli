@@ -136,7 +136,7 @@ func TestPivotRowsCarryTrend(t *testing.T) {
 	viper.Set("table-columns", "")
 	t.Cleanup(func() {
 		viper.Set("table-columns", nil)
-		viper.Set("pivot-columns-auto", nil)
+		viper.Set("table-columns-auto", nil)
 	})
 	rows := []interface{}{
 		[]interface{}{"svc-a", "2026", "06", 100.0, float64(1780272000)},
@@ -159,7 +159,7 @@ func TestPivotDefaultFallsBackOnManyPeriods(t *testing.T) {
 	viper.Set("table-columns", "")
 	t.Cleanup(func() {
 		viper.Set("table-columns", nil)
-		viper.Set("pivot-columns-auto", nil)
+		viper.Set("table-columns-auto", nil)
 	})
 
 	rows := []interface{}{}
