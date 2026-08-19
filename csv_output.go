@@ -26,6 +26,9 @@ func (t dciCSVContentType) Marshal(value interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("response is not table-shaped; use --output json instead: %w", err)
 	}
+	// CSV drops the list wrapper (pageToken and friends); say so on stderr
+	// when that hides a continuation token — stdout stays pure CSV.
+	notePageTokenDropped(jsonSafe)
 
 	columns := getTableOptions().columns
 	keys := collectKeys(rows, columns)
