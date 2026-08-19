@@ -1,0 +1,6 @@
+# False positives, one gitleaks fingerprint per line
+# (commit:file:rule:line — from the gitleaks finding output).
+
+# Synthetic customer-ID-shaped fixture in TestValidateCustomerContextValue;
+# high entropy by design (the validator targets 20-char alphanumeric IDs).
+a98d9df4e443f7c5056ac6fec86007bd5dff5a36:main_test.go:generic-api-key:2670
