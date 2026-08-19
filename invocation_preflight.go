@@ -67,6 +67,9 @@ func preflightAPIInvocation(args []string) error {
 	if operation == nil {
 		return unknownAPICommandPreflightError(api, commandName)
 	}
+	if err := validateMaxResults(operation.Name, args[2:]); err != nil {
+		return err
+	}
 	if authenticated || interactive || invocationHasFlag(args, "--dry-run") {
 		return nil
 	}

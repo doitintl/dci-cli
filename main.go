@@ -2094,6 +2094,9 @@ func (t dciTableContentType) Marshal(value interface{}) ([]byte, error) {
 		}
 		return append(b, '\n'), nil
 	}
+	// The table drops the list wrapper (pageToken and friends); say so when
+	// that hides a continuation token.
+	notePageTokenDropped(jsonSafe)
 	return renderTable(rows)
 }
 
