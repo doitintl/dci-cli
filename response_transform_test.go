@@ -29,6 +29,7 @@ func resetTransformConfig(t *testing.T) {
 		viper.Set("pivot-rows", nil)
 		viper.Set("pivot-active", nil)
 		viper.Set("include-empty-rows", nil)
+		viper.Set("drop-unlabeled-rows", nil)
 		viper.Set("table-columns", nil)
 	})
 	viper.Set("max-rows", -1)
@@ -36,6 +37,7 @@ func resetTransformConfig(t *testing.T) {
 	viper.Set("pivot-rows", false)
 	viper.Set("pivot-active", false)
 	viper.Set("include-empty-rows", false)
+	viper.Set("drop-unlabeled-rows", false)
 	viper.Set("table-columns", "")
 }
 
@@ -764,6 +766,41 @@ func TestTransformKeepsEmptyRowsWhenRequested(t *testing.T) {
 	rows := transformedRows(t, transformSuccessBody(body))
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2 with --include-empty-rows", len(rows))
+	}
+}
+
+func TestTransformDropsUnlabeledRowsOnRequest(t *testing.T) {
+	resetTransformConfig(t)
+	viper.Set("drop-unlabeled-rows", true)
+	body := reportBody(
+		[]interface{}{nil, "2026", "07", float64(418722), float64(1782864000)},
+		[]interface{}{"[Value N/A]", "2026", "07", 5.0, float64(1782864000)},
+		[]interface{}{"labeled", "2026", "07", 12.5, float64(1782864000)},
+	)
+	result := transformSuccessBody(body)
+	rows := transformedRows(t, result)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (null and [Value N/A] groups dropped despite nonzero cost)", len(rows))
+	}
+	container := result.(map[string]interface{})["result"].(map[string]interface{})
+	if dropped, _ := container["unlabeledRowsDropped"].(int64); dropped != 2 {
+		t.Errorf("unlabeledRowsDropped = %v, want 2", container["unlabeledRowsDropped"])
+	}
+}
+
+func TestTransformKeepsUnlabeledRowsByDefault(t *testing.T) {
+	resetTransformConfig(t)
+	body := reportBody(
+		[]interface{}{nil, "2026", "07", float64(418722), float64(1782864000)},
+		[]interface{}{"labeled", "2026", "07", 12.5, float64(1782864000)},
+	)
+	result := transformSuccessBody(body)
+	if rows := transformedRows(t, result); len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (nonzero null bucket kept without the flag)", len(rows))
+	}
+	container := result.(map[string]interface{})["result"].(map[string]interface{})
+	if _, present := container["unlabeledRowsDropped"]; present {
+		t.Error("unlabeledRowsDropped marker present without the flag")
 	}
 }
 

@@ -1632,6 +1632,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("pivot", false, "Force the pivot report view (groups as rows, time periods as columns, with totals) for any output format or mode")
 	dciCmd.PersistentFlags().Bool("flat", false, "Render report results as flat rows instead of the default interactive pivot view")
 	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
+	dciCmd.PersistentFlags().Bool("drop-unlabeled-rows", false, "Drop report rows where any grouped dimension is null or [Value N/A], regardless of cost — useful when grouping by sparse labels, where the null bucket aggregates all unlabeled spend")
 	dciCmd.PersistentFlags().Bool("include-dismissed", false, "Keep dismissed insights in list-insights results (excluded by default)")
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
 	dciCmd.PersistentFlags().Bool("utc", false, "Render timestamps in UTC instead of the local timezone (table output only; machine formats and report period columns are always UTC)")
@@ -1699,6 +1700,12 @@ func addOutputFlag() {
 		}
 		viper.Set("all-pages", allPages)
 		viper.Set("all-pages-boost", pagingCaps[cmd.Name()].limit)
+
+		dropUnlabeled := false
+		if flag := cmd.Flags().Lookup("drop-unlabeled-rows"); flag != nil && flag.Changed {
+			dropUnlabeled = flag.Value.String() == "true"
+		}
+		viper.Set("drop-unlabeled-rows", dropUnlabeled)
 		if allPages {
 			// Installed lazily, only for --all runs: restish configures TLS and
 			// proxies via a http.DefaultTransport.(*http.Transport) assertion
