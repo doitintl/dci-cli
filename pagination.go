@@ -7,11 +7,17 @@ package main
 // endpoints silently reset out-of-range values to the default page size).
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/viper"
 )
 
 // pagingCap is the server-side ceiling for a list command's --max-results
@@ -74,7 +80,7 @@ func validateMaxResults(commandName string, args []string) error {
 			Code: "USAGE_ERROR",
 			Message: fmt.Sprintf("--max-results %d exceeds the maximum of %d for %s (%s); the API silently resets out-of-range values to the default page size instead of clamping them",
 				value, entry.limit, commandName, evidence),
-			Hint:      fmt.Sprintf("Pass --max-results %d or less and iterate with --page-token to fetch the remaining pages", entry.limit),
+			Hint:      fmt.Sprintf("Pass --max-results %d or less and iterate with --page-token, or pass --all to fetch every page", entry.limit),
 			Retryable: false,
 		},
 		exitCode: exitUsage,
@@ -93,6 +99,197 @@ func flagValueFromArgs(args []string, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// validateAllPagesFlags rejects --all combined with manual paging flags:
+// --all owns the paging loop, so an explicit page token or page size signals
+// mixed intent rather than a request the CLI can honor.
+func validateAllPagesFlags(args []string) error {
+	if !invocationHasFlag(args, "--all") {
+		return nil
+	}
+	for _, conflicting := range []string{"--page-token", "--max-results"} {
+		if invocationHasFlag(args, conflicting) {
+			return invocationPreflightError{
+				detail: structuredError{
+					Code:      "USAGE_ERROR",
+					Message:   fmt.Sprintf("--all fetches every page itself and cannot be combined with %s", conflicting),
+					Hint:      fmt.Sprintf("Drop %s to fetch the full collection, or drop --all to page manually", conflicting),
+					Retryable: false,
+				},
+				exitCode: exitUsage,
+			}
+		}
+	}
+	return nil
+}
+
+// allPagesMaxPages bounds the --all fetch loop. At the default page size this
+// is ~2,000 rows and at the common 500 cap ~20,000 — far beyond any known
+// collection, while still guaranteeing termination against a server that
+// keeps returning tokens.
+const allPagesMaxPages = 40
+
+// installPaginatingTransport routes HTTP calls through the --all pagination
+// wrapper, exactly once per process. The name resolver keeps the unwrapped
+// transport: it runs its own page loop, and re-paginating it would only buy
+// redundant merging.
+func installPaginatingTransport() {
+	if _, installed := http.DefaultTransport.(paginatingTransport); installed {
+		return
+	}
+	resolverHTTPClient.Transport = http.DefaultTransport
+	http.DefaultTransport = paginatingTransport{next: http.DefaultTransport}
+}
+
+// paginatingTransport implements --all: when active, a GET returning a paged
+// JSON collection is followed through its page tokens and the pages are
+// merged into a single response before restish parses it, so every output
+// format and transform downstream sees one complete collection. Installed
+// around http.DefaultTransport at startup; inert unless --all was passed.
+type paginatingTransport struct {
+	next http.RoundTripper
+}
+
+func (t paginatingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request = t.boostPageSize(request)
+	response, err := t.next.RoundTrip(request)
+	if err != nil || !t.applies(request, response) {
+		return response, err
+	}
+
+	root, raw, parseErr := decodeJSONBody(response)
+	if parseErr != nil || root == nil {
+		return restoreBody(response, raw), err
+	}
+	token := collectionPageToken(root)
+	collectionKey, rows, isList := listWrapperRows(root)
+	if token == "" || !isList {
+		return restoreBody(response, raw), nil
+	}
+
+	pages := 1
+	for token != "" && pages < allPagesMaxPages {
+		pageRequest := request.Clone(request.Context())
+		query := pageRequest.URL.Query()
+		query.Set("pageToken", token)
+		pageRequest.URL.RawQuery = query.Encode()
+
+		pageResponse, pageErr := t.next.RoundTrip(pageRequest)
+		if pageErr != nil {
+			return nil, fmt.Errorf("--all: fetching page %d failed: %w", pages+1, pageErr)
+		}
+		if pageResponse.StatusCode != http.StatusOK {
+			_ = pageResponse.Body.Close()
+			return nil, fmt.Errorf("--all: fetching page %d failed with HTTP status %d", pages+1, pageResponse.StatusCode)
+		}
+		pageRoot, _, pageParseErr := decodeJSONBody(pageResponse)
+		if pageParseErr != nil || pageRoot == nil {
+			return nil, fmt.Errorf("--all: page %d is not a JSON object: %v", pages+1, pageParseErr)
+		}
+		if pageRows, ok := pageRoot[collectionKey].([]interface{}); ok {
+			rows = append(rows, pageRows...)
+		}
+		token = collectionPageToken(pageRoot)
+		pages++
+	}
+
+	root[collectionKey] = rows
+	root["rowCount"] = len(rows)
+	root["pagesFetched"] = pages
+	for _, key := range []string{"pageToken", "nextPageToken", "cursor", "nextCursor"} {
+		delete(root, key)
+	}
+	if token != "" {
+		// Page cap hit: keep the resume token in-band and say so.
+		root["pageToken"] = token
+		if cli.Stderr != nil {
+			_, _ = fmt.Fprintf(cli.Stderr, "note: --all stopped after %d pages; resume with --page-token %s\n", pages, token)
+		}
+	}
+
+	merged, marshalErr := json.Marshal(root)
+	if marshalErr != nil {
+		return nil, fmt.Errorf("--all: merging pages failed: %w", marshalErr)
+	}
+	return restoreBody(response, merged), nil
+}
+
+// boostPageSize raises maxResults to the endpoint's known cap so --all
+// fetches the fewest pages possible; the boosted request is what the page
+// loop clones, so every page keeps the size. Safe because --all cannot be
+// combined with an explicit --max-results: any maxResults already on the URL
+// is the spec default, not a user choice.
+func (t paginatingTransport) boostPageSize(request *http.Request) *http.Request {
+	if !allPagesActive() || request.Method != http.MethodGet {
+		return request
+	}
+	boost := viper.GetInt("all-pages-boost")
+	if boost <= 0 {
+		return request
+	}
+	query := request.URL.Query()
+	query.Set("maxResults", strconv.Itoa(boost))
+	request = request.Clone(request.Context())
+	request.URL.RawQuery = query.Encode()
+	return request
+}
+
+// applies reports whether the merged-pagination path should engage for this
+// request/response pair: --all passed, a GET against the DoiT API, and a
+// successful JSON response. Everything else passes through untouched.
+func (t paginatingTransport) applies(request *http.Request, response *http.Response) bool {
+	if !allPagesActive() || request.Method != http.MethodGet || response == nil {
+		return false
+	}
+	if response.StatusCode != http.StatusOK {
+		return false
+	}
+	if !strings.Contains(response.Header.Get("Content-Type"), "json") {
+		return false
+	}
+	base, err := apiBase()
+	if err != nil {
+		return false
+	}
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(request.URL.Host, baseURL.Host)
+}
+
+func allPagesActive() bool {
+	return viper.GetBool("all-pages")
+}
+
+// decodeJSONBody fully reads a response body (undoing any content encoding
+// via restish's registered decoders) and parses it as a JSON object. Returns
+// the raw decoded bytes so callers can restore the body untouched when the
+// shape is not a paged collection.
+func decodeJSONBody(response *http.Response) (map[string]interface{}, []byte, error) {
+	defer func() { _ = response.Body.Close() }()
+	if err := cli.DecodeResponse(response); err != nil {
+		return nil, nil, err
+	}
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, raw, err
+	}
+	return root, raw, nil
+}
+
+// restoreBody rebuilds a response around plain (decoded) bytes.
+func restoreBody(response *http.Response, body []byte) *http.Response {
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	response.ContentLength = int64(len(body))
+	response.Header.Del("Content-Encoding")
+	response.Header.Del("Content-Length")
+	return response
 }
 
 // collectionPageToken returns a list wrapper's continuation token, if any.
@@ -129,5 +326,5 @@ func notePageTokenDropped(body interface{}) {
 	if count, ok := root["rowCount"]; ok {
 		shown = fmt.Sprintf("first %v rendered", count)
 	}
-	_, _ = fmt.Fprintf(cli.Stderr, "note: more results available (%s); re-run with --page-token %s, or raise --max-results\n", shown, token)
+	_, _ = fmt.Fprintf(cli.Stderr, "note: more results available (%s); pass --all to fetch every page, or re-run with --page-token %s\n", shown, token)
 }
