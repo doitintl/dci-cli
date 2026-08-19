@@ -68,6 +68,15 @@ func transformSuccessBody(body interface{}) interface{} {
 		}
 	}
 
+	if viper.GetBool("drop-unlabeled-rows") {
+		kept, dropped := dropUnlabeledReportRows(rows, schema)
+		if dropped > 0 {
+			rows = kept
+			container["rows"] = rows
+			container["unlabeledRowsDropped"] = int64(dropped)
+		}
+	}
+
 	if shouldPivotReportRows() {
 		forced := viper.GetBool("pivot-rows")
 		if pivoted, ok := pivotReportBody(rows, schema, forced); ok {
@@ -607,6 +616,46 @@ func dropEmptyReportRows(rows []interface{}, schema []reportColumn) ([]interface
 		return rows, 0
 	}
 	return kept, dropped
+}
+
+// dropUnlabeledReportRows removes rows where any dimension cell is null,
+// regardless of metric value — the opt-in (--drop-unlabeled-rows) complement
+// of dropEmptyReportRows' conservative default. Grouping all billing data by
+// a sparse label yields one giant row aggregating every unlabeled cost; that
+// bucket is sometimes the question ("how much spend is NOT labeled?"), which
+// is why this never applies implicitly. The API's explicit "[Value N/A]"
+// marker counts as null: it is the server's own way of saying the label does
+// not apply to the row.
+func dropUnlabeledReportRows(rows []interface{}, schema []reportColumn) ([]interface{}, int) {
+	if len(schema) == 0 {
+		return rows, 0
+	}
+	kept := make([]interface{}, 0, len(rows))
+	dropped := 0
+	for _, row := range rows {
+		cells, ok := row.([]interface{})
+		if !ok || !hasUnlabeledDimension(cells, schema) {
+			kept = append(kept, row)
+			continue
+		}
+		dropped++
+	}
+	if dropped == 0 {
+		return rows, 0
+	}
+	return kept, dropped
+}
+
+func hasUnlabeledDimension(cells []interface{}, schema []reportColumn) bool {
+	for i, col := range schema {
+		if i >= len(cells) || col.Type != "string" {
+			continue
+		}
+		if cells[i] == nil || cells[i] == "[Value N/A]" {
+			return true
+		}
+	}
+	return false
 }
 
 func isEmptyReportRow(cells []interface{}, schema []reportColumn) bool {
