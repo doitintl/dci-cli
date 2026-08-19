@@ -35,6 +35,8 @@ Use `--fields id,name` to project list or detail responses before output, and us
 - The interactive human table view pivots report results by default (groups × time periods with totals, a first→last `trend` column, and heatmap shading). Agent mode and machine formats stay flat and colorless; pass `--pivot` to force the pivot when presenting to a human, or `--flat` when a human-mode invocation needs flat rows. The pivot's `trend` column is the agent-readable version of the heatmap — cite it when summarizing movement.
 - Use `--output csv` to export list or report results for spreadsheets.
 - Rows with a null group and zero metrics are dropped by default; pass `--include-empty-rows` to keep them (`emptyRowsDropped` marks how many were removed).
+- When grouping by sparse labels, pass `--drop-unlabeled-rows` to drop rows where any grouped dimension is null or `[Value N/A]` regardless of cost (`unlabeledRowsDropped` marks how many) — otherwise one giant null-group row aggregates all unlabeled spend. Leave it off when the unlabeled bucket is the question.
+- Flat/table/TOON/CSV report rows keep the machine-sortable `timestamp` column and omit datetime dimension columns (`year`, `month`, …) that repeat it; select one explicitly with `-C` to restore it.
 - Report results include a `currency` field when the query config specifies one — always report monetary values with their currency. Human tables render known-currency amounts with the currency sign rounded to whole units; `--raw-numbers` restores exact values.
 
 ## Insights

@@ -1516,6 +1516,75 @@ func TestTerseHelpText(t *testing.T) {
 	}
 }
 
+func timeDimFixtureBody(withTimestamp bool) map[string]interface{} {
+	schema := []interface{}{
+		map[string]interface{}{"name": "service_description", "type": "string"},
+		map[string]interface{}{"name": "year", "type": "string"},
+		map[string]interface{}{"name": "month", "type": "string"},
+		map[string]interface{}{"name": "cost", "type": "float"},
+	}
+	row := []interface{}{"svc", "2026", "07", 12.5}
+	if withTimestamp {
+		schema = append(schema, map[string]interface{}{"name": "timestamp", "type": "timestamp"})
+		row = append(row, float64(1782864000))
+	}
+	return map[string]interface{}{
+		"result": map[string]interface{}{
+			"rows":   []interface{}{row},
+			"schema": schema,
+		},
+	}
+}
+
+func TestRedundantTimeDimensionColumnsSuppressedInFlatRows(t *testing.T) {
+	viper.Set("table-columns", "")
+	t.Cleanup(func() { viper.Set("table-columns", nil) })
+
+	rows, handled, err := extractGetReportRows(timeDimFixtureBody(true), labelRFC3339)
+	if !handled || err != nil {
+		t.Fatalf("handled = %v, err = %v", handled, err)
+	}
+	row := rows[0]
+	if _, hasYear := row["year"]; hasYear {
+		t.Error("year kept despite timestamp column carrying the period")
+	}
+	if _, hasMonth := row["month"]; hasMonth {
+		t.Error("month kept despite timestamp column carrying the period")
+	}
+	if _, hasTimestamp := row["timestamp"]; !hasTimestamp {
+		t.Error("timestamp column missing — it is the machine-sortable period form")
+	}
+	if row["service_description"] != "svc" || row["cost"] != 12.5 {
+		t.Errorf("non-time columns disturbed: %v", row)
+	}
+}
+
+func TestTimeDimensionColumnsKeptWithoutTimestamp(t *testing.T) {
+	viper.Set("table-columns", "")
+	t.Cleanup(func() { viper.Set("table-columns", nil) })
+
+	rows, _, err := extractGetReportRows(timeDimFixtureBody(false), labelRFC3339)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, hasYear := rows[0]["year"]; !hasYear {
+		t.Error("year dropped although no timestamp column exists")
+	}
+}
+
+func TestTimeDimensionColumnsKeptUnderExplicitSelection(t *testing.T) {
+	viper.Set("table-columns", "month,cost")
+	t.Cleanup(func() { viper.Set("table-columns", nil) })
+
+	rows, _, err := extractGetReportRows(timeDimFixtureBody(true), labelRFC3339)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, hasMonth := rows[0]["month"]; !hasMonth {
+		t.Error("explicitly selected month column dropped")
+	}
+}
+
 func TestAugmentVerifiedFlagHelp(t *testing.T) {
 	newListDimensions := func() *cobra.Command {
 		cmd := &cobra.Command{Use: "list-dimensions"}

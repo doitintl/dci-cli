@@ -79,7 +79,7 @@ Label-scoped analysis (team/env/product tags, `system_label` taxonomies like `ge
    grep -i '<topic>' dims.csv
    ```
 
-2. **The null-group bucket.** Grouping all billing data by a sparse label yields one giant row where the label is null — every unlabeled cost aggregated together, often dwarfing the labeled rows. There is no server-side "label exists" filter (`regexp` filters do not exclude the bucket). Drop the null-group row client-side before summing.
+2. **The null-group bucket.** Grouping all billing data by a sparse label yields one giant row where the label is null — every unlabeled cost aggregated together, often dwarfing the labeled rows. There is no server-side "label exists" filter (`regexp` filters do not exclude the bucket). Pass `--drop-unlabeled-rows` to remove it (and `[Value N/A]` rows) in the CLI; leave it off when unlabeled spend is what you're measuring.
 
 3. **Inconsistent null markers.** Absent group values render as empty strings in some rows and as the literal `[Value N/A]` in others; treat both as null.
 
