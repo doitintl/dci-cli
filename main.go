@@ -2435,6 +2435,7 @@ func extractGetReportRows(root map[string]interface{}, style timestampLabelStyle
 
 		schema := readReportSchema(container["schema"])
 		colNames := readReportSchemaColumnNames(container["schema"])
+		redundant := redundantTimeDimensionColumns(schema)
 		rows := make([]map[string]interface{}, 0, len(rowItems))
 		for _, item := range rowItems {
 			switch row := item.(type) {
@@ -2443,6 +2444,9 @@ func extractGetReportRows(root map[string]interface{}, style timestampLabelStyle
 			case []interface{}:
 				obj := map[string]interface{}{}
 				for i, cell := range row {
+					if redundant[i] {
+						continue
+					}
 					obj[reportColumnName(colNames, i)] = displayTimestampCell(cell, schemaColumnType(schema, i), style)
 				}
 				rows = append(rows, obj)
@@ -2458,6 +2462,43 @@ func extractGetReportRows(root map[string]interface{}, style timestampLabelStyle
 	}
 
 	return nil, false, nil
+}
+
+// redundantTimeDimensionColumns marks datetime dimension columns (year,
+// month, day, …) that repeat information already carried by a timestamp
+// column in the same schema — the pivot classifier's judgment
+// (classifyPivotColumns), applied to the flat views: each row would otherwise
+// carry the same period twice (month "07" + year "2026" + the timestamp).
+// The timestamp is kept — it is the machine-sortable form. An explicit -C
+// selection disables the suppression: requested columns are never dropped.
+func redundantTimeDimensionColumns(schema []reportColumn) map[int]bool {
+	if strings.TrimSpace(viper.GetString("table-columns")) != "" {
+		return nil
+	}
+	hasTimestamp := false
+	for _, col := range schema {
+		if col.Type == "timestamp" || col.Type == "datetime" {
+			hasTimestamp = true
+			break
+		}
+	}
+	if !hasTimestamp {
+		return nil
+	}
+	redundant := map[int]bool{}
+	for i, col := range schema {
+		name := strings.ToLower(col.Name)
+		for _, part := range pivotTimeParts {
+			if name == part {
+				redundant[i] = true
+				break
+			}
+		}
+	}
+	if len(redundant) == 0 {
+		return nil
+	}
+	return redundant
 }
 
 func readReportSchemaColumnNames(rawSchema interface{}) []string {
