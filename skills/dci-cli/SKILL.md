@@ -19,6 +19,14 @@ TOON list output folds rows into a compact table, and columns whose values are n
 
 Use `--fields id,name` to project list or detail responses before output, and use `--exclude description` to remove fields.
 
+## Collections & Pagination
+
+- Every `list-*` command returns **one server page** (usually 50 items) per invocation. `--max-rows` does not apply to lists — it caps report/query rows only.
+- TOON (agent-mode default) and JSON keep the pagination metadata in-band: a non-empty `pageToken` means more pages exist; fetch them by re-running with `--page-token <token>`. `table` and `csv` output drop the wrapper, so check `rowCount` against expectations or prefer TOON/JSON when completeness matters.
+- `--max-results` raises the page size but has a server-side cap that varies by endpoint (500 on most, 250 on budgets/assets, lower on some). **Values above the cap are not clamped — the server silently resets them to the default of 50**, so asking for 1000 returns fewer rows than asking for 500. Stay at or below 500 unless the endpoint is known to accept more.
+- Full-collection recipe: request `--max-results 500` (250 for budgets/assets) and loop on `pageToken` until it is absent. In TOON/JSON the token is the `pageToken` field of the response.
+- `list-dimensions --filter` matches a single `field:value` term **exactly** (fields: `type`, `label`, `key` — e.g. `type:system_label`). No substrings, globs, or multi-term expressions; an unrecognized expression is silently ignored and returns the unfiltered listing. To *search* dimensions (e.g. find labels for a topic), fetch all pages once and grep locally — see [query-patterns.md](references/query-patterns.md).
+
 ## Report Results
 
 - Report/query results are capped at 500 rows in agent mode. When the output contains `rowsOmitted`, the result was truncated: narrow the query with a group `limit` and a `metricFilter`, or pass `--max-rows <n>` (`--max-rows 0` for unlimited) when you genuinely need everything. Check `rowCount`/`rowsTotal` before dumping results into context.

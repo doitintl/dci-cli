@@ -1137,6 +1137,7 @@ func setupCompletion() {
 	defaultHelp := cli.Root.HelpFunc()
 	cli.Root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		sanitizeFlagPlaceholders(cmd)
+		augmentVerifiedFlagHelp(cmd)
 		if !helpFullRequested {
 			if terse, truncated := terseHelpText(cmd.Long); truncated {
 				originalLong := cmd.Long
@@ -1178,6 +1179,23 @@ func setupCompletion() {
 			}
 		}
 	})
+}
+
+// augmentVerifiedFlagHelp appends behavior verified against the live API to
+// spec-generated flag descriptions that undersell or omit it. Kept minimal and
+// per-command: each entry documents only what was actually probed.
+func augmentVerifiedFlagHelp(cmd *cobra.Command) {
+	augment := func(flagName, note string) {
+		flag := cmd.LocalFlags().Lookup(flagName)
+		if flag == nil || strings.Contains(flag.Usage, note) {
+			return
+		}
+		flag.Usage = strings.TrimRight(flag.Usage, " \n") + "\n" + note
+	}
+	switch cmd.Name() {
+	case "list-dimensions":
+		augment("filter", "Syntax: a single field:value term matched exactly (e.g. type:system_label, label:team). Globs, substrings, and multi-term expressions are not supported; unrecognized expressions are silently ignored and return the unfiltered listing.")
+	}
 }
 
 // sanitizeFlagPlaceholders strips backticks from generated flag descriptions.
@@ -1609,7 +1627,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("no-truncate", false, "Disable long-value truncation")
 	dciCmd.PersistentFlags().Bool("yes", false, "Confirm a destructive operation")
 	dciCmd.PersistentFlags().Bool("dry-run", false, "Preview a destructive operation without executing it")
-	dciCmd.PersistentFlags().Int("max-rows", -1, "Maximum report result rows to output (default: 500 in agent mode, unlimited otherwise; 0 = unlimited)")
+	dciCmd.PersistentFlags().Int("max-rows", -1, "Maximum report/query result rows to output (default: 500 in agent mode, unlimited otherwise; 0 = unlimited). Does not affect list commands, which page server-side: use --max-results and --page-token")
 	dciCmd.PersistentFlags().String("rows", "", "Report row encoding: positional (default) or keyed (schema-named objects)")
 	dciCmd.PersistentFlags().Bool("pivot", false, "Force the pivot report view (groups as rows, time periods as columns, with totals) for any output format or mode")
 	dciCmd.PersistentFlags().Bool("flat", false, "Render report results as flat rows instead of the default interactive pivot view")
