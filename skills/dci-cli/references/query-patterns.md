@@ -96,7 +96,7 @@ Worked example — spend by AI model from `genai/*` system labels (available on 
       {"id": "genai/billing_category", "type": "system_label"}
     ],
     "metrics": [{"type": "basic", "value": "cost"}],
-    "metricFilter": {"metric": {"type": "basic", "value": "cost"}, "operator": ">", "values": [0]},
+    "metricFilter": {"metric": {"type": "basic", "value": "cost"}, "operator": "gt", "values": [0]},
     "timeInterval": "month",
     "timeRange": {"mode": "last", "amount": 1, "unit": "month", "includeCurrent": false}
   }

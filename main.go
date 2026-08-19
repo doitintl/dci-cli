@@ -1632,7 +1632,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("pivot", false, "Force the pivot report view (groups as rows, time periods as columns, with totals) for any output format or mode")
 	dciCmd.PersistentFlags().Bool("flat", false, "Render report results as flat rows instead of the default interactive pivot view")
 	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
-	dciCmd.PersistentFlags().Bool("drop-unlabeled-rows", false, "Drop report rows where any grouped dimension is null or [Value N/A], regardless of cost — useful when grouping by sparse labels, where the null bucket aggregates all unlabeled spend")
+	dciCmd.PersistentFlags().Bool("drop-unlabeled-rows", false, "Drop report rows whose grouped label dimensions are all null or [Value N/A], regardless of cost — the bucket aggregating all unlabeled spend when grouping by sparse labels")
 	dciCmd.PersistentFlags().Bool("include-dismissed", false, "Keep dismissed insights in list-insights results (excluded by default)")
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
 	dciCmd.PersistentFlags().Bool("utc", false, "Render timestamps in UTC instead of the local timezone (table output only; machine formats and report period columns are always UTC)")

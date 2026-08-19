@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -618,23 +619,29 @@ func dropEmptyReportRows(rows []interface{}, schema []reportColumn) ([]interface
 	return kept, dropped
 }
 
-// dropUnlabeledReportRows removes rows where any dimension cell is null,
-// regardless of metric value — the opt-in (--drop-unlabeled-rows) complement
-// of dropEmptyReportRows' conservative default. Grouping all billing data by
-// a sparse label yields one giant row aggregating every unlabeled cost; that
-// bucket is sometimes the question ("how much spend is NOT labeled?"), which
-// is why this never applies implicitly. The API's explicit "[Value N/A]"
-// marker counts as null: it is the server's own way of saying the label does
-// not apply to the row.
+// dropUnlabeledReportRows removes rows where every grouped label dimension is
+// null, regardless of metric value — the opt-in (--drop-unlabeled-rows)
+// complement of dropEmptyReportRows' conservative default. Grouping all
+// billing data by a sparse label yields one giant row aggregating every
+// unlabeled cost; that bucket is sometimes the question ("how much spend is
+// NOT labeled?"), which is why this never applies implicitly. The API's
+// explicit "[Value N/A]" marker counts as null: it is the server's own way
+// of saying the label does not apply to the row.
+//
+// "Every", not "any": providers label mutually exclusive subsets (an
+// Anthropic row carries genai/cost_type but never genai/billing_category;
+// a Cursor row the reverse), so a multi-label grouping has some null label
+// on nearly every row. Only the all-null row is the unlabeled bucket.
 func dropUnlabeledReportRows(rows []interface{}, schema []reportColumn) ([]interface{}, int) {
-	if len(schema) == 0 {
+	checked := unlabeledCheckColumns(schema)
+	if len(checked) == 0 {
 		return rows, 0
 	}
 	kept := make([]interface{}, 0, len(rows))
 	dropped := 0
 	for _, row := range rows {
 		cells, ok := row.([]interface{})
-		if !ok || !hasUnlabeledDimension(cells, schema) {
+		if !ok || !allLabelCellsNull(cells, checked) {
 			kept = append(kept, row)
 			continue
 		}
@@ -646,16 +653,74 @@ func dropUnlabeledReportRows(rows []interface{}, schema []reportColumn) ([]inter
 	return kept, dropped
 }
 
-func hasUnlabeledDimension(cells []interface{}, schema []reportColumn) bool {
+// unlabeledCheckColumns picks the schema columns whose joint nullness defines
+// an unlabeled row: the label-derived group columns from the request config
+// when it is available (query bodies arrive buffered), otherwise every
+// string-typed dimension except the datetime parts — year/month/day columns
+// are always populated and would mask the null bucket.
+func unlabeledCheckColumns(schema []reportColumn) []int {
+	labelGroups := requestLabelGroupIDs()
+	timeParts := map[string]bool{}
+	for _, part := range pivotTimeParts {
+		timeParts[part] = true
+	}
+	indexes := []int{}
 	for i, col := range schema {
-		if i >= len(cells) || col.Type != "string" {
+		if col.Type != "string" || timeParts[strings.ToLower(col.Name)] {
 			continue
 		}
-		if cells[i] == nil || cells[i] == "[Value N/A]" {
-			return true
+		if labelGroups != nil && !labelGroups[col.Name] {
+			continue
+		}
+		indexes = append(indexes, i)
+	}
+	return indexes
+}
+
+func allLabelCellsNull(cells []interface{}, checked []int) bool {
+	for _, i := range checked {
+		if i >= len(cells) {
+			continue
+		}
+		if cells[i] != nil && cells[i] != "[Value N/A]" {
+			return false
 		}
 	}
-	return false
+	return true
+}
+
+// requestLabelGroupIDs returns the ids of label-derived group dimensions in
+// the buffered request config (nil when no config is available, e.g. saved
+// reports fetched by id).
+func requestLabelGroupIDs() map[string]bool {
+	if len(bufferedRequestBody) == 0 {
+		return nil
+	}
+	var body struct {
+		Config struct {
+			Group []struct {
+				ID   string `json:"id"`
+				Type string `json:"type"`
+			} `json:"group"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(bufferedRequestBody, &body); err != nil || len(body.Config.Group) == 0 {
+		return nil
+	}
+	labelTypes := map[string]bool{
+		"label": true, "tag": true, "project_label": true,
+		"system_label": true, "gke_label": true, "gke": true,
+	}
+	ids := map[string]bool{}
+	for _, group := range body.Config.Group {
+		if labelTypes[group.Type] {
+			ids[group.ID] = true
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
 }
 
 func isEmptyReportRow(cells []interface{}, schema []reportColumn) bool {

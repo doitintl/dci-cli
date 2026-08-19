@@ -772,6 +772,9 @@ func TestTransformKeepsEmptyRowsWhenRequested(t *testing.T) {
 func TestTransformDropsUnlabeledRowsOnRequest(t *testing.T) {
 	resetTransformConfig(t)
 	viper.Set("drop-unlabeled-rows", true)
+	oldBody := bufferedRequestBody
+	bufferedRequestBody = nil
+	t.Cleanup(func() { bufferedRequestBody = oldBody })
 	body := reportBody(
 		[]interface{}{nil, "2026", "07", float64(418722), float64(1782864000)},
 		[]interface{}{"[Value N/A]", "2026", "07", 5.0, float64(1782864000)},
@@ -785,6 +788,47 @@ func TestTransformDropsUnlabeledRowsOnRequest(t *testing.T) {
 	container := result.(map[string]interface{})["result"].(map[string]interface{})
 	if dropped, _ := container["unlabeledRowsDropped"].(int64); dropped != 2 {
 		t.Errorf("unlabeledRowsDropped = %v, want 2", container["unlabeledRowsDropped"])
+	}
+}
+
+// Providers label mutually exclusive subsets: with several labels grouped,
+// only the all-null row is the unlabeled bucket. Rows carrying any one label
+// must survive.
+func TestTransformDropsOnlyAllNullRowsAcrossMultipleLabels(t *testing.T) {
+	resetTransformConfig(t)
+	viper.Set("drop-unlabeled-rows", true)
+	oldBody := bufferedRequestBody
+	bufferedRequestBody = []byte(`{"config":{"group":[
+		{"id":"genai/model","type":"system_label"},
+		{"id":"genai/cost_type","type":"system_label"}
+	]}}`)
+	t.Cleanup(func() { bufferedRequestBody = oldBody })
+
+	body := map[string]interface{}{
+		"result": map[string]interface{}{
+			"rows": []interface{}{
+				[]interface{}{nil, nil, "2026", "07", float64(418722)},
+				[]interface{}{"Claude Opus 4.8", "tokens", "2026", "07", 61384.0},
+				[]interface{}{"gpt-5.6-sol", nil, "2026", "07", 7487.0},
+				[]interface{}{nil, "tokens", "2026", "07", 5.0},
+			},
+			"schema": []interface{}{
+				map[string]interface{}{"name": "genai/model", "type": "string"},
+				map[string]interface{}{"name": "genai/cost_type", "type": "string"},
+				map[string]interface{}{"name": "year", "type": "string"},
+				map[string]interface{}{"name": "month", "type": "string"},
+				map[string]interface{}{"name": "cost", "type": "float"},
+			},
+		},
+	}
+	result := transformSuccessBody(body)
+	rows := transformedRows(t, result)
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3 (only the all-null bucket dropped)", len(rows))
+	}
+	container := result.(map[string]interface{})["result"].(map[string]interface{})
+	if dropped, _ := container["unlabeledRowsDropped"].(int64); dropped != 1 {
+		t.Errorf("unlabeledRowsDropped = %v, want 1", container["unlabeledRowsDropped"])
 	}
 }
 
