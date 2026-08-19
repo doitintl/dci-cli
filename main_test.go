@@ -1516,6 +1516,36 @@ func TestTerseHelpText(t *testing.T) {
 	}
 }
 
+func TestAugmentVerifiedFlagHelp(t *testing.T) {
+	newListDimensions := func() *cobra.Command {
+		cmd := &cobra.Command{Use: "list-dimensions"}
+		cmd.Flags().String("filter", "", "An expression for filtering the results.")
+		return cmd
+	}
+
+	cmd := newListDimensions()
+	augmentVerifiedFlagHelp(cmd)
+	usage := cmd.Flags().Lookup("filter").Usage
+	if !strings.Contains(usage, "field:value") || !strings.Contains(usage, "silently ignored") {
+		t.Errorf("filter usage = %q, want verified syntax note appended", usage)
+	}
+
+	// Idempotent: help can render more than once per process.
+	augmentVerifiedFlagHelp(cmd)
+	if strings.Count(cmd.Flags().Lookup("filter").Usage, "field:value") != 1 {
+		t.Error("augmentation applied twice")
+	}
+
+	// Other commands with a filter flag are untouched: the note documents
+	// behavior verified per endpoint, not a global contract.
+	other := &cobra.Command{Use: "list-reports"}
+	other.Flags().String("filter", "", "An expression for filtering the results.")
+	augmentVerifiedFlagHelp(other)
+	if strings.Contains(other.Flags().Lookup("filter").Usage, "field:value") {
+		t.Error("augmentation leaked to an unverified command")
+	}
+}
+
 func TestRewriteHelpFullFlag(t *testing.T) {
 	oldRequested := helpFullRequested
 	helpFullRequested = false
