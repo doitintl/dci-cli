@@ -2,6 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -125,6 +129,195 @@ func TestNotePageTokenDropped(t *testing.T) {
 	notePageTokenDropped(map[string]interface{}{"pageToken": "x", "id": "r1"})
 	if stderr.String() != "" {
 		t.Errorf("non-list body produced note %q", stderr.String())
+	}
+}
+
+// scriptedTransport returns canned JSON responses in order and records the
+// requests it saw.
+type scriptedTransport struct {
+	responses []string
+	requests  []*http.Request
+}
+
+func (s *scriptedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	s.requests = append(s.requests, req)
+	index := len(s.requests) - 1
+	if index >= len(s.responses) {
+		index = len(s.responses) - 1
+	}
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Header:        http.Header{"Content-Type": []string{"application/json"}},
+		Body:          io.NopCloser(strings.NewReader(s.responses[index])),
+		ContentLength: int64(len(s.responses[index])),
+	}, nil
+}
+
+func activateAllPages(t *testing.T, boost int) {
+	t.Helper()
+	viper.Set("all-pages", true)
+	viper.Set("all-pages-boost", boost)
+	t.Cleanup(func() {
+		viper.Set("all-pages", false)
+		viper.Set("all-pages-boost", 0)
+	})
+}
+
+func apiGetRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "https://api.doit.com/analytics/v1/dimensions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
+func TestPaginatingTransportMergesPages(t *testing.T) {
+	activateAllPages(t, 0)
+	scripted := &scriptedTransport{responses: []string{
+		`{"dimensions":[{"id":"a"}],"rowCount":1,"pageToken":"t2"}`,
+		`{"dimensions":[{"id":"b"}],"rowCount":1,"pageToken":"t3"}`,
+		`{"dimensions":[{"id":"c"}],"rowCount":1}`,
+	}}
+	transport := paginatingTransport{next: scripted}
+
+	response, err := transport.RoundTrip(apiGetRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	var merged map[string]interface{}
+	if err := json.Unmarshal(body, &merged); err != nil {
+		t.Fatalf("merged body is not JSON: %v\n%s", err, body)
+	}
+	if rows := merged["dimensions"].([]interface{}); len(rows) != 3 {
+		t.Errorf("merged rows = %d, want 3", len(rows))
+	}
+	if merged["rowCount"] != float64(3) {
+		t.Errorf("rowCount = %v, want 3", merged["rowCount"])
+	}
+	if merged["pagesFetched"] != float64(3) {
+		t.Errorf("pagesFetched = %v, want 3", merged["pagesFetched"])
+	}
+	if _, hasToken := merged["pageToken"]; hasToken {
+		t.Error("merged body still carries pageToken")
+	}
+	if len(scripted.requests) != 3 {
+		t.Fatalf("requests = %d, want 3", len(scripted.requests))
+	}
+	if got := scripted.requests[1].URL.Query().Get("pageToken"); got != "t2" {
+		t.Errorf("second request pageToken = %q, want t2", got)
+	}
+	if got := scripted.requests[2].URL.Query().Get("pageToken"); got != "t3" {
+		t.Errorf("third request pageToken = %q, want t3", got)
+	}
+}
+
+func TestPaginatingTransportBoostsEveryPageSize(t *testing.T) {
+	activateAllPages(t, 500)
+	scripted := &scriptedTransport{responses: []string{
+		`{"dimensions":[{"id":"a"}],"rowCount":1,"pageToken":"t2"}`,
+		`{"dimensions":[{"id":"b"}],"rowCount":1}`,
+	}}
+	transport := paginatingTransport{next: scripted}
+
+	if _, err := transport.RoundTrip(apiGetRequest(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(scripted.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(scripted.requests))
+	}
+	for index, request := range scripted.requests {
+		if got := request.URL.Query().Get("maxResults"); got != "500" {
+			t.Errorf("request %d maxResults = %q, want boosted 500 on every page", index+1, got)
+		}
+	}
+}
+
+func TestPaginatingTransportInertWithoutAllFlag(t *testing.T) {
+	viper.Set("all-pages", false)
+	scripted := &scriptedTransport{responses: []string{
+		`{"dimensions":[{"id":"a"}],"rowCount":1,"pageToken":"t2"}`,
+	}}
+	transport := paginatingTransport{next: scripted}
+
+	response, err := transport.RoundTrip(apiGetRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scripted.requests) != 1 {
+		t.Fatalf("requests = %d, want passthrough single request", len(scripted.requests))
+	}
+	body, _ := io.ReadAll(response.Body)
+	if !strings.Contains(string(body), `"pageToken":"t2"`) {
+		t.Errorf("body = %s, want untouched", body)
+	}
+}
+
+func TestPaginatingTransportIgnoresOtherHosts(t *testing.T) {
+	activateAllPages(t, 0)
+	scripted := &scriptedTransport{responses: []string{
+		`{"items":[{"id":"a"}],"rowCount":1,"pageToken":"t2"}`,
+	}}
+	transport := paginatingTransport{next: scripted}
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.RoundTrip(req); err != nil {
+		t.Fatal(err)
+	}
+	if len(scripted.requests) != 1 {
+		t.Fatalf("requests = %d, want 1 (foreign host untouched)", len(scripted.requests))
+	}
+}
+
+func TestPaginatingTransportPageCapKeepsResumeToken(t *testing.T) {
+	activateAllPages(t, 0)
+	stderr := capturePaginationStderr(t)
+	// Every page returns a token: the loop must stop at the cap.
+	pages := make([]string, allPagesMaxPages+5)
+	for index := range pages {
+		pages[index] = fmt.Sprintf(`{"dimensions":[{"id":"d%d"}],"rowCount":1,"pageToken":"t%d"}`, index, index+1)
+	}
+	scripted := &scriptedTransport{responses: pages}
+	transport := paginatingTransport{next: scripted}
+
+	response, err := transport.RoundTrip(apiGetRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scripted.requests) != allPagesMaxPages {
+		t.Fatalf("requests = %d, want capped at %d", len(scripted.requests), allPagesMaxPages)
+	}
+	body, _ := io.ReadAll(response.Body)
+	var merged map[string]interface{}
+	if err := json.Unmarshal(body, &merged); err != nil {
+		t.Fatal(err)
+	}
+	if merged["pageToken"] == nil || merged["pageToken"] == "" {
+		t.Error("cap-hit merge lost the resume token")
+	}
+	if !strings.Contains(stderr.String(), "--page-token") {
+		t.Errorf("cap-hit note = %q, want resume guidance", stderr.String())
+	}
+}
+
+func TestValidateAllPagesFlags(t *testing.T) {
+	if err := validateAllPagesFlags([]string{"list-dimensions", "--all"}); err != nil {
+		t.Errorf("--all alone rejected: %v", err)
+	}
+	if err := validateAllPagesFlags([]string{"list-dimensions"}); err != nil {
+		t.Errorf("no flags rejected: %v", err)
+	}
+	err := validateAllPagesFlags([]string{"list-dimensions", "--all", "--page-token", "x"})
+	if err == nil || !strings.Contains(err.Error(), "--page-token") {
+		t.Errorf("err = %v, want page-token conflict", err)
+	}
+	err = validateAllPagesFlags([]string{"list-dimensions", "--all", "--max-results=10"})
+	if err == nil || !strings.Contains(err.Error(), "--max-results") {
+		t.Errorf("err = %v, want max-results conflict", err)
 	}
 }
 

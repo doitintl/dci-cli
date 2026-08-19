@@ -70,6 +70,9 @@ func preflightAPIInvocation(args []string) error {
 	if err := validateMaxResults(operation.Name, args[2:]); err != nil {
 		return err
 	}
+	if err := validateAllPagesFlags(args[2:]); err != nil {
+		return err
+	}
 	if authenticated || interactive || invocationHasFlag(args, "--dry-run") {
 		return nil
 	}

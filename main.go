@@ -1627,7 +1627,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("no-truncate", false, "Disable long-value truncation")
 	dciCmd.PersistentFlags().Bool("yes", false, "Confirm a destructive operation")
 	dciCmd.PersistentFlags().Bool("dry-run", false, "Preview a destructive operation without executing it")
-	dciCmd.PersistentFlags().Int("max-rows", -1, "Maximum report/query result rows to output (default: 500 in agent mode, unlimited otherwise; 0 = unlimited). Does not affect list commands, which page server-side: use --max-results and --page-token")
+	dciCmd.PersistentFlags().Int("max-rows", -1, "Maximum report/query result rows to output (default: 500 in agent mode, unlimited otherwise; 0 = unlimited). Does not affect list commands, which page server-side: use --all, --max-results, or --page-token")
 	dciCmd.PersistentFlags().String("rows", "", "Report row encoding: positional (default) or keyed (schema-named objects)")
 	dciCmd.PersistentFlags().Bool("pivot", false, "Force the pivot report view (groups as rows, time periods as columns, with totals) for any output format or mode")
 	dciCmd.PersistentFlags().Bool("flat", false, "Render report results as flat rows instead of the default interactive pivot view")
@@ -1638,6 +1638,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
 	dciCmd.PersistentFlags().Bool("id", false, "Treat positional resource arguments as literal IDs and skip name resolution")
 	dciCmd.PersistentFlags().Bool("name", false, "Force name resolution even when an argument matches the resource ID format")
+	dciCmd.PersistentFlags().Bool("all", false, "Fetch every page of a paged list response before rendering (follows the server's page tokens; GET list commands only). Cannot be combined with --page-token or --max-results")
 	registerStaticFlagCompletions(dciCmd)
 
 	// Bind table flags into viper so the renderer can pick them up.
@@ -1688,6 +1689,24 @@ func addOutputFlag() {
 			}
 		}
 		viper.Set("rows-mode", rowsMode)
+
+		// --all pagination state: always reset (viper persists across
+		// in-process runs). The boost is the endpoint's known page-size cap,
+		// so --all fetches the fewest pages possible.
+		allPages := false
+		if flag := cmd.Flags().Lookup("all"); flag != nil && flag.Changed {
+			allPages = flag.Value.String() == "true"
+		}
+		viper.Set("all-pages", allPages)
+		viper.Set("all-pages-boost", pagingCaps[cmd.Name()].limit)
+		if allPages {
+			// Installed lazily, only for --all runs: restish configures TLS and
+			// proxies via a http.DefaultTransport.(*http.Transport) assertion
+			// (request.go), which a standing wrapper would break for every
+			// invocation.
+			installPaginatingTransport()
+		}
+
 		viper.Set("report-currency", "")
 		viper.Set("money-columns", "")
 		viper.Set("report-hourly", false)
