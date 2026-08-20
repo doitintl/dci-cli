@@ -228,7 +228,14 @@ func updateNetworkError(err error) error {
 	}
 }
 
+// updateStatusReported records that this invocation was `dci update` itself:
+// it owns update reporting, so the passive end-of-run footer must stay quiet —
+// after a successful install it would falsely announce the pre-update version
+// gap, and after --check it would duplicate the notice just printed.
+var updateStatusReported bool
+
 func runUpdate(configDir string, options updateOptions) error {
+	updateStatusReported = true
 	current := version
 	if _, ok := parseVersion(current); !ok {
 		return updateFailedError(
@@ -263,6 +270,21 @@ func runUpdate(configDir string, options updateOptions) error {
 	}
 
 	channel := detectChannelForUpdate()
+	// A version pin only means something on a standalone install: the
+	// manager channels run the manager's own upgrade command, which always
+	// installs its latest — accepting the flag there would report a rollback
+	// that never happened.
+	if options.version != "" && channel != channelSelf {
+		return invocationPreflightError{
+			detail: structuredError{
+				Code:      "USAGE_ERROR",
+				Message:   fmt.Sprintf("--version applies to standalone installs only; this binary is managed by %s", channel),
+				Hint:      "Install the specific version through your package manager instead",
+				Retryable: false,
+			},
+			exitCode: exitUsage,
+		}
+	}
 	pinned := options.version != "" && !versionsEqual(current, target)
 	available := isNewerVersion(current, target) || pinned
 	result := updateResult{
@@ -278,6 +300,15 @@ func runUpdate(configDir string, options updateOptions) error {
 	if agentMode {
 		if !available || options.check || !options.yes {
 			return emitUpdateResult(result)
+		}
+		// The deb/rpm install step needs sudo's interactive password prompt;
+		// on a pty-backed agent shell sudo would block on /dev/tty forever
+		// instead of failing, so agent mode refuses rather than hangs.
+		if channel == channelDeb || channel == channelRPM {
+			return updateFailedError(
+				fmt.Sprintf("updating a %s-managed install needs an interactive sudo prompt, which agent mode cannot provide", channel),
+				"Run manually: "+result.Instruction,
+			)
 		}
 		if err := performUpdate(channel, target); err != nil {
 			return updateFailedError(err.Error(), "Update manually: "+result.Instruction)
@@ -343,9 +374,13 @@ func performUpdate(channel installChannel, target string) error {
 	case channelDeb, channelRPM:
 		return updateLinuxPackage(channel, target)
 	default:
-		return selfUpdateBinary(target)
+		return performSelfUpdate(target)
 	}
 }
+
+// performSelfUpdate binds the standalone-binary replacement; a var so tests
+// can exercise runUpdate's self-channel flows without touching GitHub.
+var performSelfUpdate = selfUpdateBinary
 
 // selfUpdateBinary replaces the running binary with the release asset for
 // this GOOS/GOARCH, validated against the release's checksums.txt. The

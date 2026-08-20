@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeUpdateEnv pins the pieces of runUpdate's environment that tests need
@@ -29,6 +30,9 @@ func fakeUpdateEnv(t *testing.T, agent bool, confirm bool) *[][]string {
 	confirmUpdate = func(plan string) bool { return confirm }
 	t.Cleanup(func() { confirmUpdate = originalConfirm })
 
+	updateStatusReported = false
+	t.Cleanup(func() { updateStatusReported = false })
+
 	ran := &[][]string{}
 	originalRun := runExternalCommand
 	runExternalCommand = func(argv []string) error {
@@ -37,6 +41,19 @@ func fakeUpdateEnv(t *testing.T, agent bool, confirm bool) *[][]string {
 	}
 	t.Cleanup(func() { runExternalCommand = originalRun })
 	return ran
+}
+
+// fakeSelfUpdate captures self-channel replacements instead of hitting GitHub.
+func fakeSelfUpdate(t *testing.T) *[]string {
+	t.Helper()
+	targets := &[]string{}
+	original := performSelfUpdate
+	performSelfUpdate = func(target string) error {
+		*targets = append(*targets, target)
+		return nil
+	}
+	t.Cleanup(func() { performSelfUpdate = original })
+	return targets
 }
 
 // serveLatestRelease points the release lookup at a local server returning
@@ -191,15 +208,70 @@ func TestRunUpdateRejectsInvalidPin(t *testing.T) {
 }
 
 func TestRunUpdatePinAllowsRollback(t *testing.T) {
-	ran := fakeUpdateEnv(t, false, true)
-	forceChannel(t, channelBrew)
+	fakeUpdateEnv(t, false, true)
+	forceChannel(t, channelSelf)
+	targets := fakeSelfUpdate(t)
 
 	out, err := captureStdout(t, func() error { return runUpdate(t.TempDir(), updateOptions{version: "2.4.0"}) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "dci updated: 2.5.0 → 2.4.0") || len(*ran) != 1 {
-		t.Fatalf("rollback out = %q ran = %v", out, *ran)
+	if !strings.Contains(out, "dci updated: 2.5.0 → 2.4.0") {
+		t.Fatalf("rollback out = %q", out)
+	}
+	if len(*targets) != 1 || (*targets)[0] != "v2.4.0" {
+		t.Fatalf("self-update targets = %v, want v2.4.0", *targets)
+	}
+}
+
+func TestRunUpdateRejectsPinOnManagedChannels(t *testing.T) {
+	ran := fakeUpdateEnv(t, false, true)
+	forceChannel(t, channelBrew)
+
+	err := runUpdate(t.TempDir(), updateOptions{version: "2.4.0"})
+	preflight, ok := err.(invocationPreflightError)
+	if !ok || preflight.detail.Code != "USAGE_ERROR" {
+		t.Fatalf("managed pin error = %#v, want USAGE_ERROR", err)
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("a rejected pin must run nothing, ran %v", *ran)
+	}
+}
+
+func TestRunUpdateAgentRefusesSudoChannels(t *testing.T) {
+	ran := fakeUpdateEnv(t, true, true)
+	serveLatestRelease(t, "v2.6.0")
+	forceChannel(t, channelDeb)
+
+	err := runUpdate(t.TempDir(), updateOptions{yes: true})
+	preflight, ok := err.(invocationPreflightError)
+	if !ok || preflight.detail.Code != "UPDATE_FAILED" || !strings.Contains(preflight.detail.Message, "interactive sudo") {
+		t.Fatalf("agent deb error = %#v, want the sudo refusal", err)
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("agent mode must never reach sudo, ran %v", *ran)
+	}
+}
+
+func TestRunUpdateSuppressesPassiveFooter(t *testing.T) {
+	fakeUpdateEnv(t, false, true)
+	serveLatestRelease(t, "v2.5.0")
+	dir := t.TempDir()
+
+	if _, err := captureStdout(t, func() error { return runUpdate(dir, updateOptions{}) }); err != nil {
+		t.Fatal(err)
+	}
+	if !updateStatusReported {
+		t.Fatal("runUpdate must mark update status as reported")
+	}
+	// Even with a cache claiming a newer release, the footer stays quiet
+	// after dci update has spoken.
+	if err := writeUpdateCache(dir, updateCache{LatestVersion: "v9.9.9", CheckedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStderr(t, func() { maybeNotifyUpdate(dir) })
+	if out != "" {
+		t.Fatalf("footer printed after dci update: %q", out)
 	}
 }
 
