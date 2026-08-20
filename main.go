@@ -26,7 +26,6 @@ import (
 	"github.com/alexeyco/simpletable"
 	"github.com/mattn/go-runewidth"
 	"github.com/rest-sh/restish/cli"
-	"github.com/rest-sh/restish/oauth"
 	"github.com/rest-sh/restish/openapi"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -321,7 +320,7 @@ func run() (exitCode int) {
 	maybeHintAgentMode()
 
 	cli.AddLoader(openapi.New())
-	cli.AddAuth("oauth-authorization-code", &oauth.AuthorizationCodeHandler{})
+	cli.AddAuth("oauth-authorization-code", &authorizationCodeHandler{})
 
 	if err := rejectProfileFlags(os.Args); err != nil {
 		return reportExecutionError(err, 0, configDir)
