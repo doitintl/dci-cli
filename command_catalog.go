@@ -58,8 +58,10 @@ type commandCatalogFlag struct {
 }
 
 var requiredOperationFlags = map[string]map[string]bool{
-	"cancel-invite": {"idempotency-key": true},
-	"resend-invite": {"idempotency-key": true},
+	"cancel-invite":         {"idempotency-key": true},
+	"import-cloudflow-flow": {"idempotency-key": true},
+	"import-cloudflows":     {"idempotency-key": true},
+	"resend-invite":         {"idempotency-key": true},
 }
 
 func registerCommandCatalog() {
