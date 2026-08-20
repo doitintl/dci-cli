@@ -54,7 +54,7 @@ For `brew`/`scoop`/`winget`, `dci update`:
 2. Prints what it is about to do and **runs the manager's command** (`brew upgrade dci`, etc.) after an interactive confirm — the F3-style default-Cancel prompt behind `tuiActive()`, plain `[y/N]` otherwise. `--yes` skips the prompt.
 3. Streams the manager's output through, propagates its exit code, and re-checks `dci --version`-style that the binary now reports the new version.
 
-For `deb`/`rpm` there is no repository to delegate to (packages are downloaded from GitHub Releases — README "Linux"). Replacing a dpkg/rpm-owned file behind the database's back is the one thing this spec refuses to do; instead print the exact download+install one-liner (`curl -fsSLO …/dci_<ver>_linux_<arch>.deb && sudo dpkg -i …`), which needs the sudo the CLI should never invoke itself.
+For `deb`/`rpm` there is no repository to delegate to (packages are downloaded from GitHub Releases — README "Linux"), and replacing a dpkg/rpm-owned file behind the database's back is the one thing this spec refuses to do. Instead, `dci update` treats the download+install pipeline as the delegated command: it shows the exact steps (`curl -fsSLO …/dci_<ver>_linux_<arch>.deb && sudo dpkg -i …` / `sudo rpm -U …`), and after the same default-Cancel confirm executes them through the user's shell — sudo prompts for the password interactively, exactly as if the user had pasted the line themselves. The CLI never caches or handles the password; declining the confirm (or a non-TTY context) falls back to printing the line. The downloaded package is checksum-verified against `checksums.txt` before the install step runs.
 
 Non-TTY / agent mode: never execute a package manager. Print the instruction (human non-TTY) or emit the structured result (§7).
 
@@ -73,7 +73,7 @@ Flags: `--check` (report only — today's `dci upgrade` behavior), `--yes`, `--v
 
 ## 6. Command naming
 
-`dci update` performs; the existing `dci upgrade` becomes an alias of it. `dci upgrade`'s current check-only behavior moves to `dci update --check`. This is a behavior change for `upgrade` (from "prints instruction" to "asks, then does it") — acceptable because the interactive default-Cancel confirm keeps a bare invocation harmless, and the old output is one flag away. Machine contexts see no change in what runs unprompted (§7).
+`dci update` performs; the existing `dci upgrade` becomes an alias of it (decided 2026-08-21). `dci upgrade`'s current check-only behavior moves to `dci update --check`. This is a behavior change for `upgrade` (from "prints instruction" to "asks, then does it") — acceptable because the interactive default-Cancel confirm keeps a bare invocation harmless, and the old output is one flag away. Machine contexts see no change in what runs unprompted (§7).
 
 ## 7. Agent mode & exit codes
 
@@ -109,8 +109,8 @@ Antigravity's updater runs detached with a TTL debounce marker and an advisory l
 - Background auto-install (§8, deliberately excluded).
 - WinGet manifest lag: `winget upgrade` can trail a release by hours-to-days while microsoft/winget-pkgs merges the auto-submitted PR (sync-manifests.yml); the delegated command inherits that reality and this spec does not paper over it.
 
-## 11. Open questions (decision needed)
+## 11. Decisions (maintainer, 2026-08-21)
 
-1. **§6 naming**: comfortable with `upgrade` becoming an installing alias, or keep `upgrade` check-only forever and introduce only `update`?
-2. **§4 deb/rpm**: print-only (as specced), or offer to run the curl+dpkg pipeline via the user's shell with an explicit prompt (still needs their sudo password interactively)?
-3. **§5 pinning**: is `--version` for downgrades wanted at all, or does it invite skew with the manifests?
+1. **§6 naming**: `upgrade` becomes an installing alias of `update`; check-only behavior lives on as `--check`.
+2. **§4 deb/rpm**: offer to run the download+install pipeline after the confirm (interactive sudo), with print-only as the decline/non-TTY fallback.
+3. **§5 pinning**: `--version <tag>` is in — checksum-verified pin/rollback for self-managed installs.
