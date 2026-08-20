@@ -146,11 +146,25 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 		out = append(out, totals)
 	}
 
-	// The pivot already identified the time periods and their totals — hand
-	// them to the --chart renderer (a no-op unless the flag was passed).
-	if len(metricIdx) > 0 {
+	// The pivot already identified the time periods, their totals, and the
+	// group ranking — hand them to the --chart renderer (a no-op unless the
+	// flag was passed). Group series follow groupOrder, so the stacked chart
+	// stacks largest-first and inherits the all-zero-row drop above; a
+	// multi-metric pivot charts its first metric, same as the line view.
+	if chartRequested() && len(metricIdx) > 0 {
 		firstMetric := schema[metricIdx[0]].Name
-		setChartSeries(firstMetric, periods, periodTotals[firstMetric])
+		groups := make([]chartGroupSeries, 0, len(groupOrder))
+		for _, key := range groupOrder {
+			if multiMetric && key.metric != firstMetric {
+				continue
+			}
+			series := make([]float64, len(periods))
+			for i, p := range periods {
+				series[i] = values[key][p]
+			}
+			groups = append(groups, chartGroupSeries{name: key.group, values: series})
+		}
+		setChartSeries(firstMetric, periods, periodTotals[firstMetric], groups)
 	}
 
 	// Give the renderer an explicit column order (group, periods, total) —

@@ -21,6 +21,7 @@ import (
 	// Embed the IANA zone database so DCI_TZ works on hosts without one
 	// (notably Windows installs via Scoop/WinGet).
 	_ "time/tzdata"
+	"unicode/utf8"
 
 	"github.com/alexeyco/simpletable"
 	"github.com/mattn/go-runewidth"
@@ -1651,7 +1652,10 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
 	dciCmd.PersistentFlags().Bool("utc", false, "Render timestamps in UTC instead of the local timezone (table output only; machine formats and report period columns are always UTC)")
 	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
-	dciCmd.PersistentFlags().Bool("chart", false, "Render an ASCII graph of report period totals under the table (table output in human mode only; ignored elsewhere)")
+	dciCmd.PersistentFlags().String("chart", "", "Render a chart of the report under the table: 'stacked' columns per group (the default) or a 'line' of period totals (table output in human mode only; ignored elsewhere)")
+	// Bare --chart keeps working (and picks the stacked view): cobra fills
+	// the value from NoOptDefVal when the flag is passed without one.
+	dciCmd.PersistentFlags().Lookup("chart").NoOptDefVal = "stacked"
 	dciCmd.PersistentFlags().Bool("id", false, "Treat positional resource arguments as literal IDs and skip name resolution")
 	dciCmd.PersistentFlags().Bool("name", false, "Force name resolution even when an argument matches the resource ID format")
 	dciCmd.PersistentFlags().Bool("all", false, "Fetch every page of a paged list response before rendering (follows the server's page tokens; GET list commands only). Cannot be combined with --page-token or --max-results")
@@ -1761,11 +1765,21 @@ func addOutputFlag() {
 		viper.Set("heatmap", heatmapEnabled(heatmapRequested, agentMode, stdoutIsTTY(), os.Getenv("NO_COLOR") != ""))
 
 		resetChartState()
-		chartFlagSet := false
-		if flag := cmd.Flags().Lookup("chart"); flag != nil {
-			chartFlagSet = flag.Value.String() == "true"
+		chartMode := ""
+		if flag := cmd.Flags().Lookup("chart"); flag != nil && flag.Changed {
+			chartMode = strings.ToLower(strings.TrimSpace(flag.Value.String()))
+			switch chartMode {
+			case "stacked", "line":
+			case "true": // the flag's former boolean spelling keeps working
+				chartMode = "stacked"
+			case "false", "":
+				chartMode = ""
+			default:
+				return fmt.Errorf("invalid --chart %q (supported: stacked, line)", flag.Value.String())
+			}
 		}
-		viper.Set("chart-requested", chartFlagSet)
+		viper.Set("chart-requested", chartMode != "")
+		viper.Set("chart-mode", chartMode)
 
 		for flagName, configName := range map[string]string{
 			"pivot":              "pivot-rows",
@@ -2673,12 +2687,21 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	maybeRenderChart()
+	// The first rendered line is the table's top border: its rune width is
+	// the exact table width, so the chart can line up with it.
+	maybeRenderChart(utf8.RuneCountInString(firstLine(out)))
 
 	if len(hidden) > 0 {
 		out += renderHiddenColumnsHint(keys, hidden)
 	}
 	return []byte(out), nil
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // renderHiddenColumnsHint reports the columns the table did not render. On an
