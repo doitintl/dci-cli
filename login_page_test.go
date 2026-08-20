@@ -52,6 +52,13 @@ func TestLoginCallbackServeHTTP(t *testing.T) {
 			[]string{"server_error"},
 			[]string{"$DETAILS"},
 		},
+		{
+			"placeholder-shaped error value cannot hijack the details slot",
+			"?error=%24DETAILS&error_description=oops",
+			"",
+			[]string{`<div class="errdetail">oops</div>`},
+			nil,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

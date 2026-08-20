@@ -45,8 +45,12 @@ func (h loginCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	if errName := r.URL.Query().Get("error"); errName != "" {
 		details := r.URL.Query().Get("error_description")
-		rendered := strings.Replace(loginErrorHTML, "$ERROR", html.EscapeString(errName), 1)
-		rendered = strings.Replace(rendered, "$DETAILS", html.EscapeString(details), 1)
+		// Single pass so a value containing a placeholder token (e.g.
+		// error=$DETAILS) can never hijack the other substitution.
+		rendered := strings.NewReplacer(
+			"$ERROR", html.EscapeString(errName),
+			"$DETAILS", html.EscapeString(details),
+		).Replace(loginErrorHTML)
 		_, _ = w.Write([]byte(rendered))
 		h.c <- ""
 		return
