@@ -114,7 +114,7 @@ func augmentTableViewColumns(rows []map[string]interface{}, keys []string) []str
 		viper.Set("table-accent-column", utilizationKey)
 		viper.Set("table-accent-flag-key", "utilizationRisk")
 	}
-	out := make([]string, 0, len(keys)+1)
+	out := make([]string, 0, len(keys))
 	inserted := false
 	for _, key := range keys {
 		out = append(out, key)
