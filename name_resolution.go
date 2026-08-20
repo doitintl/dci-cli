@@ -146,8 +146,14 @@ var resourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{20}$`)
 // in-place mutation propagates into restish's URI substitution.
 func resolvePathArguments(cmd *cobra.Command, args []string) error {
 	target, ok := resolutionIndex[cmd.Name()]
-	if !ok || len(args) == 0 {
+	if !ok {
 		return nil
+	}
+	if len(args) == 0 {
+		// Zero-argument interactive invocation: open the picker (TUI-SPEC
+		// F1). Runs before the destructive gate below in the same pre-run,
+		// so the confirmation can display the picked target.
+		return pickPathArgument(cmd, target)
 	}
 	if on, valid := parseBoolish(os.Getenv("DCI_NO_RESOLVE")); valid && on {
 		return nil
@@ -290,6 +296,10 @@ func relaxResolvableArgsValidation() {
 		command.Annotations[joinableArgsAnnotation] = "true"
 		original := command.Args
 		command.Args = func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 && zeroArgPickerApplies(cmd) {
+				// The picker in the pre-run hook will supply the argument.
+				return nil
+			}
 			if joinableNameArguments(cmd, args) {
 				return nil
 			}
@@ -298,6 +308,7 @@ func relaxResolvableArgsValidation() {
 			}
 			return original(cmd, args)
 		}
+		installPickerArgInjection(command)
 	}
 }
 
@@ -534,6 +545,15 @@ var nameSelectionInput io.Reader = os.Stdin
 var nameSelectionPrompt = promptNameSelection
 
 func promptNameSelection(input, resource string, candidates []nameCacheEntry) (nameCacheEntry, error) {
+	if entry, err, handled := tuiNameSelection(input, resource, candidates); handled {
+		return entry, err
+	}
+	return promptNameSelectionBasic(input, resource, candidates)
+}
+
+// promptNameSelectionBasic is the plain numbered prompt, kept as the fallback
+// for terminals the interactive select cannot render on.
+func promptNameSelectionBasic(input, resource string, candidates []nameCacheEntry) (nameCacheEntry, error) {
 	fmt.Fprintf(os.Stderr, "%q matches multiple %ss:\n", input, resource)
 	for index, candidate := range candidates {
 		fmt.Fprintf(os.Stderr, "%d) %s  (%s)\n", index+1, candidate.Name, candidate.ID)

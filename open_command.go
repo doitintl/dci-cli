@@ -77,7 +77,16 @@ func consoleURLForArgs(configDir string, args []string) (string, error) {
 	}
 	sort.Strings(resources)
 	if len(args) == 1 {
-		return "", fmt.Errorf("usage: dci open <%s> <id>", strings.Join(resources, "|"))
+		// One-argument interactive invocation: pick the resource by name
+		// (TUI-SPEC F1); everything else keeps the usage error.
+		id, err, handled := pickOpenResourceID(strings.ToLower(args[0]))
+		if !handled {
+			return "", fmt.Errorf("usage: dci open <%s> <id>", strings.Join(resources, "|"))
+		}
+		if err != nil {
+			return "", err
+		}
+		args = []string{args[0], id}
 	}
 	customerID, err := consoleCustomerID(configDir)
 	if err != nil {
