@@ -1630,7 +1630,7 @@ func addOutputFlag() {
 	}
 
 	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, csv, auto, toon (default: table, or toon in agent mode). toon is compact and token-efficient — good for LLM agents.")
-	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate) or wrap (multi-line)")
+	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate), wrap (multi-line), or interactive (full-screen scrollable viewer; falls back to fit outside a terminal)")
 	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include in table/toon output (default: all)")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
 	dciCmd.PersistentFlags().IntP("table-max-col-width", "X", 0, "Maximum width per column when fitting or wrapping (0 = auto)")
@@ -1816,6 +1816,11 @@ func addOutputFlag() {
 		// buffered for body validation, and before the destructive check below,
 		// so --dry-run validates too and no request is ever built.
 		if err := validatePathParameters(cmd, args); err != nil {
+			return err
+		}
+		// The interactive query builder may substitute the request body, so
+		// it runs before the body is buffered and validated.
+		if err := maybeRunQueryBuilder(cmd, args); err != nil {
 			return err
 		}
 		if err := validateRequestBody(cmd, args); err != nil {
@@ -2646,6 +2651,17 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 
 	keys = augmentTableViewColumns(rows, keys)
 
+	if opts.mode == "interactive" {
+		selection, err := runTableViewer(rows, keys)
+		if err != nil {
+			return nil, err
+		}
+		if selection == "" {
+			return []byte{}, nil
+		}
+		return []byte(selection + "\n"), nil
+	}
+
 	contentW := measureContentWidths(rows, keys)
 
 	colWidths := computeColumnWidths(contentW, terminalWidth, maxColWidth)
@@ -2675,9 +2691,17 @@ func getTableOptions() tableOptions {
 	if mode == "" {
 		mode = "fit"
 	}
+	if mode == "i" {
+		mode = "interactive"
+	}
 	switch mode {
-	case "fit", "wrap":
+	case "fit", "wrap", "interactive":
 	default:
+		mode = "fit"
+	}
+	if mode == "interactive" && !tuiActive() {
+		// A saved alias must never break a pipe: degrade, don't error.
+		fmt.Fprintln(os.Stderr, "note: --table-mode interactive needs an interactive terminal; falling back to fit")
 		mode = "fit"
 	}
 

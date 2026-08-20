@@ -238,10 +238,10 @@ A bubbletea alt-screen program wrapping `bubbles/table`, fed the same `[]map[str
 - **←/→ h-scroll** columns (the 16-column anomaly fix), **↑/↓/PgUp/PgDn** rows.
 - **`s`** cycles sort on the focused column (string/numeric/epoch-aware, reusing the classifier that powers right-alignment at main.go:3277 and `sortRowsByEpochDesc`, list_views.go:356).
 - **`/`** filter rows (client-side substring).
-- **`c`** copy focused row's `id` to clipboard *if* rows carry IDs (`rowsCarryIDs`, list_views.go:454); **`enter`** prints the focused row's id/name to stdout on exit (stdout stays clean until exit; the selection is the only stdout output). Note this is **not** pipeable in v1: piping stdout makes it non-TTY, which both fails `tuiActive()` and trips agent-mode detection (resolveAgentMode, main.go:776), so `… -M i | xargs …` falls back to `fit`. Pipe composability requires an fzf-style renderer that draws on `/dev/tty` with its own gate — deferred, folded into open question Q3.
+- **`enter`** prints the focused row's id (first column when rows carry no id) to stdout on exit — stdout stays clean until exit; the selection is the only stdout output. (A `c` copy-to-clipboard key was considered and dropped from v1: OSC 52 support is uneven and the printed selection covers the workflow.) Note this is **not** pipeable in v1: piping stdout makes it non-TTY, which both fails `tuiActive()` and trips agent-mode detection (resolveAgentMode, main.go:776), so `… -M i | xargs …` falls back to `fit`. Pipe composability requires an fzf-style renderer that draws on `/dev/tty` with its own gate — deferred, folded into open question Q3.
 - **`q`/Esc** quit; exit prints nothing.
 
-Timestamps and column views apply before row extraction, so `DCI_TZ`, `--utc`, and `--table-columns` keep working identically. Heatmap shading does **not**: it is applied inside the static simpletable renderer (`newHeatmap`/`heat.colorize`, main.go:3251–3267), so the viewer explicitly reuses those helpers on its own cells to preserve `--heatmap`.
+Timestamps and column views apply before row extraction, so `DCI_TZ`, `--utc`, and `--table-columns` keep working identically. Heatmap shading does **not** carry over: it is applied inside the static simpletable renderer (`newHeatmap`/`heat.colorize`, main.go:3251–3267), and the bubbles table truncates cells ANSI-unaware, so embedded color codes would corrupt column widths. The v1 viewer renders plain cells; `--heatmap` remains a static-table feature.
 
 ### Deliberately out of scope (v1)
 
@@ -265,7 +265,7 @@ Requires amount + actuals in the list response; if the listing doesn't carry act
 
 ### 9.2 `--chart` for time-series results
 
-New flag on report-shaped output (`query`, `get-report` results): when the result set has a time dimension and ≥2 buckets, render an asciigraph line chart of the primary metric **after** the table, to stderr in human mode. One series v1; grouped results plot the total with a note. When the shape doesn't qualify, the flag is a no-op with a one-line stderr note in human mode. Agent mode: the flag is accepted and ignored with no output at all — charts are decoration by the CLI's own definition (README: agent mode strips decoration).
+New flag on report-shaped output (`query`, `get-report` results), table output only — the chart consumes the pivot's period totals, and the pivot is the table view's shaping: when the result has ≥2 time buckets, render an asciigraph line chart of the primary metric **after** the table, to stderr in human mode. One series v1; grouped results plot the total with a note. When the shape doesn't qualify, the flag is a no-op with a one-line stderr note in human mode. Agent mode: the flag is accepted and ignored with no output at all — charts are decoration by the CLI's own definition (README: agent mode strips decoration).
 
 The report-container row/schema shapes needed are already classified by the response transform and pivot code (response_transform.go, pivot.go) — the chart consumes the same normalized rows as the pivot.
 

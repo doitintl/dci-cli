@@ -70,7 +70,9 @@ dci get-budget Team Backyard
 dci open report Monthly AWS Spend
 ```
 
-Matching is forgiving: exact name first, then case-insensitive, then a unique substring, then close typos. If several resources share the name, the CLI lists the candidates with their IDs so you can re-run with the exact one; if nothing matches, it points you at the right `list-*` command. Destructive commands such as `delete-report` always show the resolved name *and* ID before asking for confirmation, so a fuzzy match can never delete the wrong thing silently.
+Matching is forgiving: exact name first, then case-insensitive, then a unique substring, then close typos. If several resources share the name, an interactive terminal lets you pick the right one from a list; scripts get the candidates with their IDs and an error so nothing runs on a guess. If nothing matches, the CLI points you at the right `list-*` command. Destructive commands such as `delete-report` always show the resolved name *and* ID before asking for confirmation, so a fuzzy match can never delete the wrong thing silently.
+
+Running a command with **no argument at all** in an interactive terminal opens a filter-as-you-type picker over the same names — `dci get-report`, then type a few letters and press Enter. The same works for `dci open report`.
 
 When you need precise control:
 
@@ -138,9 +140,34 @@ data. It is opt-in and most useful when driving the CLI from an LLM agent.
 # Wrap long cell values instead of truncating
 dci list-budgets --table-mode wrap
 
+# Full-screen scrollable viewer: ←→ scroll columns, s sort, / filter,
+# Enter prints the selected row's id on exit (falls back to fit when piped)
+dci list-anomalies --table-mode interactive
+
 # Show only specific columns
 dci list-budgets --table-columns id,name,amount
+
+# Draw an ASCII graph of report period totals under the table
+dci query <query.json --chart
 ```
+
+### Interactive Terminal Features
+
+In an interactive terminal the CLI adds a few conveniences on top of plain
+tables — none of them affect scripts, pipes, CI, or agent mode:
+
+- **Resource pickers** — `dci get-report` with no argument opens a
+  filter-as-you-type list ([Resource Names](#resource-names)).
+- **Query builder** — `dci query` with nothing piped walks you through
+  composing a report config (time range, group-by dimensions, metric), shows
+  the JSON, and can save it as a reusable `query.json`.
+- **Confirmation prompts** — destructive commands show the resolved target in
+  a confirmation dialog instead of requiring `--yes` (scripts still need
+  `--yes` or `DCI_CONFIRM_DESTRUCTIVE=1`). Cancel is the default answer.
+- **Budget utilization bars** and `--chart` graphs in table output.
+
+Set `DCI_NO_TUI=1` to turn all of it off while keeping normal human-mode
+tables and color.
 
 ### Timestamps and Timezones
 
@@ -204,7 +231,7 @@ dci --no-agent list-budgets | less -S
 
 Run `dci status` to see whether agent mode is active and why.
 
-Pass `--dry-run` to preview any API command. Most commands use a local preview and send no request; operations with an API-native `dryRun` parameter send a simulation request and return an action marked `"dry_run": true`. The CLI supplies an idempotency key when that simulation requires one. Commands classified as destructive require `--yes` or `DCI_CONFIRM_DESTRUCTIVE=1` before real execution.
+Pass `--dry-run` to preview any API command. Most commands use a local preview and send no request; operations with an API-native `dryRun` parameter send a simulation request and return an action marked `"dry_run": true`. The CLI supplies an idempotency key when that simulation requires one. Commands classified as destructive require `--yes` or `DCI_CONFIRM_DESTRUCTIVE=1` before real execution in agent and non-interactive modes; an interactive terminal shows a confirmation prompt instead.
 
 ## Updating
 
