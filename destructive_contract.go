@@ -234,6 +234,12 @@ func enforceDestructiveConfirmation(command *cobra.Command, args []string) error
 		confirmed, _ = parseBoolish(os.Getenv("DCI_CONFIRM_DESTRUCTIVE"))
 	}
 	if !confirmed {
+		// Interactive humans get a default-Cancel confirm prompt instead of
+		// the --yes usage error (TUI-SPEC F3). Declining (or any non-TTY /
+		// agent context) keeps the exit-30 error path below byte-identical.
+		confirmed = confirmDestructiveInteractively(command.Name())
+	}
+	if !confirmed {
 		destructiveActionName = ""
 		return destructiveConfirmationError{Command: command.Name(), Resolved: commandResolvedTarget(command.Name())}
 	}
