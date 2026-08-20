@@ -1443,6 +1443,10 @@ func registerAuthCommands(configDir string) {
 			if os.Getenv(apiKeyEnvName) != "" {
 				return fmt.Errorf("login is not needed when DCI_API_KEY is set")
 			}
+			// Only the login command offers click-to-run on the success page:
+			// other commands that happen to trigger the browser flow must not
+			// linger after their own output (issue #88).
+			armLoginRunOffer()
 			// Trigger the OAuth flow via validate. This call is internal (login
 			// only needs the cached token), so isolate all its observable effects
 			// — stdout, guard stderr, guard exit-code flag — from the login result.
@@ -1470,6 +1474,7 @@ func registerAuthCommands(configDir string) {
 				return err
 			}
 			announceLoginSuccess(configDir, doerConfigured)
+			maybeWaitForRunClick()
 			return nil
 		},
 	})
