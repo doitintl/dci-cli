@@ -61,6 +61,11 @@ var spawnUpdateCacheRefresh = func() {
 // whatever the cache holds — at most one run behind, since the detached
 // refresh armed by startUpdateCheck lands for the next invocation.
 func maybeNotifyUpdate(configDir string) {
+	if updateStatusReported {
+		// `dci update` itself reported the outcome — the footer would either
+		// contradict a just-completed install or duplicate --check output.
+		return
+	}
 	if updateCheckSuppressed(agentMode, stderrIsTTY(), os.Getenv("DCI_NO_UPDATE_CHECK"), version) {
 		return
 	}
