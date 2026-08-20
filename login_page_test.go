@@ -22,7 +22,7 @@ func TestLoginCallbackServeHTTP(t *testing.T) {
 			"?code=abc123&expires_in=90",
 			"abc123",
 			[]string{"You&rsquo;re logged in", "Cloud Intelligence", "dci get-report --chart"},
-			[]string{"$ERROR", "$DETAILS"},
+			[]string{"$ERROR", "$DETAILS", "$TRYNEXT", "/run?t="},
 		},
 		{
 			"no params delivers empty code with success page",
@@ -99,8 +99,9 @@ func TestLoginPagesAreSelfContained(t *testing.T) {
 		name string
 		page string
 	}{
-		{"success", loginSuccessHTML},
+		{"success static", renderLoginSuccessPage()},
 		{"error", loginErrorHTML},
+		{"running", loginRunningHTML},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,6 +124,151 @@ func TestLoginPagesAreSelfContained(t *testing.T) {
 			}
 		})
 	}
+}
+
+// armTestOffer arms a run offer for one test and restores the nil state
+// after. It bypasses armLoginRunOffer's TTY/agent gate, which would disarm
+// under CI.
+func armTestOffer(t *testing.T) *runOffer {
+	t.Helper()
+	loginRunOffer = newRunOffer()
+	t.Cleanup(func() { loginRunOffer = nil })
+	if loginRunOffer == nil {
+		t.Fatal("newRunOffer returned nil")
+	}
+	return loginRunOffer
+}
+
+func TestRenderLoginSuccessPage(t *testing.T) {
+	t.Run("static chip without an offer", func(t *testing.T) {
+		page := renderLoginSuccessPage()
+		if !strings.Contains(page, "dci get-report --chart") {
+			t.Error("static chip missing the suggestion")
+		}
+		for _, unwanted := range []string{"$TRYNEXT", "$RUNTOKEN", "/run?t="} {
+			if strings.Contains(page, unwanted) {
+				t.Errorf("page must not contain %q without an offer", unwanted)
+			}
+		}
+	})
+	t.Run("linked chip embeds the offer token", func(t *testing.T) {
+		offer := armTestOffer(t)
+		page := renderLoginSuccessPage()
+		if !strings.Contains(page, `href="/run?t=`+offer.token+`"`) {
+			t.Error("run link with token missing")
+		}
+		if !strings.Contains(page, "click to run") {
+			t.Error("explicit click-to-run affordance missing")
+		}
+		for _, unwanted := range []string{"$TRYNEXT", "$RUNTOKEN"} {
+			if strings.Contains(page, unwanted) {
+				t.Errorf("placeholder %q leaked", unwanted)
+			}
+		}
+	})
+}
+
+func TestServeRun(t *testing.T) {
+	get := func(query string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/run"+query, nil)
+		loginCallbackHandler{c: make(chan string, 1)}.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("404 without an offer", func(t *testing.T) {
+		if rec := get("?t=whatever"); rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+	})
+	t.Run("404 on wrong token", func(t *testing.T) {
+		offer := armTestOffer(t)
+		close(offer.exchangeDone)
+		if rec := get("?t=not-the-token"); rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+		select {
+		case <-offer.clicked:
+			t.Error("wrong token must not signal a click")
+		default:
+		}
+	})
+	t.Run("404 when the exchange never completes", func(t *testing.T) {
+		offer := armTestOffer(t)
+		oldWait := runExchangeWait
+		runExchangeWait = 20 * time.Millisecond
+		t.Cleanup(func() { runExchangeWait = oldWait })
+		if rec := get("?t=" + offer.token); rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+	})
+	t.Run("valid click serves running page and signals once", func(t *testing.T) {
+		offer := armTestOffer(t)
+		close(offer.exchangeDone)
+		for i := 0; i < 2; i++ { // repeat click stays idempotent
+			rec := get("?t=" + offer.token)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "Running in your terminal") {
+				t.Error("running page not served")
+			}
+		}
+		select {
+		case <-offer.clicked:
+		default:
+			t.Error("click not signaled")
+		}
+	})
+}
+
+func TestMaybeWaitForRunClick(t *testing.T) {
+	runCommand := func(t *testing.T) *bool {
+		t.Helper()
+		ran := false
+		oldRun := runSuggestedCommand
+		runSuggestedCommand = func() { ran = true }
+		t.Cleanup(func() { runSuggestedCommand = oldRun })
+		oldGrace := runClickGraceWindow
+		runClickGraceWindow = 20 * time.Millisecond
+		t.Cleanup(func() { runClickGraceWindow = oldGrace })
+		return &ran
+	}
+
+	t.Run("no offer returns immediately", func(t *testing.T) {
+		ran := runCommand(t)
+		maybeWaitForRunClick()
+		if *ran {
+			t.Error("must not run without an offer")
+		}
+	})
+	t.Run("no exchange returns immediately", func(t *testing.T) {
+		ran := runCommand(t)
+		armTestOffer(t)
+		maybeWaitForRunClick()
+		if *ran {
+			t.Error("must not run when the browser flow never completed")
+		}
+	})
+	t.Run("click runs the suggestion", func(t *testing.T) {
+		ran := runCommand(t)
+		offer := armTestOffer(t)
+		close(offer.exchangeDone)
+		close(offer.clicked)
+		maybeWaitForRunClick()
+		if !*ran {
+			t.Error("click must run the suggestion")
+		}
+	})
+	t.Run("grace window expiry skips the run", func(t *testing.T) {
+		ran := runCommand(t)
+		offer := armTestOffer(t)
+		close(offer.exchangeDone)
+		maybeWaitForRunClick()
+		if *ran {
+			t.Error("timeout must not run the suggestion")
+		}
+	})
 }
 
 func TestLoginErrorPagePlaceholders(t *testing.T) {
