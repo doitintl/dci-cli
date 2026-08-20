@@ -7,7 +7,11 @@ package main
 // a sibling file per the AGENTS.md chapter-split guidance.
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -142,19 +146,145 @@ var chartColorCapable = func() bool {
 	return lipgloss.ColorProfile() != termenv.Ascii
 }
 
-// chartPalette are the stacked segment styles, largest group first; the last
-// entry is reserved for the folded "other" segment when present. The colors
-// are the DoiT console's default report theme ("DoiT" in the console's
-// preset-themes seed), with AdaptiveColor picking the theme's light or dark
-// variant by terminal background — the same split the console makes.
-// Terminals without truecolor degrade to the nearest supported color.
-var chartPalette = []lipgloss.Style{
-	lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#E4A3F5", Dark: "#E4A3F5"}),
-	lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#461254", Dark: "#8D24A8"}),
-	lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#C8D148", Dark: "#D4DB70"}),
-	lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#EE7798", Dark: "#EE7798"}),
-	lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#0090D6", Dark: "#1AB4FF"}),
-	lipgloss.NewStyle().Foreground(lipgloss.Color("8")), // gray — "other"
+// chartThemeColors is a report color theme's series palette: parallel arrays
+// for light and dark terminal backgrounds, index = series rank.
+type chartThemeColors struct {
+	light []string
+	dark  []string
+}
+
+// presetChartThemes are the DoiT console's built-in report themes, copied
+// from the console's preset-themes seed (omni: server/services/scheduled-tasks/
+// scripts/cloud-analytics/definitions/preset-themes.json). The API's reserved
+// themeId "default" maps to "doit"; the other presets are keyed by their seed
+// ids in case the active-theme endpoint names one directly.
+var presetChartThemes = map[string]chartThemeColors{
+	"doit": {
+		light: []string{"#E4A3F5", "#461254", "#C8D148", "#EE7798", "#0090D6", "#94E1EB", "#997366", "#3B40B5", "#00CCB7", "#CC6D00", "#FFDE4C", "#931310"},
+		dark:  []string{"#E4A3F5", "#8D24A8", "#D4DB70", "#EE7798", "#1AB4FF", "#B2E9F0", "#A97E6F", "#5C62FF", "#00E5CE", "#FFA533", "#FFF6CC", "#EB4B47"},
+	},
+	"soft-focus": {
+		light: []string{"#4868B8", "#C88040", "#7858A8", "#388878", "#A89038", "#C46070", "#5878A0", "#904878", "#3090B0", "#B86848", "#7068A8", "#508850"},
+		dark:  []string{"#6888E0", "#E8A060", "#9878D0", "#58B0A0", "#C8B050", "#E08090", "#7898C0", "#B06898", "#50B0D0", "#D88868", "#9088C8", "#70A870"},
+	},
+	"vivid-edge": {
+		light: []string{"#1A6ED8", "#B07808", "#A82870", "#0C7E96", "#D86828", "#6840C0", "#D84050", "#3868A8", "#188860", "#9838A8", "#C87830", "#1A7468"},
+		dark:  []string{"#4090F0", "#E8A820", "#D858A0", "#18A4BE", "#F08848", "#8E68E8", "#F06070", "#5888CC", "#30AC80", "#BE58D0", "#E89850", "#2C9C8E"},
+	},
+	"ocean-night": {
+		light: []string{"#1B4D8A", "#E86325", "#087E90", "#8A32A2", "#D42660", "#1478A8", "#9A7E08", "#24725A", "#D94040", "#9448CC", "#525A62", "#14785E"},
+		dark:  []string{"#5A8EC7", "#F0833E", "#0B9BB2", "#B568CE", "#E04478", "#2A96C8", "#B59A18", "#3D9B72", "#E06B6B", "#A96EDB", "#9BA0A6", "#2E9E84"},
+	},
+}
+
+// chartThemePalette resolves the stacked segment styles, largest group first;
+// the final gray entry is reserved for the folded "other" segment. Colors
+// come from the user's active report theme (fetched from the API when it is
+// a custom theme), falling back to the DoiT preset. AdaptiveColor picks the
+// theme's light or dark variant by terminal background — the same split the
+// console makes — and terminals without truecolor degrade to the nearest
+// supported color. A custom theme shorter than the segment count is padded
+// from the DoiT preset.
+func chartThemePalette() []lipgloss.Style {
+	theme := activeChartTheme()
+	doit := presetChartThemes["doit"]
+	styles := make([]lipgloss.Style, 0, chartMaxGroups+1)
+	for len(styles) < chartMaxGroups {
+		i := len(styles)
+		light, dark := doit.light[i], doit.dark[i]
+		if i < len(theme.light) && i < len(theme.dark) {
+			light, dark = theme.light[i], theme.dark[i]
+		}
+		styles = append(styles, lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: light, Dark: dark}))
+	}
+	return append(styles, lipgloss.NewStyle().Foreground(lipgloss.Color("8"))) // gray — "other"
+}
+
+// activeChartTheme returns the palette of the user's active report theme,
+// falling back to the DoiT preset whenever the active theme cannot be
+// resolved — the chart is decoration, so lookup failures stay silent.
+func activeChartTheme() chartThemeColors {
+	if theme, ok := fetchActiveChartTheme(); ok {
+		return theme
+	}
+	return presetChartThemes["doit"]
+}
+
+// fetchActiveChartTheme resolves the active theme via the API: the
+// active-theme setting names a theme id, and custom themes carry their own
+// light/dark palettes. A var so tests can fake the API.
+var fetchActiveChartTheme = fetchActiveChartThemeLive
+
+func fetchActiveChartThemeLive() (chartThemeColors, bool) {
+	var active struct {
+		ThemeID string `json:"themeId"`
+	}
+	if !fetchSettingsJSON("/analytics/v1/settings/active-theme", &active) {
+		return chartThemeColors{}, false
+	}
+	id := strings.TrimSpace(active.ThemeID)
+	if id == "" || id == "default" {
+		return chartThemeColors{}, false
+	}
+	if preset, ok := presetChartThemes[id]; ok {
+		return preset, true
+	}
+	var custom struct {
+		Colors struct {
+			Light []string `json:"light"`
+			Dark  []string `json:"dark"`
+		} `json:"colors"`
+	}
+	if !fetchSettingsJSON("/analytics/v1/settings/themes/"+url.PathEscape(id), &custom) {
+		return chartThemeColors{}, false
+	}
+	if len(custom.Colors.Light) == 0 || len(custom.Colors.Dark) == 0 {
+		return chartThemeColors{}, false
+	}
+	return chartThemeColors{light: custom.Colors.Light, dark: custom.Colors.Dark}, true
+}
+
+// fetchSettingsJSON is a best-effort authenticated GET of a small settings
+// payload, mirroring the resolver's programmatic-call pattern (bearer token,
+// 10s client, tenant context on both transports). false on any failure.
+func fetchSettingsJSON(path string, out interface{}) bool {
+	token := authenticationToken()
+	if token == "" {
+		return false
+	}
+	base, err := apiBase()
+	if err != nil {
+		return false
+	}
+	requestURL, err := url.Parse(base + path)
+	if err != nil {
+		return false
+	}
+	context := activeCustomerContext()
+	if context != "" {
+		query := requestURL.Query()
+		query.Set("customerContext", context)
+		requestURL.RawQuery = query.Encode()
+	}
+	request, err := http.NewRequest(http.MethodGet, requestURL.String(), nil)
+	if err != nil {
+		return false
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("User-Agent", buildUserAgent(agentUAMode))
+	if context != "" {
+		request.Header.Set("X-Tenant-Id", context)
+	}
+	response, err := resolverHTTPClient.Do(request)
+	if err != nil {
+		return false
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+		return false
+	}
+	return json.Unmarshal(body, out) == nil
 }
 
 // renderStackedChart draws the per-group stacked columns (one bar per time
@@ -163,6 +293,7 @@ var chartPalette = []lipgloss.Style{
 // legend's exact shares do not hide: shares are computed from the true sums.
 func renderStackedChart(series *chartSeriesData, width int) string {
 	const height = 12
+	palette := chartThemePalette()
 	chart := barchart.New(width, height, barchart.WithNoAxis())
 	bars := make([]barchart.BarData, len(series.periods))
 	for i := range series.periods {
@@ -172,7 +303,7 @@ func renderStackedChart(series *chartSeriesData, width int) string {
 			if value < 0 {
 				value = 0
 			}
-			segments[j] = barchart.BarValue{Name: group.name, Value: value, Style: chartPalette[j%len(chartPalette)]}
+			segments[j] = barchart.BarValue{Name: group.name, Value: value, Style: palette[j%len(palette)]}
 		}
 		bars[i] = barchart.BarData{Values: segments}
 	}
@@ -193,7 +324,7 @@ func renderStackedChart(series *chartSeriesData, width int) string {
 		if grand != 0 {
 			share = fmt.Sprintf("  %.0f%%", sums[j]/grand*100)
 		}
-		lines = append(lines, chartPalette[j%len(chartPalette)].Render("█")+" "+chartGroupLabel(group.name)+share)
+		lines = append(lines, palette[j%len(palette)].Render("█")+" "+chartGroupLabel(group.name)+share)
 	}
 	return strings.Join(lines, "\n")
 }

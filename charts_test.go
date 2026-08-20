@@ -1,10 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/viper"
 )
 
@@ -275,5 +279,73 @@ func TestChartAlignsWithTableWidth(t *testing.T) {
 	first := strings.Split(out, "\n")[0]
 	if got := len([]rune(first)); got != 60 {
 		t.Fatalf("stacked chart canvas width = %d, want 60 (aligned with the table)", got)
+	}
+}
+
+func TestActiveChartThemeResolution(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/analytics/v1/settings/active-theme":
+			fmt.Fprint(writer, `{"themeId":"CustomTheme12345"}`)
+		case "/analytics/v1/settings/themes/CustomTheme12345":
+			fmt.Fprint(writer, `{"id":"CustomTheme12345","name":"Mine","colors":{"light":["#111111","#222222"],"dark":["#AAAAAA","#BBBBBB"]}}`)
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("DCI_API_BASE_URL", server.URL)
+	t.Setenv("DCI_API_KEY", "test-token")
+	previousClient := resolverHTTPClient
+	resolverHTTPClient = server.Client()
+	t.Cleanup(func() { resolverHTTPClient = previousClient })
+
+	theme, ok := fetchActiveChartThemeLive()
+	if !ok || len(theme.light) != 2 || theme.dark[1] != "#BBBBBB" {
+		t.Fatalf("custom theme = %+v ok=%v, want the fetched palette", theme, ok)
+	}
+
+	// The padded palette keeps the custom colors first and fills the rest
+	// from the DoiT preset, with the gray "other" entry last.
+	originalFetch := fetchActiveChartTheme
+	fetchActiveChartTheme = func() (chartThemeColors, bool) { return theme, true }
+	t.Cleanup(func() { fetchActiveChartTheme = originalFetch })
+	palette := chartThemePalette()
+	if len(palette) != chartMaxGroups+1 {
+		t.Fatalf("palette size = %d, want %d", len(palette), chartMaxGroups+1)
+	}
+	first, ok := palette[0].GetForeground().(lipgloss.AdaptiveColor)
+	if !ok || first.Dark != "#AAAAAA" {
+		t.Fatalf("palette[0] = %#v, want the custom theme's first color", palette[0].GetForeground())
+	}
+	third, ok := palette[2].GetForeground().(lipgloss.AdaptiveColor)
+	if !ok || third.Dark != presetChartThemes["doit"].dark[2] {
+		t.Fatalf("palette[2] = %#v, want DoiT padding", palette[2].GetForeground())
+	}
+}
+
+func TestActiveChartThemePresetAndDefault(t *testing.T) {
+	themeID := "default"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/analytics/v1/settings/active-theme" {
+			t.Errorf("unexpected request %s (presets must not be fetched)", request.URL.Path)
+		}
+		fmt.Fprintf(writer, `{"themeId":%q}`, themeID)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("DCI_API_BASE_URL", server.URL)
+	t.Setenv("DCI_API_KEY", "test-token")
+	previousClient := resolverHTTPClient
+	resolverHTTPClient = server.Client()
+	t.Cleanup(func() { resolverHTTPClient = previousClient })
+
+	if _, ok := fetchActiveChartThemeLive(); ok {
+		t.Fatal("the default sentinel must fall back to the built-in palette")
+	}
+
+	themeID = "ocean-night"
+	theme, ok := fetchActiveChartThemeLive()
+	if !ok || theme.dark[0] != presetChartThemes["ocean-night"].dark[0] {
+		t.Fatalf("preset theme = %+v ok=%v, want the embedded ocean-night palette", theme, ok)
 	}
 }
