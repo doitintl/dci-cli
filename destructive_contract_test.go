@@ -45,33 +45,11 @@ func TestDestructiveMetadataReusesWarmRestishDiskCacheOffline(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	home := t.TempDir()
-	configDir := filepath.Join(home, "xdg", "dci")
 	cacheDir := filepath.Join(home, "cache")
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	config, err := json.Marshal(map[string]interface{}{
-		"dci": map[string]interface{}{
-			"base":     server.URL,
-			"profiles": map[string]interface{}{"default": map[string]interface{}{}},
-			"tls":      map[string]interface{}{"insecure": true},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), config, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	environment := []string{
+	environment := append(seedHermeticAPIConfig(t, home, server.URL),
 		"DCI_AGENT_MODE=1",
 		"DCI_API_KEY=test-token",
-		"DCI_API_BASE_URL=" + server.URL,
-		"DCI_CACHE_DIR=" + cacheDir,
-		"DCI_CONFIG_DIR=" + configDir,
-		"DCI_NO_UPDATE_CHECK=1",
-	}
+	)
 	first := runCLIWithEnv(t, bin, home, environment, "delete-budget", "budget-1")
 	if first.timedOut || first.exitCode != 30 || !strings.Contains(first.output, "requires confirmation") {
 		t.Fatalf("cold-cache command = %+v", first)

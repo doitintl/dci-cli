@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1065,6 +1067,56 @@ func runCLIWithHome(t *testing.T, bin string, home string, args ...string) cliRe
 
 	t.Fatalf("command failed to start: %v", err)
 	return cliResult{}
+}
+
+// seedHermeticAPIConfig writes an apis.json under home that points the CLI at
+// base and trusts its self-signed certificate, and returns the environment a
+// hermetic binary invocation needs: the per-invocation API base, a per-test
+// spec cache and config dir, and no update check.
+func seedHermeticAPIConfig(t *testing.T, home, base string) []string {
+	t.Helper()
+	configDir := filepath.Join(home, "xdg", "dci")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config, err := json.Marshal(map[string]interface{}{
+		"dci": map[string]interface{}{
+			"base":     base,
+			"profiles": map[string]interface{}{"default": map[string]interface{}{}},
+			"tls":      map[string]interface{}{"insecure": true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return []string{
+		"DCI_API_BASE_URL=" + base,
+		"DCI_CACHE_DIR=" + filepath.Join(home, "cache"),
+		"DCI_CONFIG_DIR=" + configDir,
+		"DCI_NO_UPDATE_CHECK=1",
+	}
+}
+
+// hermeticSpecEnv serves the given OpenAPI document from a local TLS server
+// and returns the environment that points the built binary at it. Generated
+// commands (even their --help) hydrate the command tree by fetching the spec,
+// so without this an invocation reaches the live API and can exceed the
+// runCLI timeout under parallel test load.
+func hermeticSpecEnv(t *testing.T, home, spec string) []string {
+	t.Helper()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/openapi.json" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, spec)
+	}))
+	t.Cleanup(server.Close)
+	return seedHermeticAPIConfig(t, home, server.URL)
 }
 
 func assertNoOAuthOrPanic(t *testing.T, out string) {
@@ -2860,9 +2912,24 @@ func TestCustomerContextFlagOverride(t *testing.T) {
 func TestCustomerContextFlag(t *testing.T) {
 	bin := buildBinary(t)
 
+	// list-budgets is spec-generated: even --help hydrates the command tree
+	// from the OpenAPI spec, so these invocations must stay off the live API.
+	home := t.TempDir()
+	environment := append(hermeticSpecEnv(t, home, `{
+		"openapi": "3.0.0",
+		"info": {"title": "DCI test", "version": "1.0.0"},
+		"paths": {
+			"/budgets": {
+				"get": {
+					"operationId": "list-budgets",
+					"responses": {"200": {"description": "OK"}}
+				}
+			}
+		}
+	}`), "DCI_API_KEY=test-key")
+
 	t.Run("empty --customer-context errors", func(t *testing.T) {
-		home := t.TempDir()
-		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_KEY=test-key"}, "list-budgets", "--customer-context", "")
+		res := runCLIWithEnv(t, bin, home, environment, "list-budgets", "--customer-context", "")
 		if res.timedOut {
 			t.Fatalf("command timed out; output:\n%s", res.output)
 		}
@@ -2875,8 +2942,7 @@ func TestCustomerContextFlag(t *testing.T) {
 	})
 
 	t.Run("-D short form appears in help", func(t *testing.T) {
-		home := t.TempDir()
-		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_KEY=test-key"}, "list-budgets", "--help")
+		res := runCLIWithEnv(t, bin, home, environment, "list-budgets", "--help")
 		if res.timedOut {
 			t.Fatalf("command timed out; output:\n%s", res.output)
 		}
