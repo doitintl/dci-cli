@@ -288,22 +288,39 @@ func fetchSettingsJSON(path string, out interface{}) bool {
 }
 
 // renderStackedChart draws the per-group stacked columns (one bar per time
-// period) with a legend of group shares. Negative cells (credits) are clamped
-// to zero — a stacked column cannot draw below its own baseline — which the
-// legend's exact shares do not hide: shares are computed from the true sums.
+// period) with a legend of group shares. Negative cells (credits) are omitted
+// from the drawing — a stacked column cannot dip below its own baseline —
+// which the legend's exact shares do not hide: shares are computed from the
+// true sums.
 func renderStackedChart(series *chartSeriesData, width int) string {
 	const height = 12
 	palette := chartThemePalette()
 	chart := barchart.New(width, height, barchart.WithNoAxis())
 	bars := make([]barchart.BarData, len(series.periods))
 	for i := range series.periods {
-		segments := make([]barchart.BarValue, len(series.groups))
-		for j, group := range series.groups {
-			value := group.values[i]
-			if value < 0 {
-				value = 0
+		// ntcharts draws Values[0] at the bottom of the bar; the console
+		// stacks the largest group on top, so segments go in reverse group
+		// rank ("other" at the bottom, biggest spender on top). Zero and
+		// negative cells are skipped: they draw nothing, and skipping them
+		// keeps each remaining segment adjacent to its true visual neighbor.
+		segments := make([]barchart.BarValue, 0, len(series.groups))
+		for j := len(series.groups) - 1; j >= 0; j-- {
+			value := series.groups[j].values[i]
+			if value <= 0 {
+				continue
 			}
-			segments[j] = barchart.BarValue{Name: group.name, Value: value, Style: palette[j%len(palette)]}
+			segments = append(segments, barchart.BarValue{Name: series.groups[j].name, Value: value, Style: palette[j%len(palette)]})
+		}
+		// A segment boundary that falls mid-cell renders as a partial block
+		// rune: its foreground is this segment, and the cell's remainder
+		// shows the *background* — by default the terminal's, which reads as
+		// a black gap in the bar. ntcharts' own compensation discards the
+		// lipgloss copy it configures (Style setters return, not mutate), so
+		// set each segment's background to the color stacked above it here.
+		// The topmost segment keeps the default background: above it really
+		// is the terminal.
+		for k := 0; k < len(segments)-1; k++ {
+			segments[k].Style = segments[k].Style.Background(segments[k+1].Style.GetForeground())
 		}
 		bars[i] = barchart.BarData{Values: segments}
 	}
