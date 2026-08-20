@@ -54,6 +54,10 @@ type resolvedTarget struct {
 	resource string
 	name     string
 	id       string
+	// owner and description are best-effort display context from the list
+	// payload, shown by the destructive confirmation; empty when unavailable.
+	owner       string
+	description string
 }
 
 type resolvedTargetPayload struct {
@@ -365,7 +369,7 @@ func resolveResourceName(input string, target resolutionListTarget, context stri
 	resource := singularResourceName(target.resource)
 	if entries, ok := resolverCachedEntries(target.resource, context); ok {
 		if match, unique := uniqueCachedNameMatch(input, entries); unique {
-			return resolvedTarget{input: input, resource: resource, name: match.Name, id: match.ID}, nil
+			return resolvedFromEntry(input, resource, match), nil
 		}
 	}
 	result, err := resolverListFetch(target.listPath, context, resolverMaxPages)
@@ -377,16 +381,27 @@ func resolveResourceName(input string, target resolutionListTarget, context stri
 	case 0:
 		return resolvedTarget{}, nameNotFoundError(input, resource, target, result.truncated)
 	case 1:
-		return resolvedTarget{input: input, resource: resource, name: matches[0].Name, id: matches[0].ID}, nil
+		return resolvedFromEntry(input, resource, matches[0]), nil
 	}
 	if nameSelectionInteractive() {
 		chosen, err := nameSelectionPrompt(input, resource, capNameCandidates(matches, 10))
 		if err != nil {
 			return resolvedTarget{}, err
 		}
-		return resolvedTarget{input: input, resource: resource, name: chosen.Name, id: chosen.ID}, nil
+		return resolvedFromEntry(input, resource, chosen), nil
 	}
 	return resolvedTarget{}, nameAmbiguousError(input, resource, matches)
+}
+
+func resolvedFromEntry(input, resource string, entry nameCacheEntry) resolvedTarget {
+	return resolvedTarget{
+		input:       input,
+		resource:    resource,
+		name:        entry.Name,
+		id:          entry.ID,
+		owner:       entry.Owner,
+		description: entry.Description,
+	}
 }
 
 // uniqueCachedNameMatch is the advisory fast path over the fresh name cache:
@@ -680,7 +695,9 @@ func parseResourceNamePage(body []byte) ([]nameCacheEntry, string) {
 		if name == "" {
 			continue
 		}
-		entries = append(entries, nameCacheEntry{ID: id, Name: name})
+		owner, _ := object["owner"].(string)
+		description, _ := object["description"].(string)
+		entries = append(entries, nameCacheEntry{ID: id, Name: name, Owner: owner, Description: strings.TrimSpace(description)})
 	}
 	nextToken, _ := parsed["pageToken"].(string)
 	return entries, nextToken

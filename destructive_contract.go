@@ -237,6 +237,7 @@ func enforceDestructiveConfirmation(command *cobra.Command, args []string) error
 		// Interactive humans get a default-Cancel confirm prompt instead of
 		// the --yes usage error (TUI-SPEC F3). Declining (or any non-TTY /
 		// agent context) keeps the exit-30 error path below byte-identical.
+		ensureConfirmTargetDetails(command.Name(), args)
 		confirmed = confirmDestructiveInteractively(command.Name())
 	}
 	if !confirmed {
@@ -244,6 +245,44 @@ func enforceDestructiveConfirmation(command *cobra.Command, args []string) error
 		return destructiveConfirmationError{Command: command.Name(), Resolved: commandResolvedTarget(command.Name())}
 	}
 	return nil
+}
+
+// ensureConfirmTargetDetails backfills the confirmation display for a
+// destructive command invoked with a raw resource id: name resolution never
+// ran, so the prompt would otherwise show only the command name. Best-effort
+// and interactive-only — the id is looked up in the resource's collection
+// (fresh name cache first, then a live list fetch behind a spinner), and any
+// failure or miss simply leaves the prompt without the target line. The
+// backfilled target also reaches the exit-30 error when the human declines.
+func ensureConfirmTargetDetails(commandName string, args []string) {
+	if !tuiActive() || commandResolvedTarget(commandName) != nil || len(args) == 0 {
+		return
+	}
+	target, ok := resolutionIndex[commandName]
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(args[0])
+	if id == "" {
+		return
+	}
+	context := activeCustomerContext()
+	entries, cached := resolverCachedEntries(target.resource, context)
+	if !cached {
+		stopSpinner := startTUISpinner(fmt.Sprintf("Looking up %s %s…", singularResourceName(target.resource), id))
+		result, err := resolverListFetch(target.listPath, context, resolverMaxPages)
+		stopSpinner()
+		if err != nil {
+			return
+		}
+		entries = result.entries
+	}
+	for _, entry := range entries {
+		if entry.ID == id {
+			resolvedTargets[commandName] = resolvedFromEntry(id, singularResourceName(target.resource), entry)
+			return
+		}
+	}
 }
 
 func ensureDryRunIdempotencyKey(command *cobra.Command) error {

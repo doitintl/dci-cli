@@ -903,6 +903,24 @@ func TestParseResourceNamePageDiscoversNameFieldByPriority(t *testing.T) {
 	}
 }
 
+func TestParseResourceNamePageCarriesOwnerAndDescription(t *testing.T) {
+	entries, _ := parseResourceNamePage([]byte(`{
+		"reports": [
+			{"id": "r-1", "reportName": "Spend", "owner": "vadim@doit.com", "description": " Monthly spend by SKU "},
+			{"id": "r-2", "reportName": "Bare"}
+		]
+	}`))
+	if len(entries) != 2 {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if entries[0].Owner != "vadim@doit.com" || entries[0].Description != "Monthly spend by SKU" {
+		t.Fatalf("owner/description not carried: %+v", entries[0])
+	}
+	if entries[1].Owner != "" || entries[1].Description != "" {
+		t.Fatalf("absent fields must stay empty: %+v", entries[1])
+	}
+}
+
 func TestDestructiveConfirmationErrorCarriesResolvedTarget(t *testing.T) {
 	err := destructiveConfirmationError{
 		Command:  "delete-report",

@@ -391,3 +391,57 @@ func TestDestructiveActionSummaryDoesNotMaskHTMLErrors(t *testing.T) {
 		t.Fatalf("response body = %#v", next.got.Body)
 	}
 }
+
+func TestEnsureConfirmTargetDetailsLooksUpRawID(t *testing.T) {
+	resetNameResolutionState()
+	t.Cleanup(resetNameResolutionState)
+	resolutionIndex = map[string]resolutionListTarget{
+		"delete-report": {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports"},
+	}
+
+	forceTUI(t, true)
+	originalCached := resolverCachedEntries
+	resolverCachedEntries = func(resource, context string) ([]nameCacheEntry, bool) { return nil, false }
+	t.Cleanup(func() { resolverCachedEntries = originalCached })
+	originalFetch := resolverListFetch
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		return resolverListResult{entries: []nameCacheEntry{
+			{ID: "IQYiclcHa3KdjWGV3Lph", Name: "BigQuery Spend by SKU", Owner: "vadim@doit.com", Description: "Daily BQ spend"},
+		}}, nil
+	}
+	t.Cleanup(func() { resolverListFetch = originalFetch })
+
+	ensureConfirmTargetDetails("delete-report", []string{"IQYiclcHa3KdjWGV3Lph"})
+	resolved := commandResolvedTarget("delete-report")
+	if resolved == nil || resolved.name != "BigQuery Spend by SKU" {
+		t.Fatalf("resolved target = %+v, want the looked-up report", resolved)
+	}
+	if resolved.owner != "vadim@doit.com" || resolved.description != "Daily BQ spend" {
+		t.Fatalf("owner/description not carried: %+v", resolved)
+	}
+
+	// A miss must leave the prompt without a target, not invent one.
+	ensureConfirmTargetDetails("delete-report", []string{"UnknownIdentifier0000"})
+	if got := commandResolvedTarget("delete-report"); got == nil || got.id != "IQYiclcHa3KdjWGV3Lph" {
+		t.Fatalf("miss must not overwrite or invent a target: %+v", got)
+	}
+}
+
+func TestEnsureConfirmTargetDetailsSkipsOutsideTUI(t *testing.T) {
+	resetNameResolutionState()
+	t.Cleanup(resetNameResolutionState)
+	resolutionIndex = map[string]resolutionListTarget{
+		"delete-report": {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports"},
+	}
+	forceTUI(t, false)
+	originalFetch := resolverListFetch
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		t.Fatal("non-interactive contexts must not pay a lookup for a prompt they never see")
+		return resolverListResult{}, nil
+	}
+	t.Cleanup(func() { resolverListFetch = originalFetch })
+	ensureConfirmTargetDetails("delete-report", []string{"IQYiclcHa3KdjWGV3Lph"})
+	if commandResolvedTarget("delete-report") != nil {
+		t.Fatal("no lookup must mean no resolved target")
+	}
+}

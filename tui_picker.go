@@ -74,7 +74,7 @@ func pickPathArgument(cmd *cobra.Command, target resolutionListTarget) error {
 		return nameSelectionCancelledError(resource)
 	}
 	pickedPathArgument = entry.ID
-	resolved := resolvedTarget{input: entry.Name, resource: resource, name: entry.Name, id: entry.ID}
+	resolved := resolvedFromEntry(entry.Name, resource, entry)
 	resolvedTargets[cmd.Name()] = resolved
 	announceResolution(resolved)
 	return nil

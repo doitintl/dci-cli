@@ -26,7 +26,10 @@ import (
 )
 
 const (
-	nameCacheVersion     = 1
+	// Version 2 added owner/description to entries (displayed by the
+	// destructive confirmation); bumping invalidates v1 caches so the fields
+	// populate on the next refresh instead of staying empty for 24h.
+	nameCacheVersion     = 2
 	nameCacheFreshTTL    = 10 * time.Minute
 	nameCacheServableTTL = 24 * time.Hour
 	nameCacheMaxNameLen  = 120
@@ -35,6 +38,10 @@ const (
 type nameCacheEntry struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Owner and Description are display-only context for the destructive
+	// confirmation prompt; empty when the list payload does not carry them.
+	Owner       string `json:"owner,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type nameCacheFile struct {
@@ -488,6 +495,9 @@ func truncateEntryNames(entries []nameCacheEntry) []nameCacheEntry {
 	for index, entry := range entries {
 		if runes := []rune(entry.Name); len(runes) > nameCacheMaxNameLen {
 			entries[index].Name = string(runes[:nameCacheMaxNameLen])
+		}
+		if runes := []rune(entry.Description); len(runes) > nameCacheMaxNameLen {
+			entries[index].Description = string(runes[:nameCacheMaxNameLen])
 		}
 	}
 	return entries

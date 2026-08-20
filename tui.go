@@ -136,6 +136,12 @@ func tuiConfirmDestructive(commandName string) bool {
 		}
 		lines = append(lines, fmt.Sprintf("%s%s: %s  (%s)",
 			strings.ToUpper(resource[:1]), resource[1:], resolved.name, resolved.id))
+		if resolved.owner != "" {
+			lines = append(lines, "Owner: "+resolved.owner)
+		}
+		if description := truncateForConfirm(resolved.description); description != "" {
+			lines = append(lines, "Description: "+description)
+		}
 	}
 	lines = append(lines, "This action cannot be undone.")
 	fmt.Fprintln(os.Stderr, tuiDangerBorder.Render(strings.Join(lines, "\n")))
@@ -150,6 +156,19 @@ func tuiConfirmDestructive(commandName string) bool {
 		return false // Esc/Ctrl-C/renderer failure all mean "not confirmed"
 	}
 	return confirmed
+}
+
+// truncateForConfirm bounds a description to one readable line inside the
+// confirmation box: first line only, capped at 80 runes.
+func truncateForConfirm(description string) string {
+	description = strings.TrimSpace(description)
+	if line, _, multiline := strings.Cut(description, "\n"); multiline {
+		description = strings.TrimSpace(line) + "…"
+	}
+	if runes := []rune(description); len(runes) > 80 {
+		return string(runes[:79]) + "…"
+	}
+	return description
 }
 
 // announceLoginSuccess reports the login result (TUI-SPEC F7). The non-TTY

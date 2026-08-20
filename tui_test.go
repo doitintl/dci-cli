@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/huh"
@@ -291,6 +292,21 @@ func TestSpinnerQuipDrawsFromTheList(t *testing.T) {
 	for range 20 {
 		if !known[spinnerQuip()] {
 			t.Fatal("spinnerQuip returned a message outside the list")
+		}
+	}
+}
+
+func TestTruncateForConfirm(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"  short  ", "short"},
+		{"first line\nsecond line", "first line…"},
+		{strings.Repeat("x", 80), strings.Repeat("x", 80)},
+		{strings.Repeat("x", 81), strings.Repeat("x", 79) + "…"},
+	}
+	for _, c := range cases {
+		if got := truncateForConfirm(c.in); got != c.want {
+			t.Errorf("truncateForConfirm(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
