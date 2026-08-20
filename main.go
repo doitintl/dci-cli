@@ -2673,10 +2673,27 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 	maybeRenderChart()
 
 	if len(hidden) > 0 {
-		out += fmt.Sprintf("\nHidden columns (nested objects, or too many to fit): %s\n", strings.Join(hidden, ", "))
-		out += fmt.Sprintf("Use -C to choose columns (e.g.: -C %s), -M wrap to wrap, or -W to widen\n", strings.Join(append(keys, hidden...), ","))
+		out += renderHiddenColumnsHint(keys, hidden)
 	}
 	return []byte(out), nil
+}
+
+// renderHiddenColumnsHint reports the columns the table did not render. On an
+// interactive terminal it is a single dim line — count, first…last span, and
+// the escape hatches — instead of the full listing, which for a pivoted month
+// of daily columns wrapped into several lines of dates. Non-TTY output keeps
+// the verbose form: scripts and agents need every hidden column name spelled
+// out, and the -C example stays copy-pasteable.
+func renderHiddenColumnsHint(keys, hidden []string) string {
+	if !tuiActive() {
+		return fmt.Sprintf("\nHidden columns (nested objects, or too many to fit): %s\n", strings.Join(hidden, ", ")) +
+			fmt.Sprintf("Use -C to choose columns (e.g.: -C %s), -M wrap to wrap, or -W to widen\n", strings.Join(append(keys, hidden...), ","))
+	}
+	span := strings.Join(hidden, ", ")
+	if len(hidden) > 2 {
+		span = hidden[0] + " … " + hidden[len(hidden)-1]
+	}
+	return "\n" + tuiDimStyle.Render(fmt.Sprintf("+%d hidden: %s · -C to choose · -M wrap · -W widen", len(hidden), span)) + "\n"
 }
 
 type tableOptions struct {

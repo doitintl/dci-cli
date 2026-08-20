@@ -3512,3 +3512,31 @@ func TestMaybeNoteDisplayZone(t *testing.T) {
 		t.Errorf("zone note repeated: %q", stderr.String())
 	}
 }
+
+func TestRenderHiddenColumnsHintCompactOnTTY(t *testing.T) {
+	keys := []string{"sku", "2026-08-01", "total", "trend"}
+	hidden := []string{"2026-08-04", "2026-08-05", "2026-08-19"}
+
+	forceTUI(t, false)
+	verbose := renderHiddenColumnsHint(keys, hidden)
+	if !strings.Contains(verbose, "Hidden columns (nested objects, or too many to fit): 2026-08-04, 2026-08-05, 2026-08-19") ||
+		!strings.Contains(verbose, "Use -C to choose columns") {
+		t.Fatalf("non-TTY hint must keep the verbose form, got %q", verbose)
+	}
+
+	forceTUI(t, true)
+	compact := renderHiddenColumnsHint(keys, hidden)
+	if !strings.Contains(compact, "+3 hidden: 2026-08-04 … 2026-08-19") ||
+		!strings.Contains(compact, "-C to choose · -M wrap · -W widen") {
+		t.Fatalf("TTY hint must be the compact one-liner, got %q", compact)
+	}
+	if strings.Contains(compact, "2026-08-05") {
+		t.Fatalf("compact hint must span, not list, got %q", compact)
+	}
+
+	// One or two hidden columns are shorter listed than spanned.
+	pair := renderHiddenColumnsHint(keys, hidden[:2])
+	if !strings.Contains(pair, "+2 hidden: 2026-08-04, 2026-08-05") {
+		t.Fatalf("short hidden lists must be spelled out, got %q", pair)
+	}
+}
