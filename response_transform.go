@@ -79,8 +79,7 @@ func transformSuccessBody(body interface{}) interface{} {
 	}
 
 	if shouldPivotReportRows() {
-		forced := viper.GetBool("pivot-rows")
-		if pivoted, ok := pivotReportBody(rows, schema, forced); ok {
+		if pivoted, ok := pivotReportBody(rows, schema); ok {
 			return pivoted
 		}
 	}

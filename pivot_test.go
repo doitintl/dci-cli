@@ -28,7 +28,7 @@ func TestPivotReportBodyTimeAsColumns(t *testing.T) {
 		[]interface{}{"svc-b", "2026", "06", 100.0, float64(1780272000)},
 		[]interface{}{"svc-b", "2026", "07", 200.0, float64(1782864000)},
 	}
-	result, ok := pivotReportBody(rows, pivotSchema(), true)
+	result, ok := pivotReportBody(rows, pivotSchema())
 	if !ok {
 		t.Fatal("pivot not applied")
 	}
@@ -69,7 +69,7 @@ func TestPivotReportBodyNullGroups(t *testing.T) {
 	rows := []interface{}{
 		[]interface{}{nil, "2026", "06", 5.0, float64(1780272000)},
 	}
-	result, ok := pivotReportBody(rows, pivotSchema(), true)
+	result, ok := pivotReportBody(rows, pivotSchema())
 	if !ok {
 		t.Fatal("pivot not applied")
 	}
@@ -94,7 +94,7 @@ func TestPivotReportBodyKeepsMetricTotalsSeparate(t *testing.T) {
 		[]interface{}{"svc", "2026", "06", 10.0, 100.0},
 		[]interface{}{"svc", "2026", "07", 20.0, 200.0},
 	}
-	result, ok := pivotReportBody(rows, schema, true)
+	result, ok := pivotReportBody(rows, schema)
 	if !ok {
 		t.Fatal("pivot not applied")
 	}
@@ -142,7 +142,7 @@ func TestPivotRowsCarryTrend(t *testing.T) {
 		[]interface{}{"svc-a", "2026", "06", 100.0, float64(1780272000)},
 		[]interface{}{"svc-a", "2026", "07", 200.0, float64(1782864000)},
 	}
-	result, ok := pivotReportBody(rows, pivotSchema(), true)
+	result, ok := pivotReportBody(rows, pivotSchema())
 	if !ok {
 		t.Fatal("pivot not applied")
 	}
@@ -155,7 +155,7 @@ func TestPivotRowsCarryTrend(t *testing.T) {
 	}
 }
 
-func TestPivotDefaultFallsBackOnManyPeriods(t *testing.T) {
+func TestPivotAppliesOnManyPeriods(t *testing.T) {
 	viper.Set("table-columns", "")
 	t.Cleanup(func() {
 		viper.Set("table-columns", nil)
@@ -163,7 +163,7 @@ func TestPivotDefaultFallsBackOnManyPeriods(t *testing.T) {
 	})
 
 	rows := []interface{}{}
-	for day := 1; day <= maxDefaultPivotPeriods+3; day++ {
+	for day := 1; day <= 30; day++ {
 		rows = append(rows, []interface{}{"svc", "2026", "07", fmt.Sprintf("%02d", day), 1.0, float64(1780272000 + day*86400)})
 	}
 	schema := []reportColumn{
@@ -174,11 +174,18 @@ func TestPivotDefaultFallsBackOnManyPeriods(t *testing.T) {
 		{Name: "cost", Type: "float"},
 		{Name: "timestamp", Type: "timestamp"},
 	}
-	if _, ok := pivotReportBody(rows, schema, false); ok {
-		t.Error("default pivot applied despite too many periods")
+	// A month of daily periods pivots like any other report: the terminal
+	// width fit trims overflow columns, so period count never flattens the view.
+	result, ok := pivotReportBody(rows, schema)
+	if !ok {
+		t.Fatal("pivot refused on a month of daily periods")
 	}
-	if _, ok := pivotReportBody(rows, schema, true); !ok {
-		t.Error("forced pivot refused")
+	first := result.([]interface{})[0].(map[string]interface{})
+	if first["total"] != 30.0 {
+		t.Errorf("row total = %v, want 30", first["total"])
+	}
+	if !viper.GetBool("table-columns-auto") {
+		t.Error("pivot column order must stay fit-eligible (table-columns-auto)")
 	}
 }
 
@@ -234,15 +241,15 @@ func TestShouldPivotReportRowsDefaults(t *testing.T) {
 }
 
 func TestPivotReportBodySkipsNonReportShapes(t *testing.T) {
-	if _, ok := pivotReportBody([]interface{}{"not-a-row"}, pivotSchema(), true); ok {
+	if _, ok := pivotReportBody([]interface{}{"not-a-row"}, pivotSchema()); ok {
 		t.Error("pivot applied to malformed rows")
 	}
-	if _, ok := pivotReportBody(nil, nil, true); ok {
+	if _, ok := pivotReportBody(nil, nil); ok {
 		t.Error("pivot applied to empty input")
 	}
 	// No time columns → nothing to pivot.
 	schema := []reportColumn{{Name: "service_description", Type: "string"}, {Name: "cost", Type: "float"}}
-	if _, ok := pivotReportBody([]interface{}{[]interface{}{"svc", 1.0}}, schema, true); ok {
+	if _, ok := pivotReportBody([]interface{}{[]interface{}{"svc", 1.0}}, schema); ok {
 		t.Error("pivot applied without time columns")
 	}
 }

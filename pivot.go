@@ -6,20 +6,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/viper"
 )
-
-// maxDefaultPivotPeriods bounds the default pivot: beyond two weeks of daily
-// (or a day of hourly) periods the matrix stops being scannable, so the
-// default view stays flat and only an explicit --pivot forces the matrix.
-const maxDefaultPivotPeriods = 14
 
 // pivotReportBody reshapes flat report rows (one row per group × time period)
 // into a report-style pivot: groups as rows, time periods as columns, with a
 // row total column and a per-period totals row — the way the DoiT console
-// presents a report table.
-func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (interface{}, bool) {
+// presents a report table. Period count never disables the pivot: the
+// terminal-width fit keeps the group, the leading periods, and the
+// fit-priority total/trend columns, reporting the rest through the
+// hidden-columns hint.
+func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bool) {
 	if len(schema) == 0 || len(rows) == 0 {
 		return nil, false
 	}
@@ -89,12 +86,6 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 	}
 	sort.Strings(periods)
 
-	if !forced && len(periods) > maxDefaultPivotPeriods {
-		if cli.Stderr != nil {
-			_, _ = fmt.Fprintf(cli.Stderr, "note: %d time periods — showing flat rows (pass --pivot to force the pivot view)\n", len(periods))
-		}
-		return nil, false
-	}
 	viper.Set("pivot-active", true)
 	viper.Set("pivot-total-rows", len(metricIdx))
 
@@ -142,9 +133,9 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 	// Give the renderer an explicit column order (group, periods, total) —
 	// alphabetical ordering would sort the group column after the periods.
 	// Marked as auto-set so the width fit still applies (unlike a user's -C,
-	// this is not an explicit selection): a forced pivot over many periods
-	// keeps the group, the leading periods, and the total, with the rest
-	// reported through the hidden-columns hint.
+	// this is not an explicit selection): a pivot over many periods keeps
+	// the group, the leading periods, and the total, with the rest reported
+	// through the hidden-columns hint.
 	if strings.TrimSpace(viper.GetString("table-columns")) == "" {
 		order := []string{groupHeader}
 		if multiMetric {
