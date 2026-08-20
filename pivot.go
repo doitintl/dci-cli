@@ -132,6 +132,13 @@ func pivotReportBody(rows []interface{}, schema []reportColumn, forced bool) (in
 		out = append(out, totals)
 	}
 
+	// The pivot already identified the time periods and their totals — hand
+	// them to the --chart renderer (a no-op unless the flag was passed).
+	if len(metricIdx) > 0 {
+		firstMetric := schema[metricIdx[0]].Name
+		setChartSeries(firstMetric, periods, periodTotals[firstMetric])
+	}
+
 	// Give the renderer an explicit column order (group, periods, total) —
 	// alphabetical ordering would sort the group column after the periods.
 	// Marked as auto-set so the width fit still applies (unlike a user's -C,

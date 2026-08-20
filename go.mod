@@ -6,6 +6,7 @@ require (
 	github.com/alexeyco/simpletable v1.0.0
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/guptarohit/asciigraph v0.10.0
 	github.com/mattn/go-runewidth v0.0.19
 	github.com/rest-sh/restish v0.21.2
 	github.com/spf13/cobra v1.10.2
