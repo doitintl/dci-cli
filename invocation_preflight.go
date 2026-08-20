@@ -216,6 +216,27 @@ func authenticationRequiredPreflightError() error {
 	}
 }
 
+// apiRejectedTokenError reports a 401 from the API itself: credentials exist
+// but the server refused them. Distinct from authenticationRequiredPreflightError
+// (no credentials at all) — and it names the API base, because the most
+// confusing cause is the CLI talking to an API the stored token is not valid
+// for (a dev base left behind in apis.json or DCI_API_BASE_URL).
+func apiRejectedTokenError(base string) error {
+	hint := "Run dci login to re-authenticate"
+	if base != defaultAPIBase {
+		hint += fmt.Sprintf("; note the API base is %s, not the default %s — check DCI_API_BASE_URL and the base in apis.json", base, defaultAPIBase)
+	}
+	return invocationPreflightError{
+		detail: structuredError{
+			Code:      "AUTHENTICATION_REQUIRED",
+			Message:   fmt.Sprintf("the API at %s rejected the stored credentials (HTTP 401)", base),
+			Hint:      hint,
+			Retryable: false,
+		},
+		exitCode: exitAuthentication,
+	}
+}
+
 func invocationHasFlag(args []string, name string) bool {
 	for _, argument := range args {
 		if argument == name || strings.HasPrefix(argument, name+"=") {

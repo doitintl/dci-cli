@@ -226,6 +226,16 @@ func authenticationFailureHint() string {
 	if strings.TrimSpace(os.Getenv(apiKeyEnvName)) != "" {
 		return fmt.Sprintf("Check %s: the token may be malformed, expired, or revoked", apiKeyEnvName)
 	}
+	return loginHint()
+}
+
+// loginHint names a non-default API base alongside the login remedy: a 401
+// with valid-looking local credentials usually means the CLI is pointed at an
+// API the token is not valid for, and "run dci login" alone hides that.
+func loginHint() string {
+	if base, err := apiBase(); err == nil && base != defaultAPIBase {
+		return fmt.Sprintf("Run: dci login (note: the API base is %s, not the default %s)", base, defaultAPIBase)
+	}
 	return "Run: dci login"
 }
 
@@ -301,7 +311,7 @@ func authFailureHint(status int) string {
 	if os.Getenv("DCI_API_KEY") != "" {
 		return "Check DCI_API_KEY: the token may be malformed, expired, or revoked (new tokens can take up to a minute to activate)"
 	}
-	return "Run: dci login"
+	return loginHint()
 }
 
 func writeStructuredError(writer io.Writer, detail structuredError) {

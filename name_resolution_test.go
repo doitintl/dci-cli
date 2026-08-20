@@ -870,6 +870,14 @@ func TestFetchResourceNamesStatusHandling(t *testing.T) {
 	if !ok || preflightError.ExitCode() != exitAuthentication {
 		t.Fatalf("401 error = %#v", err)
 	}
+	// The 401 came from the API, not from missing credentials: the error must
+	// name the base it talked to, and flag that it is not the default.
+	if !strings.Contains(preflightError.Error(), server.URL) || !strings.Contains(preflightError.Error(), "rejected the stored credentials") {
+		t.Fatalf("401 message = %q, want the API base named", preflightError.Error())
+	}
+	if hint := preflightError.StructuredError().Hint; !strings.Contains(hint, defaultAPIBase) {
+		t.Fatalf("401 hint = %q, want the non-default base called out", hint)
+	}
 
 	status = http.StatusForbidden
 	_, err = fetchResourceNames("/analytics/v1/reports", "", 1)

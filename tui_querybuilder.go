@@ -317,7 +317,7 @@ func fetchQueryDimensionsLive(context string) ([]queryDimension, error) {
 		body, readErr := io.ReadAll(io.LimitReader(response.Body, 8<<20))
 		_ = response.Body.Close()
 		if response.StatusCode == http.StatusUnauthorized {
-			return nil, authenticationRequiredPreflightError()
+			return nil, apiRejectedTokenError(base)
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			return nil, resolverLookupStatusError(listPath, response)

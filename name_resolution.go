@@ -643,7 +643,7 @@ func fetchResourceNames(listPath, context string, maxPages int) (resolverListRes
 		body, readErr := io.ReadAll(io.LimitReader(response.Body, 8<<20))
 		_ = response.Body.Close()
 		if response.StatusCode == http.StatusUnauthorized {
-			return resolverListResult{}, authenticationRequiredPreflightError()
+			return resolverListResult{}, apiRejectedTokenError(base)
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			return resolverListResult{}, resolverLookupStatusError(listPath, response)
