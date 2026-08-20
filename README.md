@@ -235,18 +235,15 @@ Pass `--dry-run` to preview any API command. Most commands use a local preview a
 
 ## Updating
 
-Run `dci upgrade` to check for a new version — it prints the upgrade command for your install method (it never installs anything itself). The CLI also checks for new releases in the background at most once every few hours and prints a short notice when one is available; set `DCI_NO_UPDATE_CHECK=1` to turn that off.
+Run `dci update` (alias: `dci upgrade`) to update in place on any OS. It knows how the binary was installed and does the right thing after a confirmation:
 
-```bash
-# macOS (Homebrew)
-brew update && brew upgrade dci
+- **Homebrew / Scoop / WinGet** installs run the package manager's own upgrade command for you.
+- **`.deb`/`.rpm`** installs download the new package, verify its checksum, and run the install step with `sudo` (you'll be asked for your password).
+- **Standalone binaries** (tarball, `~/bin`, CI) are replaced directly after validating the release checksum.
 
-# Windows (WinGet)
-winget upgrade DoiT.dci
+Useful flags: `--check` only reports whether an update is available, `--yes` skips the confirmation, and `--version vX.Y.Z` pins or rolls back a standalone install to a specific release. In agent mode the command never installs without `--yes` and reports a JSON result.
 
-# Windows (Scoop)
-scoop update dci
-```
+The CLI also checks for new releases in the background at most once every few hours and prints a short notice when one is available; set `DCI_NO_UPDATE_CHECK=1` to turn that off.
 
 > **Note (Homebrew 6):** `brew install` auto-trusts the formula, so upgrades normally just work. But `brew upgrade`/`brew reinstall` never trust the tap on their own — if `dci` upgrades fail or are silently skipped with an untrusted-tap message, run `brew trust doitintl/dci-cli` once to restore it.
 

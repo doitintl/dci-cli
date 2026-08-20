@@ -306,8 +306,8 @@ func run() (exitCode int) {
 
 	// Kick off the update check now so it runs in parallel with the command;
 	// the deferred notify covers every return path after command output.
-	updateDone := startUpdateCheck(configDir)
-	defer maybeNotifyUpdate(configDir, updateDone)
+	startUpdateCheck(configDir)
+	defer maybeNotifyUpdate(configDir)
 
 	cli.Init("dci", version)
 	cli.Defaults()
@@ -342,7 +342,8 @@ func run() (exitCode int) {
 	registerStatusCommands(configDir)
 	registerAuthCommands(configDir)
 	registerCustomerContextCommands(configDir)
-	registerUpgradeCommand(configDir)
+	registerUpdateCommand(configDir)
+	registerUpdateRefreshCommand(configDir)
 	registerVersionCommand()
 	registerDocsCommand()
 	registerOpenCommand(configDir)

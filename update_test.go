@@ -40,16 +40,10 @@ func TestFetchLatestVersion(t *testing.T) {
 }
 
 func TestUpdateNotice(t *testing.T) {
-	got := updateNotice("1.4.2", "v1.5.0", "brew upgrade dci")
-	want := "A new version of dci is available: 1.4.2 → 1.5.0\nRun `brew upgrade dci` to update.\n"
+	got := updateNotice("1.4.2", "v1.5.0", "dci update")
+	want := "A new version of dci is available: 1.4.2 → 1.5.0\nRun `dci update` to update.\n"
 	if got != want {
 		t.Errorf("updateNotice = %q, want %q", got, want)
-	}
-
-	got = updateNotice("1.4.2", "v1.5.0", "Download the latest release from https://github.com/doitintl/dci-cli/releases/latest")
-	want = "A new version of dci is available: 1.4.2 → 1.5.0\nDownload the latest release from https://github.com/doitintl/dci-cli/releases/latest\n"
-	if got != want {
-		t.Errorf("updateNotice(download hint) = %q, want %q", got, want)
 	}
 }
 
@@ -101,11 +95,100 @@ func TestRefreshUpdateCache(t *testing.T) {
 		t.Errorf("after refresh: cache = %+v, ok = %v; want latest v1.5.0 at %v", c, ok, now)
 	}
 
-	// A failed fetch must leave the previous cache intact.
-	refreshUpdateCache(dir, srv.URL+"/fail", now.Add(time.Hour))
+	// A failed fetch must keep the previous result and stamp the failure
+	// time for the retry backoff.
+	failedAt := now.Add(time.Hour)
+	refreshUpdateCache(dir, srv.URL+"/fail", failedAt)
 	c, ok = readUpdateCache(dir)
 	if !ok || c.LatestVersion != "v1.5.0" || !c.CheckedAt.Equal(now) {
-		t.Errorf("after failed refresh: cache = %+v, ok = %v; want previous cache untouched", c, ok)
+		t.Errorf("after failed refresh: cache = %+v, ok = %v; want previous result kept", c, ok)
+	}
+	if !c.FailedAt.Equal(failedAt) {
+		t.Errorf("FailedAt = %v, want %v", c.FailedAt, failedAt)
+	}
+}
+
+func TestUpdateRetryBackoff(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name     string
+		failedAt time.Time
+		want     bool
+	}{
+		{"never failed", time.Time{}, false},
+		{"just failed", now, true},
+		{"14m ago", now.Add(-14 * time.Minute), true},
+		{"16m ago", now.Add(-16 * time.Minute), false},
+		{"clock rolled back", now.Add(time.Hour), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := updateCache{FailedAt: tc.failedAt}
+			if got := c.retryBackoffActive(now); got != tc.want {
+				t.Errorf("retryBackoffActive = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAcquireUpdateRefreshLock(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+
+	release, ok := acquireUpdateRefreshLock(dir, now)
+	if !ok {
+		t.Fatal("first acquisition must succeed")
+	}
+	if _, ok := acquireUpdateRefreshLock(dir, now); ok {
+		t.Fatal("a live lock must block a second refresher")
+	}
+	release()
+	release2, ok := acquireUpdateRefreshLock(dir, now)
+	if !ok {
+		t.Fatal("acquisition after release must succeed")
+	}
+	release2()
+
+	// A stale lock (crashed refresher) is stolen.
+	lockPath := filepath.Join(dir, "update_check.lock")
+	if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-3 * time.Minute)
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	release3, ok := acquireUpdateRefreshLock(dir, time.Now())
+	if !ok {
+		t.Fatal("a stale lock must be stolen")
+	}
+	release3()
+}
+
+func TestUpdateRefreshNeeded(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+
+	if !updateRefreshNeeded(dir, now) {
+		t.Error("absent cache must need a refresh")
+	}
+	if err := writeUpdateCache(dir, updateCache{LatestVersion: "v1.5.0", CheckedAt: now.Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if updateRefreshNeeded(dir, now) {
+		t.Error("fresh cache must not need a refresh")
+	}
+	if err := writeUpdateCache(dir, updateCache{LatestVersion: "v1.5.0", CheckedAt: now.Add(-6 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if !updateRefreshNeeded(dir, now) {
+		t.Error("stale cache must need a refresh")
+	}
+	if err := writeUpdateCache(dir, updateCache{LatestVersion: "v1.5.0", CheckedAt: now.Add(-6 * time.Hour), FailedAt: now.Add(-5 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if updateRefreshNeeded(dir, now) {
+		t.Error("retry backoff must suppress the refresh")
 	}
 }
 
@@ -164,30 +247,38 @@ func TestUpdateCacheStale(t *testing.T) {
 	}
 }
 
-func TestUpgradeInstruction(t *testing.T) {
-	releasesHint := "Download the latest release from https://github.com/doitintl/dci-cli/releases/latest"
+func TestDetectInstallChannel(t *testing.T) {
+	originalProbe := packageOwnershipProbe
+	t.Cleanup(func() { packageOwnershipProbe = originalProbe })
+	owner := "" // which tool claims the binary: "dpkg", "rpm", or ""
+	packageOwnershipProbe = func(tool string, args ...string) bool { return tool == owner }
+
 	cases := []struct {
 		name    string
 		exePath string
 		goos    string
-		want    string
+		owner   string
+		want    installChannel
 	}{
-		{"brew apple silicon", "/opt/homebrew/Cellar/dci/1.4.2/bin/dci", "darwin", "brew upgrade dci"},
-		{"brew intel mac", "/usr/local/Cellar/dci/1.4.2/bin/dci", "darwin", "brew upgrade dci"},
-		{"brew opt symlink", "/opt/homebrew/opt/dci/bin/dci", "darwin", "brew upgrade dci"},
-		{"linuxbrew", "/home/linuxbrew/.linuxbrew/Cellar/dci/1.4.2/bin/dci", "linux", "brew upgrade dci"},
-		{"scoop", `C:\Users\pat\scoop\apps\dci\current\dci.exe`, "windows", "scoop update dci"},
-		{"scoop shim", `C:\Users\pat\scoop\shims\dci.exe`, "windows", "scoop update dci"},
-		{"winget", `C:\Users\pat\AppData\Local\Microsoft\WinGet\Packages\DoiT.dci__abc\dci.exe`, "windows", "winget upgrade DoiT.dci"},
-		{"deb-rpm usr bin", "/usr/bin/dci", "linux", releasesHint},
-		{"manual install", "/Users/pat/bin/dci", "darwin", releasesHint},
-		{"windows manual", `C:\tools\dci.exe`, "windows", releasesHint},
-		{"empty path", "", "darwin", releasesHint},
+		{"brew apple silicon", "/opt/homebrew/Cellar/dci/1.4.2/bin/dci", "darwin", "", channelBrew},
+		{"brew intel mac", "/usr/local/Cellar/dci/1.4.2/bin/dci", "darwin", "", channelBrew},
+		{"brew opt symlink", "/opt/homebrew/opt/dci/bin/dci", "darwin", "", channelBrew},
+		{"linuxbrew", "/home/linuxbrew/.linuxbrew/Cellar/dci/1.4.2/bin/dci", "linux", "", channelBrew},
+		{"scoop", `C:\Users\pat\scoop\apps\dci\current\dci.exe`, "windows", "", channelScoop},
+		{"scoop shim", `C:\Users\pat\scoop\shims\dci.exe`, "windows", "", channelScoop},
+		{"winget", `C:\Users\pat\AppData\Local\Microsoft\WinGet\Packages\DoiT.dci__abc\dci.exe`, "windows", "", channelWinget},
+		{"dpkg-owned", "/usr/bin/dci", "linux", "dpkg", channelDeb},
+		{"rpm-owned", "/usr/bin/dci", "linux", "rpm", channelRPM},
+		{"linux unowned", "/usr/local/bin/dci", "linux", "", channelSelf},
+		{"manual install", "/Users/pat/bin/dci", "darwin", "", channelSelf},
+		{"windows manual", `C:\tools\dci.exe`, "windows", "", channelSelf},
+		{"empty path", "", "darwin", "", channelSelf},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := upgradeInstruction(tc.exePath, tc.goos); got != tc.want {
-				t.Errorf("upgradeInstruction(%q, %q) = %q, want %q", tc.exePath, tc.goos, got, tc.want)
+			owner = tc.owner
+			if got := detectInstallChannel(tc.exePath, tc.goos); got != tc.want {
+				t.Errorf("detectInstallChannel(%q, %q) = %q, want %q", tc.exePath, tc.goos, got, tc.want)
 			}
 		})
 	}
