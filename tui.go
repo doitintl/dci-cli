@@ -149,6 +149,38 @@ func tuiConfirmDestructive(commandName string) bool {
 	return confirmed
 }
 
+// announceLoginSuccess reports the login result (TUI-SPEC F7). The non-TTY
+// output is byte-identical to the pre-TUI CLI, including the doer
+// auto-configuration lines that used to live in applyDoerContext.
+func announceLoginSuccess(configDir string, doerConfigured bool) {
+	if !tuiActive() {
+		if doerConfigured {
+			fmt.Fprintln(os.Stderr, "Detected DoiT account. Set default customer context to 'doit.com'.")
+			fmt.Fprintln(os.Stderr, "To use a different context: dci customer-context set <CONTEXT>")
+		}
+		fmt.Fprintln(os.Stderr, "Authenticated successfully.")
+		return
+	}
+	lines := []string{tuiSuccessStyle.Render("✓ Signed in via the DoiT Console.")}
+	if context := readCustomerContext(configDir); context != "" {
+		note := ""
+		if doerConfigured {
+			note = tuiDimStyle.Render("  (doer auto-configured — change with: dci customer-context set)")
+		}
+		lines = append(lines, "  Customer context: "+context+note)
+	}
+	fmt.Fprintln(os.Stderr, strings.Join(lines, "\n"))
+}
+
+// styleUpdateNotice boxes the new-version notice for interactive terminals
+// (TUI-SPEC F8.1); every other context keeps the plain text.
+func styleUpdateNotice(notice string) string {
+	if !tuiActive() {
+		return notice
+	}
+	return tuiNoticeBox.Render(strings.TrimRight(notice, "\n")) + "\n"
+}
+
 // startTUISpinner renders a single-line braille spinner on stderr and returns
 // a stop function that clears the line. A no-op outside tuiActive().
 func startTUISpinner(message string) func() {

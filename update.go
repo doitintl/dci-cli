@@ -57,7 +57,7 @@ func maybeNotifyUpdate(configDir string, done <-chan struct{}) {
 	if !ok || !isNewerVersion(version, c.LatestVersion) {
 		return
 	}
-	fmt.Fprint(os.Stderr, "\n"+updateNotice(version, c.LatestVersion, upgradeInstruction(executablePath(), runtime.GOOS)))
+	fmt.Fprint(os.Stderr, "\n"+styleUpdateNotice(updateNotice(version, c.LatestVersion, upgradeInstruction(executablePath(), runtime.GOOS))))
 }
 
 func stderrIsTTY() bool {

@@ -1437,8 +1437,9 @@ func applyDoerContext(configDir string) bool {
 	if err != nil {
 		return false
 	}
-	fmt.Fprintln(os.Stderr, "Detected DoiT account. Set default customer context to 'doit.com'.")
-	fmt.Fprintln(os.Stderr, "To use a different context: dci customer-context set <CONTEXT>")
+	// Presentation lives with the caller (announceLoginSuccess): this helper
+	// only mutates the context, so the styled login confirmation is not
+	// duplicated by helper output.
 	return true
 }
 
@@ -1489,7 +1490,9 @@ func registerAuthCommands(configDir string) {
 			os.Args = []string{os.Args[0], "dci", "validate"}
 			oldOut, oldErr := cli.Stdout, cli.Stderr
 			cli.Stdout, cli.Stderr = io.Discard, io.Discard
+			stopSpinner := startTUISpinner("Waiting for browser sign-in… (Ctrl-C to cancel)")
 			err := cli.Run()
+			stopSpinner()
 			cli.Stdout, cli.Stderr = oldOut, oldErr
 			nonJSONErrorResponse = false
 
@@ -1498,7 +1501,8 @@ func registerAuthCommands(configDir string) {
 			// causing a 403 on first login before any context is configured. The OAuth
 			// token exchange succeeds (token is cached) even when validate returns 403,
 			// so we can inspect the token here and fix the chicken-and-egg problem.
-			if applyDoerContext(configDir) {
+			doerConfigured := applyDoerContext(configDir)
+			if doerConfigured {
 				err = nil
 				acceptDoerLoginValidation()
 			}
@@ -1506,7 +1510,7 @@ func registerAuthCommands(configDir string) {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(os.Stderr, "Authenticated successfully.")
+			announceLoginSuccess(configDir, doerConfigured)
 			return nil
 		},
 	})
@@ -1647,6 +1651,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
 	dciCmd.PersistentFlags().Bool("utc", false, "Render timestamps in UTC instead of the local timezone (table output only; machine formats and report period columns are always UTC)")
 	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
+	dciCmd.PersistentFlags().Bool("chart", false, "Render an ASCII graph of report period totals under the table (table output in human mode only; ignored elsewhere)")
 	dciCmd.PersistentFlags().Bool("id", false, "Treat positional resource arguments as literal IDs and skip name resolution")
 	dciCmd.PersistentFlags().Bool("name", false, "Force name resolution even when an argument matches the resource ID format")
 	dciCmd.PersistentFlags().Bool("all", false, "Fetch every page of a paged list response before rendering (follows the server's page tokens; GET list commands only). Cannot be combined with --page-token or --max-results")
@@ -1751,6 +1756,13 @@ func addOutputFlag() {
 			heatmapRequested = flag.Value.String() == "true"
 		}
 		viper.Set("heatmap", heatmapEnabled(heatmapRequested, agentMode, stdoutIsTTY(), os.Getenv("NO_COLOR") != ""))
+
+		resetChartState()
+		chartFlagSet := false
+		if flag := cmd.Flags().Lookup("chart"); flag != nil {
+			chartFlagSet = flag.Value.String() == "true"
+		}
+		viper.Set("chart-requested", chartFlagSet)
 
 		for flagName, configName := range map[string]string{
 			"pivot":              "pivot-rows",
@@ -2632,6 +2644,8 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 		hidden = append(hidden, hiddenForWidth...)
 	}
 
+	keys = augmentTableViewColumns(rows, keys)
+
 	contentW := measureContentWidths(rows, keys)
 
 	colWidths := computeColumnWidths(contentW, terminalWidth, maxColWidth)
@@ -2640,6 +2654,7 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	maybeRenderChart()
 
 	if len(hidden) > 0 {
 		out += fmt.Sprintf("\nHidden columns (nested objects, or too many to fit): %s\n", strings.Join(hidden, ", "))
@@ -3310,8 +3325,13 @@ func tableAccentConfig() (column, flagKey string) {
 // non-empty string. Applied after width formatting, like the heatmap, so the
 // escape codes never count against the column width.
 func accentCell(row map[string]interface{}, flagKey, cellText string) string {
-	if flag, _ := row[flagKey].(string); strings.TrimSpace(flag) == "" {
+	flag, _ := row[flagKey].(string)
+	flag = strings.TrimSpace(flag)
+	if flag == "" {
 		return cellText
+	}
+	if flag == "accent-red" {
+		return "\x1b[1;31m" + cellText + "\x1b[0m"
 	}
 	return "\x1b[1;32m" + cellText + "\x1b[0m"
 }
