@@ -418,8 +418,8 @@ func TestEnsureConfigLoadsSavedAPIBase(t *testing.T) {
 		t.Fatalf("ensureConfig(create) error: %v", err)
 	}
 	configPath := filepath.Join(dir, "apis.json")
-	if err := updateConfigBase(configPath, "https://api-dev.doit.com"); err != nil {
-		t.Fatalf("updateConfigBase() error: %v", err)
+	if err := writeConfig(configPath, "https://api-dev.doit.com"); err != nil {
+		t.Fatalf("writeConfig() error: %v", err)
 	}
 	configuredAPIBase = ""
 	if _, err := ensureConfig(dir); err != nil {
@@ -434,13 +434,15 @@ func TestEnsureConfigLoadsSavedAPIBase(t *testing.T) {
 	}
 }
 
-func TestEnsureConfigUpdatesBaseURL(t *testing.T) {
+func TestEnsureConfigNeverPersistsEnvBase(t *testing.T) {
 	previousConfiguredAPIBase := configuredAPIBase
 	configuredAPIBase = ""
 	t.Cleanup(func() { configuredAPIBase = previousConfiguredAPIBase })
 	dir := t.TempDir()
 
-	// First run: create config with default base.
+	// First run under the env override: the stored config still gets the
+	// production default — the override is per-invocation, not sticky.
+	t.Setenv("DCI_API_BASE_URL", "https://dev-app.doit.com")
 	configured, err := ensureConfig(dir)
 	if err != nil {
 		t.Fatalf("ensureConfig(create) error: %v", err)
@@ -448,32 +450,41 @@ func TestEnsureConfigUpdatesBaseURL(t *testing.T) {
 	if !configured {
 		t.Fatalf("expected configured=true on first run")
 	}
-
-	// Verify default base is written.
 	configPath := filepath.Join(dir, "apis.json")
 	assertConfigBase(t, configPath, defaultAPIBase)
 
-	// Second run with DCI_API_BASE_URL set: should update base in existing config.
-	t.Setenv("DCI_API_BASE_URL", "https://dev-app.doit.com")
+	// The override still wins at runtime for this invocation.
+	base, err := apiBase()
+	if err != nil {
+		t.Fatalf("apiBase() error: %v", err)
+	}
+	if base != "https://dev-app.doit.com" {
+		t.Fatalf("apiBase() = %q, want the env override", base)
+	}
+
+	// A later run with the env set must leave the stored base untouched —
+	// one dev-targeted invocation must not strand every later run on dev.
 	configured, err = ensureConfig(dir)
 	if err != nil {
-		t.Fatalf("ensureConfig(update) error: %v", err)
+		t.Fatalf("ensureConfig(existing) error: %v", err)
 	}
 	if configured {
 		t.Fatalf("expected configured=false on second run")
 	}
-	assertConfigBase(t, configPath, "https://dev-app.doit.com")
+	assertConfigBase(t, configPath, defaultAPIBase)
 
-	// Third run without env var: base should remain as previously written.
+	// Without the env var, runtime resolution follows the stored base again.
 	t.Setenv("DCI_API_BASE_URL", "")
-	configured, err = ensureConfig(dir)
-	if err != nil {
+	if _, err := ensureConfig(dir); err != nil {
 		t.Fatalf("ensureConfig(no-op) error: %v", err)
 	}
-	if configured {
-		t.Fatalf("expected configured=false on third run")
+	base, err = apiBase()
+	if err != nil {
+		t.Fatalf("apiBase() error: %v", err)
 	}
-	assertConfigBase(t, configPath, "https://dev-app.doit.com")
+	if base != defaultAPIBase {
+		t.Fatalf("apiBase() = %q, want the stored default", base)
+	}
 }
 
 func assertConfigBase(t *testing.T, configPath, wantBase string) {
@@ -806,18 +817,26 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		}
 	})
 
-	t.Run("status keeps configured API base without env override", func(t *testing.T) {
+	t.Run("env API base is per-invocation, never persisted", func(t *testing.T) {
 		home := t.TempDir()
 		first := runCLIWithEnv(t, bin, home, []string{"DCI_API_BASE_URL=https://api-dev.doit.com"}, "status")
 		if first.exitCode != 0 {
 			t.Fatalf("initial status exit code = %d; output:\n%s", first.exitCode, first.output)
 		}
+		if !strings.Contains(first.output, "API Base: https://api-dev.doit.com (DCI_API_BASE_URL)") {
+			t.Fatalf("env override missing from status:\n%s", first.output)
+		}
+		// The next env-less run is back on the stored default: one
+		// dev-targeted invocation must not strand later runs on dev.
 		second := runCLIWithHome(t, bin, home, "status")
 		if second.exitCode != 0 {
 			t.Fatalf("saved-base status exit code = %d; output:\n%s", second.exitCode, second.output)
 		}
-		if !strings.Contains(second.output, "API Base: https://api-dev.doit.com") {
-			t.Fatalf("saved API base missing from status:\n%s", second.output)
+		if !strings.Contains(second.output, "API Base: "+defaultAPIBase) {
+			t.Fatalf("default API base missing from status:\n%s", second.output)
+		}
+		if strings.Contains(second.output, "api-dev.doit.com") {
+			t.Fatalf("env base leaked into the stored config:\n%s", second.output)
 		}
 	})
 

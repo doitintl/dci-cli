@@ -129,20 +129,13 @@ func dciConfigDir() string {
 func ensureConfig(configDir string) (bool, error) {
 	configFile := filepath.Join(configDir, "apis.json")
 
+	// DCI_API_BASE_URL is deliberately NOT persisted here: apiBase() prefers
+	// the env var for the invocation it is set on, and one dev-targeted run
+	// must not silently strand every later run on that base (which is exactly
+	// what the previous persist-on-sight behavior did).
 	if _, err := os.Stat(configFile); err == nil {
 		if err := tightenFilePermissions(configFile, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: unable to tighten config permissions for %s: %v\n", configFile, err)
-		}
-		if os.Getenv("DCI_API_BASE_URL") != "" {
-			base, err := apiBase()
-			if err != nil {
-				return false, err
-			}
-			if err := persistConfigBase(configFile, base); err != nil {
-				return false, err
-			}
-			configuredAPIBase = base
-			return false, nil
 		}
 		base, err := readConfigBase(configFile)
 		if err == nil {
@@ -161,19 +154,17 @@ func ensureConfig(configDir string) (bool, error) {
 		return false, err
 	}
 
-	base, err := apiBase()
-	if err != nil {
-		return false, err
-	}
-
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return false, err
 	}
 
-	if err := writeConfig(configFile, base); err != nil {
+	// First run always seeds the file with the production default, even under
+	// DCI_API_BASE_URL — the env override stays per-invocation (apiBase()
+	// prefers it at runtime) and never becomes the stored base.
+	if err := writeConfig(configFile, defaultAPIBase); err != nil {
 		return false, err
 	}
-	configuredAPIBase = base
+	configuredAPIBase = defaultAPIBase
 
 	return true, nil
 }
@@ -227,38 +218,6 @@ func readConfigBase(configFile string) (string, error) {
 		return "", errors.New("dci.base is missing from apis.json")
 	}
 	return strings.TrimRight(base, "/"), nil
-}
-
-// updateConfigBase reads apis.json, updates the dci.base field, and rewrites the file.
-func updateConfigBase(configFile, base string) error {
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		return err
-	}
-	var config map[string]interface{}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return err
-	}
-	dci, ok := config["dci"].(map[string]interface{})
-	if !ok {
-		return errors.New("dci configuration is missing")
-	}
-	if dci["base"] == base {
-		return nil // already up to date
-	}
-	dci["base"] = base
-	out, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(configFile, out, 0o600)
-}
-
-func persistConfigBase(configFile, base string) error {
-	if _, err := readConfigBase(configFile); err != nil {
-		return writeConfig(configFile, base)
-	}
-	return updateConfigBase(configFile, base)
 }
 
 func tightenFilePermissions(path string, desired os.FileMode) error {
