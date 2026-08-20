@@ -16,7 +16,7 @@ This repo is one piece of a much larger system. `dci` wraps restish, sits in fro
 
 ### What Is This
 
-`dci` is the CLI for the Cloud Intelligence™ (DCI) API. It wraps [restish](https://github.com/rest-sh/restish) with DCI-specific configuration — auto-configured API base, OAuth2 via the DoiT Console, table-first output, and a locked-down command surface that exposes only DCI API operations. The entire CLI is a single `main.go` file. It ships as a Go binary distributed via Homebrew, Scoop, WinGet, and `.deb`/`.rpm` packages.
+`dci` is the CLI for the Cloud Intelligence™ (DCI) API. It wraps [restish](https://github.com/rest-sh/restish) with DCI-specific configuration — auto-configured API base, OAuth2 via the DoiT Console, table-first output, and a locked-down command surface that exposes only DCI API operations. The entire CLI is a single `package main` — one file per chapter of functionality, no sub-packages. It ships as a Go binary distributed via Homebrew, Scoop, WinGet, and `.deb`/`.rpm` packages.
 
 ### Restish Version (don't upgrade to v2)
 
@@ -46,18 +46,18 @@ Routine releases bump the **patch** digit (v2.3.0 → v2.3.1), even when they ca
 
 ### Key Files
 
-- Single-file CLI: `main.go` (all logic) + `main_test.go`
+- CLI source: single `package main`, one file per chapter — `main.go` (core: config & onboarding, arg/completion normalization, usage branding & lockdown, auth & doer context, customer context, table rendering) plus sibling files for extracted chapters (`name_resolution.go`, `name_completion.go`, `list_views.go`, `pagination.go`, `response_transform.go`, `output_contract.go`, `error_contract.go`, `destructive_contract.go`, `skill_management.go`, `update.go`, and others), each with a matching `_test.go`
 - Build config: `.goreleaser.yaml`
 - Release workflows: `.github/workflows/release.yml`, `sync-manifests.yml`, `post-release-verify.yml`
 - Package templates: `packaging/`
 
-#### Why `main.go` is a single file
+#### Why a single `package main`
 
-This is intentional. The CLI has no external package consumers, so splitting into sub-packages would buy nothing but churn. A single file is easy to grep, easy to read linearly, and matches how restish-wrapper CLIs are typically structured.
+This is intentional. The CLI has no external package consumers, so sub-packages would buy nothing but churn — there is no API surface to justify them. Instead the code is one flat `package main`, split into chapter-per-file siblings: each extracted concern (name resolution, shell completion, list views, pagination, response transforms, output/error/destructive contracts, skill management, update checks, …) lives in its own file with a matching `_test.go`, and each file opens with a comment stating its chapter's purpose.
 
-The file is organized into chapters (in order): config & onboarding → arg/completion normalization → usage branding & lockdown → auth & doer context → customer context → skills embed → output flags & table rendering.
+`main.go` remains the core: config & onboarding → arg/completion normalization → agent mode → usage branding & lockdown → auth & doer context → customer context → table rendering.
 
-**When to split:** if `main.go` grows past ~2,500 lines or any single chapter exceeds ~700 lines, break along chapter boundaries into sibling files in the same `package main` (e.g. `table.go`, `auth.go`, `config.go`). Do not introduce sub-packages — there is no external API surface to justify them.
+**When to extract:** when a chapter in `main.go` grows past ~700 lines or is coherent enough to stand alone, move it to a new sibling file in the same `package main`. Do not introduce sub-packages.
 
 ### Project Conventions
 
