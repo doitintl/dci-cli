@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"testing"
 
@@ -210,5 +211,86 @@ func TestPromptNameSelectionFallsBackWithoutTUI(t *testing.T) {
 	}
 	if entry.Name != "Second" {
 		t.Fatalf("numbered fallback selected %q, want Second", entry.Name)
+	}
+}
+
+func TestSpinnerGuardKeepsOneSpinner(t *testing.T) {
+	forceTUI(t, true)
+	stopFirst := startTUISpinner("first")
+	if !tuiSpinnerActive.Load() {
+		t.Fatal("first spinner must claim the line")
+	}
+	stopSecond := startTUISpinner("second")
+	stopSecond()
+	if !tuiSpinnerActive.Load() {
+		t.Fatal("a concurrent spinner must be a no-op, not release the first spinner's line")
+	}
+	stopFirst()
+	if tuiSpinnerActive.Load() {
+		t.Fatal("stopping the first spinner must release the line")
+	}
+}
+
+func TestSpinnerTransportPassesThrough(t *testing.T) {
+	forceTUI(t, false)
+	response := &http.Response{StatusCode: 200}
+	transport := spinnerTransport{next: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		return response, nil
+	})}
+	request, err := http.NewRequest(http.MethodGet, "https://api.doit.com/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := transport.RoundTrip(request)
+	if err != nil || got != response {
+		t.Fatalf("RoundTrip = %v, %v", got, err)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestInstallSpinnerTransport(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	originalInstalled := spinnerTransportInstalled
+	t.Cleanup(func() {
+		http.DefaultTransport = originalTransport
+		spinnerTransportInstalled = originalInstalled
+	})
+	spinnerTransportInstalled = false
+
+	forceTUI(t, false)
+	installSpinnerTransport()
+	if _, wrapped := http.DefaultTransport.(spinnerTransport); wrapped {
+		t.Fatal("non-interactive contexts must keep the bare transport")
+	}
+
+	forceTUI(t, true)
+	installSpinnerTransport()
+	wrapped, ok := http.DefaultTransport.(spinnerTransport)
+	if !ok {
+		t.Fatal("interactive contexts must wrap the transport")
+	}
+	installSpinnerTransport()
+	if again, ok := http.DefaultTransport.(spinnerTransport); !ok || again != wrapped {
+		t.Fatal("install must be idempotent")
+	}
+}
+
+func TestSpinnerQuipDrawsFromTheList(t *testing.T) {
+	known := map[string]bool{}
+	for _, quip := range spinnerQuips {
+		if quip == "" {
+			t.Fatal("empty quip in the list")
+		}
+		known[quip] = true
+	}
+	for range 20 {
+		if !known[spinnerQuip()] {
+			t.Fatal("spinnerQuip returned a message outside the list")
+		}
 	}
 }

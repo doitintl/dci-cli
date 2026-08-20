@@ -10,8 +10,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -181,10 +184,17 @@ func styleUpdateNotice(notice string) string {
 	return tuiNoticeBox.Render(strings.TrimRight(notice, "\n")) + "\n"
 }
 
+// tuiSpinnerActive keeps at most one spinner on the line: the request
+// transport spins during every API round trip, including the ones a caller
+// already wraps in its own spinner (the picker's name fetch), and two
+// goroutines rewriting the same line would interleave garbage.
+var tuiSpinnerActive atomic.Bool
+
 // startTUISpinner renders a single-line braille spinner on stderr and returns
-// a stop function that clears the line. A no-op outside tuiActive().
+// a stop function that clears the line. A no-op outside tuiActive() or while
+// another spinner is already running.
 func startTUISpinner(message string) func() {
-	if !tuiActive() {
+	if !tuiActive() || !tuiSpinnerActive.CompareAndSwap(false, true) {
 		return func() {}
 	}
 	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
@@ -209,5 +219,67 @@ func startTUISpinner(message string) func() {
 	return func() {
 		close(stop)
 		<-done
+		tuiSpinnerActive.Store(false)
 	}
+}
+
+// spinnerQuips are the waiting messages, one picked at random per request —
+// in the spirit of Claude Code's thinking verbs. Purely cosmetic: informative
+// spinners (name lookups, login) keep their literal messages.
+var spinnerQuips = []string{
+	"Crunching the numbers…",
+	"Counting pennies…",
+	"Herding clouds…",
+	"Amortizing…",
+	"Reticulating cost splines…",
+	"Chasing anomalies…",
+	"Rightsizing…",
+	"Interrogating the bill…",
+	"Untangling SKUs…",
+	"Polishing pivots…",
+	"Consulting the FinOps oracle…",
+	"Warming the cache…",
+	"Sharpening pencils…",
+	"Summoning spreadsheets…",
+	"Negotiating with the API…",
+	"Carrying the one…",
+	"Rounding to the nearest cent…",
+	"Squinting at line items…",
+	"Refilling the data lake…",
+	"Following the money…",
+	"Dusting off the ledger…",
+	"Asking the cloud nicely…",
+}
+
+func spinnerQuip() string {
+	return spinnerQuips[rand.IntN(len(spinnerQuips))]
+}
+
+// spinnerTransport spins while an HTTP request is in flight: report and
+// budget queries can take several seconds, and until now the terminal just
+// sat silent. Wraps whatever transport is current (the --all paginating
+// wrapper included, so one spinner spans a whole multi-page fetch).
+type spinnerTransport struct {
+	next http.RoundTripper
+}
+
+func (transport spinnerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	stop := startTUISpinner(spinnerQuip())
+	defer stop()
+	return transport.next.RoundTrip(request)
+}
+
+// installSpinnerTransport wraps http.DefaultTransport for interactive humans,
+// exactly once per process. Installed lazily from the pre-run hook for the
+// same reason as installPaginatingTransport: restish configures TLS and
+// proxies via a http.DefaultTransport.(*http.Transport) assertion, which a
+// standing wrapper would break.
+var spinnerTransportInstalled bool
+
+func installSpinnerTransport() {
+	if spinnerTransportInstalled || !tuiActive() {
+		return
+	}
+	spinnerTransportInstalled = true
+	http.DefaultTransport = spinnerTransport{next: http.DefaultTransport}
 }

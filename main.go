@@ -1728,6 +1728,9 @@ func addOutputFlag() {
 			// invocation.
 			installPaginatingTransport()
 		}
+		// After the paginating transport so the spinner wraps it: one spinner
+		// spans a whole --all fetch instead of restarting per page.
+		installSpinnerTransport()
 
 		viper.Set("report-currency", "")
 		viper.Set("money-columns", "")
