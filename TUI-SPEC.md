@@ -96,7 +96,7 @@ The ingredients for something better already exist: a per-context on-disk name c
 
 When `tuiActive()` and a command in `resolutionIndex` (name_resolution.go:50) is invoked with **zero** positional arguments:
 
-1. Serve the picker from `cachedResolverEntries` for the command's resource; kick `spawnDetachedNameRefresh` if stale (same policy as Tab completion).
+1. Serve the picker via `readNameCache` (name_completion.go:60) so stale-but-servable entries (within the 24-hour TTL, name_completion.go:31) display immediately, and kick `spawnDetachedNameRefresh` when the cache is not fresh. (`cachedResolverEntries` is unsuitable here: it returns entries only when the cache is fresh and hides the cache state, name_completion.go:122–128.)
 2. Cache absent → synchronous `fetchResourceNames` behind a spinner ("fetching report names…", stderr), honoring the existing `resolverMaxPages` cap and its truncation wording (name_resolution.go:488–492).
 3. Render a `bubbles/list` with fuzzy filtering enabled, on stderr: name as title, ID as dim description line. Enter selects, Esc/Ctrl-C cancels.
 4. Selection flows into the **same** downstream path as a typed argument: recorded in `resolvedTargets` (name_resolution.go:67) so the destructive gate shows the true target, announced via `announceResolution` (name_resolution.go:324).
@@ -111,7 +111,7 @@ $ dci get-report
   esc cancel · enter select
 ```
 
-Applies automatically to every resource the resolution index derives from the spec (reports, budgets, allocations, …) including `open`'s joined-arg variant (`openResourceArgument`, name_resolution.go:727). Excluded: operations with `hasBody` (surplus args are body shorthand, name_resolution.go:29–34) — for those, zero args keeps today's usage error.
+Applies automatically to every resource the resolution index derives from the spec (reports, budgets, allocations, …). `open` is **not** covered by that mechanism: it is a custom command outside `resolutionIndex`, and its zero-arg form deliberately opens the console home (open_command.go:35–74). It gets its own trigger instead: `dci open <resource>` with exactly one argument — today a usage error (`consoleURLForArgs`, open_command.go:77–82) — opens the picker for that resource type when `tuiActive()`, and keeps the usage error otherwise. Excluded everywhere: operations with `hasBody` (surplus args are body shorthand, name_resolution.go:29–34) — for those, zero args keeps today's usage error.
 
 ### Mechanics that need care
 
@@ -198,9 +198,9 @@ Confirm→nil, cancel→error-with-exit-30 (all three cancel gestures), `--yes` 
 Trigger: command is `query`, `tuiActive()`, **and stdin is a TTY** (nothing piped). Then instead of waiting on stdin, run a `huh` multi-group form:
 
 1. **Time range** — presets (last 7/30 days, MTD, custom ISO pair).
-2. **Dimensions / group-bys** — fuzzy multi-select fed by a programmatic `list-dimensions` call (same bearer-token client pattern as `fetchResourceNames`, name_resolution.go:562–569). The collection is ~955 entries and server-pages at ≤500 (FRICTION-SPEC §2.1–2.2) — the fetch pages to completion and caches alongside the name cache, honoring the same TTLs.
+2. **Dimensions / group-bys** — fuzzy multi-select fed by a programmatic `list-dimensions` call (same bearer-token client pattern as `fetchResourceNames`, name_resolution.go:562–569). The collection holds ~1,000 dimensions across ~20 pages (skills/dci-cli/references/query-patterns.md, "Grouping by Labels & Dimension Discovery") and `--max-results` is capped at 500 for it (pagination.go:50) — the fetch pages to completion and caches alongside the name cache, honoring the same TTLs.
 3. **Metric** — select (cost/usage/savings + custom).
-4. **Filters** — optional repeated field/value rows, exact-match semantics as documented for `list-dimensions --filter` (main.go:1197).
+4. **Filters** — optional repeated filter rows whose fields, operators, and value shapes derive from the query request schema's filter object. (Not from `list-dimensions --filter`: that is a catalog-listing filter with unrelated exact `type`/`label`/`key` semantics — a different contract entirely.)
 5. **Review** — render the composed JSON (chroma-highlighted; already in-tree), then a three-way choice: **Run**, **Save as query.json and run**, **Print and exit**.
 
 The form's field names and enums are **derived from the cached OpenAPI request schema** — the same source body_validation reads — not hand-maintained, so API additions appear without CLI releases. Hand-shaping is limited to grouping, ordering, and presets.
@@ -238,10 +238,10 @@ A bubbletea alt-screen program wrapping `bubbles/table`, fed the same `[]map[str
 - **←/→ h-scroll** columns (the 16-column anomaly fix), **↑/↓/PgUp/PgDn** rows.
 - **`s`** cycles sort on the focused column (string/numeric/epoch-aware, reusing the classifier that powers right-alignment at main.go:3277 and `sortRowsByEpochDesc`, list_views.go:356).
 - **`/`** filter rows (client-side substring).
-- **`c`** copy focused row's `id` to clipboard *if* rows carry IDs (`rowsCarryIDs`, list_views.go:454); **`enter`** prints the focused row's id/name to stdout on exit — composable: `dci list-reports -M i | xargs dci get-report --id`... (stdout stays clean until exit; the selection is the only stdout byte).
+- **`c`** copy focused row's `id` to clipboard *if* rows carry IDs (`rowsCarryIDs`, list_views.go:454); **`enter`** prints the focused row's id/name to stdout on exit (stdout stays clean until exit; the selection is the only stdout output). Note this is **not** pipeable in v1: piping stdout makes it non-TTY, which both fails `tuiActive()` and trips agent-mode detection (resolveAgentMode, main.go:776), so `… -M i | xargs …` falls back to `fit`. Pipe composability requires an fzf-style renderer that draws on `/dev/tty` with its own gate — deferred, folded into open question Q3.
 - **`q`/Esc** quit; exit prints nothing.
 
-Timestamps, heatmap shading, and column views apply before the viewer sees rows, so `DCI_TZ`, `--utc`, `--heatmap`, and `--table-columns` all keep working identically.
+Timestamps and column views apply before row extraction, so `DCI_TZ`, `--utc`, and `--table-columns` keep working identically. Heatmap shading does **not**: it is applied inside the static simpletable renderer (`newHeatmap`/`heat.colorize`, main.go:3251–3267), so the viewer explicitly reuses those helpers on its own cells to preserve `--heatmap`.
 
 ### Deliberately out of scope (v1)
 
@@ -259,13 +259,13 @@ Two small, independent pieces; no bubbletea, no alt-screen.
 
 ### 9.1 Budget utilization bars
 
-`list-budgets`' table view gains a `utilization` column: `▓▓▓▓▓▓░░░░ 63%`, red past 90%/over-budget. Rendered as a plain string cell inside the existing view machinery (`setListViewConfig`/cell helpers like `moneyCell`, list_views.go:322, :520) — the heatmap already establishes magnitude-shading precedent and its gate (`heatmapEnabled`, main.go:795: interactive, non-agent, `NO_COLOR`-aware; monochrome blocks still render under `NO_COLOR`, only the red is dropped). Machine formats never see the column: view columns are table-only by construction (list_views.go applies to table rendering, not json/yaml/toon/csv).
+`list-budgets`' table view gains a `utilization` column: `▓▓▓▓▓▓░░░░ 63%`, red past 90%/over-budget. Rendered as a plain string cell inside the existing view machinery (`setListViewConfig`/cell helpers like `moneyCell`, list_views.go:322, :520) — the heatmap already establishes magnitude-shading precedent and its gate (`heatmapEnabled`, main.go:795: interactive, non-agent, `NO_COLOR`-aware; monochrome blocks still render under `NO_COLOR`, only the red is dropped). Machine formats must never see the column — and that is *not* automatic: `presentationView()` applies curated views to `toon` as well as table/auto (response_transform.go:213–224), and toon is the agent-mode default. The utilization column is therefore registered only when the resolved output format is table/auto **and** `tuiActive()`-adjacent shading rules allow it, keeping TOON/agent output byte-identical.
 
-Requires amount + actuals in the list response; if the listing doesn't carry actuals, the column is omitted (cell helper returns "", same pattern as `starredNameCell` when data is absent, list_views.go:401) — **verify against the live API before building** (open item, §12 Q4).
+Requires amount + actuals in the list response; if the listing doesn't carry actuals, the column must be left out of the column list *before* registration — `applyListView` registers every listed column with `setListViewConfig`, so an empty-string derive would render a permanently blank column, not omit it (list_views.go:295–315). Availability is detected from the first row before the view's column list is built. **Verify the response shape against the live API before building** (open item, §12 Q4).
 
 ### 9.2 `--chart` for time-series results
 
-New flag on report-shaped output (`query`, `get-report` results): when the result set has a time dimension and ≥2 buckets, render an asciigraph line chart of the primary metric **after** the table, to stderr in human mode. One series v1; grouped results plot the total with a note. Silently ignored (with a stderr note) when the shape doesn't qualify. Agent mode: flag is accepted and ignored — charts are decoration by the CLI's own definition (README: agent mode strips decoration).
+New flag on report-shaped output (`query`, `get-report` results): when the result set has a time dimension and ≥2 buckets, render an asciigraph line chart of the primary metric **after** the table, to stderr in human mode. One series v1; grouped results plot the total with a note. When the shape doesn't qualify, the flag is a no-op with a one-line stderr note in human mode. Agent mode: the flag is accepted and ignored with no output at all — charts are decoration by the CLI's own definition (README: agent mode strips decoration).
 
 The report-container row/schema shapes needed are already classified by the response transform and pivot code (response_transform.go, pivot.go) — the chart consumes the same normalized rows as the pivot.
 
@@ -289,10 +289,10 @@ On success, replace the spinner line with a lipgloss-styled confirmation that al
 
 ```
 ✓ Signed in via DoiT Console.
-  Customer context: acme.com (doer auto-configured — change with: dci customer-context set)
+  Customer context: doit.com (doer auto-configured — change with: dci customer-context set)
 ```
 
-On failure the spinner clears and the existing error path runs unchanged. Non-TTY: today's behavior exactly. This touches only the `login` RunE body; `logout` gets the matching one-line ✓ for symmetry.
+On failure the spinner clears and the existing error path runs unchanged. Non-TTY: today's behavior exactly. Scope: the `login` RunE body **plus** a presentation split in `applyDoerContext` — it prints its own two stderr lines today (main.go:1440–1441), which would duplicate the styled confirmation; the helper keeps the context-write and returns what happened, and the caller owns all output. `logout` gets the matching one-line ✓ for symmetry.
 
 ---
 
@@ -326,8 +326,8 @@ Each phase is a separately releasable unit; per the versioning policy these are 
 
 1. **F3 policy**: confirm-prompt default-Cancel (recommended), type-the-name tiering, or keep `--yes` mandatory? (§6)
 2. **F1 scope**: should the picker also trigger on `NAME_NOT_FOUND` (typo → "did you mean" picker seeded with fuzzy matches) or only on zero args? Spec says zero args only for v1; the not-found path already has good hints (name_resolution.go:335).
-3. **F5 selection contract**: is Enter-prints-id-to-stdout the right composability primitive, or should selection do nothing in v1?
-4. **F6.1 data check**: does the `list-budgets` response carry actuals/utilization today? Needs a live probe like FRICTION-SPEC's; if not, this becomes an API ask, not a CLI feature.
+3. **F5 selection contract**: is Enter-prints-id-to-stdout the right primitive even though it isn't pipeable in v1 (piped stdout fails the gate, §8) — and is an fzf-style `/dev/tty` renderer with its own terminal rule worth speccing to make `… -M i | xargs …` real, or should selection do nothing in v1?
+4. **F6.1 data check**: does the `list-budgets` response carry actuals/utilization today? Probe: `dci list-budgets --output json` against a live customer context, checking each item for a budget amount plus a current-spend/actuals field; if absent, this becomes an API ask, not a CLI feature.
 5. **Dependency budget**: is there a binary-size ceiling that would veto the Charm stack (current binary ~15–20 MB estimated; +2–4 MB expected)? Measured, not guessed, at P1.
 6. **`DCI_NO_TUI`** naming okay, or fold into `DCI_AGENT_MODE=1` as the only opt-out (rejected here because a human may want plain prompts without agent output shaping)?
 7. **F4 placement**: build in-CLI as specced, or prototype as an agent-skill recipe first and let usage decide? In-CLI is specced because the target user is precisely the human without an agent.
