@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/viper"
 )
 
@@ -89,6 +90,28 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 	viper.Set("pivot-active", true)
 	viper.Set("pivot-total-rows", len(metricIdx))
 
+	// Drop groups whose every period cell is zero: the API emits a row for
+	// every group in the report's scope, so a wide report is mostly dead
+	// rows. Cell-level zero, not total-level — credits cancelling real spend
+	// to a zero *sum* leave nonzero cells and must stay visible. The dropped
+	// rows still contribute (nothing) to the totals row, and
+	// --include-empty-rows restores them, same as the flat view's dropper.
+	if !viper.GetBool("include-empty-rows") {
+		kept := make([]pivotKey, 0, len(groupOrder))
+		for _, key := range groupOrder {
+			if allPeriodCellsZero(values[key], periods) {
+				continue
+			}
+			kept = append(kept, key)
+		}
+		if dropped := len(groupOrder) - len(kept); dropped > 0 && len(kept) > 0 {
+			groupOrder = kept
+			if cli.Stderr != nil {
+				_, _ = fmt.Fprintf(cli.Stderr, "note: %d all-zero rows hidden (--include-empty-rows to show)\n", dropped)
+			}
+		}
+	}
+
 	// Highest row total first, matching how report tables rank groups.
 	sort.SliceStable(groupOrder, func(i, j int) bool {
 		return rowTotals[groupOrder[i]] > rowTotals[groupOrder[j]]
@@ -154,6 +177,18 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 	}
 
 	return out, true
+}
+
+// allPeriodCellsZero reports whether a pivot row is dead weight: every period
+// cell exactly zero (absent periods count as zero). Kept deliberately strict —
+// any nonzero cell, positive or negative, keeps the row.
+func allPeriodCellsZero(cells map[string]float64, periods []string) bool {
+	for _, period := range periods {
+		if cells[period] != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // trendLabel summarizes first→last period movement per row — the textual

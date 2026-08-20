@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/viper"
 )
 
@@ -251,5 +252,86 @@ func TestPivotReportBodySkipsNonReportShapes(t *testing.T) {
 	schema := []reportColumn{{Name: "service_description", Type: "string"}, {Name: "cost", Type: "float"}}
 	if _, ok := pivotReportBody([]interface{}{[]interface{}{"svc", 1.0}}, schema); ok {
 		t.Error("pivot applied without time columns")
+	}
+}
+
+func TestPivotDropsAllZeroRows(t *testing.T) {
+	viper.Set("table-columns", "")
+	t.Cleanup(func() {
+		viper.Set("table-columns", nil)
+		viper.Set("table-columns-auto", nil)
+		viper.Set("include-empty-rows", nil)
+	})
+	oldStderr := cli.Stderr
+	var stderr strings.Builder
+	cli.Stderr = &stderr
+	t.Cleanup(func() { cli.Stderr = oldStderr })
+
+	rows := []interface{}{
+		[]interface{}{"svc-live", "2026", "06", 10.0, float64(1780272000)},
+		[]interface{}{"svc-live", "2026", "07", 20.0, float64(1782864000)},
+		// Credits cancel to a zero total, but the cells are nonzero: keep.
+		[]interface{}{"svc-credited", "2026", "06", 100.0, float64(1780272000)},
+		[]interface{}{"svc-credited", "2026", "07", -100.0, float64(1782864000)},
+		// Every cell zero: dead weight, dropped.
+		[]interface{}{"svc-idle", "2026", "06", 0.0, float64(1780272000)},
+		[]interface{}{"svc-idle", "2026", "07", 0.0, float64(1782864000)},
+	}
+	result, ok := pivotReportBody(rows, pivotSchema())
+	if !ok {
+		t.Fatal("pivot not applied")
+	}
+	groups := []string{}
+	for _, item := range result.([]interface{}) {
+		groups = append(groups, item.(map[string]interface{})["service_description"].(string))
+	}
+	if fmt.Sprint(groups) != "[svc-credited svc-live TOTAL]" && fmt.Sprint(groups) != "[svc-live svc-credited TOTAL]" {
+		t.Fatalf("groups = %v, want svc-live and svc-credited kept, svc-idle dropped", groups)
+	}
+	if !strings.Contains(stderr.String(), "1 all-zero rows hidden (--include-empty-rows to show)") {
+		t.Fatalf("stderr = %q, want the hidden-rows note", stderr.String())
+	}
+	// The totals row must still reflect the full data set.
+	last := result.([]interface{})[2].(map[string]interface{})
+	if last["service_description"] != "TOTAL" || last["total"] != 30.0 {
+		t.Fatalf("totals row = %+v", last)
+	}
+}
+
+func TestPivotKeepsAllZeroRowsOnFlagOrWhenAllZero(t *testing.T) {
+	viper.Set("table-columns", "")
+	t.Cleanup(func() {
+		viper.Set("table-columns", nil)
+		viper.Set("table-columns-auto", nil)
+		viper.Set("include-empty-rows", nil)
+	})
+
+	rows := []interface{}{
+		[]interface{}{"svc-live", "2026", "06", 10.0, float64(1780272000)},
+		[]interface{}{"svc-idle", "2026", "06", 0.0, float64(1780272000)},
+	}
+	viper.Set("include-empty-rows", true)
+	result, ok := pivotReportBody(rows, pivotSchema())
+	if !ok {
+		t.Fatal("pivot not applied")
+	}
+	if got := len(result.([]interface{})); got != 3 {
+		t.Fatalf("row count with --include-empty-rows = %d, want 3 (both groups + TOTAL)", got)
+	}
+
+	// An entirely zero report keeps its rows: an empty table with a zero
+	// TOTAL row explains nothing.
+	viper.Set("include-empty-rows", false)
+	viper.Set("table-columns", "")
+	allZero := []interface{}{
+		[]interface{}{"svc-a", "2026", "06", 0.0, float64(1780272000)},
+		[]interface{}{"svc-b", "2026", "06", 0.0, float64(1780272000)},
+	}
+	result, ok = pivotReportBody(allZero, pivotSchema())
+	if !ok {
+		t.Fatal("pivot not applied")
+	}
+	if got := len(result.([]interface{})); got != 3 {
+		t.Fatalf("row count when every group is zero = %d, want 3 (nothing dropped)", got)
 	}
 }
