@@ -235,7 +235,16 @@ Pass `--dry-run` to preview any API command. Most commands use a local preview a
 
 ## Updating
 
-Run `dci upgrade` to check for a new version — it prints the upgrade command for your install method (it never installs anything itself). The CLI also checks for new releases in the background at most once every few hours and prints a short notice when one is available; set `DCI_NO_UPDATE_CHECK=1` to turn that off.
+Run `dci update` to update in place on any OS and install method (since v2.5.2; `dci upgrade` is an alias). Package-manager installs (Homebrew, Scoop, WinGet) run the manager's own upgrade command after a confirmation; Linux `.deb`/`.rpm` installs download the new package and verify it against the release checksums before installing; standalone binaries replace themselves atomically, also checksum-verified.
+
+```bash
+dci update                 # update to the latest release
+dci update --check         # only report what's available; installs nothing
+dci update --yes           # skip the confirmation (required in scripts/agent mode)
+dci update --version vX.Y.Z  # pin or roll back (standalone installs only)
+```
+
+The CLI also checks for new releases in the background at most once every few hours and prints a short notice when one is available; set `DCI_NO_UPDATE_CHECK=1` to turn that off. The package managers' own commands keep working too:
 
 ```bash
 # macOS (Homebrew)
