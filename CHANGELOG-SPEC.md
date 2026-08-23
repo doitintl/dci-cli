@@ -1,6 +1,6 @@
 # Design spec: CLI changelog on help.doit.com/docs/cli
 
-Status: **draft for maintainer review**.
+Status: **maintainer-reviewed — open questions decided 2026-08-23 (§12)**.
 Audited at commit `94268b6`; file/line citations are approximate at that commit.
 
 Scope: a customer-facing changelog page in the Help Center CLI section —
@@ -19,7 +19,7 @@ ship without its entry.
 | C1 | Canonical `CHANGELOG.md` | Curated per-release changelog lives in this repo, versioned with the code | P1 |
 | C2 | Entry format & writing rules | User-terms prose, New/Improved/Fixed sections, help-center link policy | P1 |
 | C3 | Release gate | `release.yml` refuses to release a tag whose entry is missing or whose links don't resolve | P1 |
-| C4 | Help Center sync | Release-triggered workflow renders the changelog to omni MDX and opens/updates a draft PR for tech-docs review | P1 |
+| C4 | Help Center delivery via Scribe | Release fires a dispatch to doiteng/scribe, which renders the changelog to omni MDX and opens/updates a draft PR for tech-docs review | P1 |
 | C5 | Backfill | Seed the page with rewritten history from v2.3.0 to current | P2 |
 | C6 | CLI touchpoints | `dci docs` entry + update-notice link to the changelog page | P2 |
 | C7 | Curated GitHub Release header | Prepend the entry to the GitHub Release body above the raw commit list | P3 |
@@ -54,14 +54,15 @@ Docs Bot App token (secrets `SCRIBE_APP_ID`/`SCRIBE_APP_PRIVATE_KEY`, scoped
 to omni) pushes the branch and opens the docs PR — necessary because dci-cli
 is in `doitintl` and omni is in `doiteng`, and one App installation token
 cannot span orgs. That prototype is agent-driven (Claude rewrites prose); the
-changelog sync below needs none of that, only the token plumbing, because the
-prose is authored here first.
+changelog delivery below reuses Scribe's omni plumbing but none of the agent
+machinery, because the prose is authored here first — and unlike the
+Scenario-A shortcut, dci-cli itself holds no omni credentials at all (§7).
 
 **Release plumbing.** `release.yml` runs GoReleaser on `v*` tags, then
 dispatches `sync-manifests.yml` and `post-release-verify.yml`
 (`.github/workflows/release.yml:36–42`). Both downstream workflows support
 manual `workflow_dispatch` re-runs with a tag input (DISTRIBUTION.md
-"Manual Re-runs") — the changelog sync follows the same
+"Manual Re-runs") — the changelog delivery (§7) follows the same
 pattern. The CLI itself already ships documentation entry points
 (`docs_command.go:10–19`) and an update notice (`maybeNotifyUpdate`,
 update.go:63) — both natural homes for a changelog pointer (C6).
@@ -116,7 +117,7 @@ The changelog is **authored here, rendered there**. Reasons:
 Format: standard Markdown at the repo root. Top-of-file comment block states
 the writing rules (§5) so they travel with the file. One `## v<X.Y.Z> —
 <date>` heading per release, subsections as in §3. The file is the complete
-page body — the sync renderer (§7) only adds front matter.
+page body — the delivery renderer (§7) only adds front matter.
 
 Commit convention: changelog edits use the `docs:` prefix, so they are
 excluded from GoReleaser's commit changelog (`.goreleaser.yaml:80`) — the
@@ -155,8 +156,8 @@ Rules, enforced by review and stated in the file header:
 - **Only link pages — and anchors — that resolve** at release time
   (validated by C3, including fragment ids). A
   feature whose documentation ships later gets its bullet without a link;
-  the link is added when the docs land (the sync re-renders the whole page,
-  so retroactive edits flow through, §7). Never hold a bullet hostage to a
+  the link is added when the docs land (each delivery re-renders the whole
+  page, so retroactive edits flow through, §7). Never hold a bullet hostage to a
   missing page, and never link speculatively.
 - New-command releases usually need a same-release omni docs update anyway
   (the generated reference regenerates from the OpenAPI spec; hand-written
@@ -190,39 +191,52 @@ broken half-release. Additionally, a cheap format lint (heading grammar,
 known subsection names) runs in `ci.yml` on PRs that touch `CHANGELOG.md`,
 so mistakes surface before tagging.
 
-## 7. C4 — Sync to omni (deterministic, human-merged)
+## 7. C4 — Delivery via Scribe (deterministic, human-merged)
 
-New workflow `sync-changelog.yml`, dispatched from `release.yml` alongside
-`sync-manifests.yml` and `post-release-verify.yml`, with the same
-`workflow_dispatch` + tag input escape hatch for re-runs:
+Decided 2026-08-23: **Scribe delivers, this repo authors.** The scribe
+pipeline already owns everything about getting a change into omni — the DoiT
+Docs Bot App token, draft-PR conventions, tech-docs reviewers, Slack
+notification, the dashboard. Rebuilding that as a bespoke workflow here would
+duplicate plumbing that exists and is operated elsewhere. Scribe's *agent*
+stays out of it: authoring remains C1–C3 in this repo.
 
-1. **Render**: transform `CHANGELOG.md` → `changelog.mdx` — prepend Docusaurus
-   front matter (title, description, sidebar position; exact fields copied
-   from a neighboring page in `docs/cli/` at implementation time), demote or
-   keep heading levels to match the site's conventions, pass the body through
-   otherwise verbatim. The renderer is a small dependency-free script in
-   `.github/changelog/` (shell/python on the runner — it is CI tooling, not
-   part of the Go binary, so the single-`package main` rule is untouched).
-2. **Deliver**: push the rendered file to a **fixed branch** in omni
-   (`dci-cli/changelog-sync`) and open a **draft PR** to omni's `dev` with
-   `doiteng/tech-docs` as reviewers — exactly the Scribe posture: always a
-   draft, always human-merged, never auto-merge. If the branch/PR already
-   exists (previous release's sync not yet merged), force-push the
-   re-rendered page to the same branch: since the render is the *whole page*
-   from the canonical file, the open PR always shows the complete current
-   state, and back-to-back releases (three shipped Aug 19–21) accumulate into
-   **one** PR instead of spamming tech-docs.
-3. **Auth**: built-in `GITHUB_TOKEN` reads this repo; the DoiT Docs Bot App
-   token (`SCRIBE_APP_ID`/`SCRIBE_APP_PRIVATE_KEY` secrets, copied from the
-   scribe repo per its onboarding checklist) writes to omni. No Anthropic
-   key: unlike Scribe's index.mdx updater, this sync is deterministic — no
-   agent, no prose generation, no cost, no review variance.
-4. **Failure isolation**: the sync runs after the release is published;
-   binaries and manifests never wait on omni. A failed sync is loud (red
-   workflow) and manually re-runnable.
+1. **Trigger**: after the release is published, `release.yml` fires a
+   `repository_dispatch` (event type `dci-cli-changelog`) to `doiteng/scribe`
+   carrying the tag. This slots in next to the existing downstream triggers
+   (`sync-manifests.yml`, `post-release-verify.yml`).
+2. **Render (in scribe)**: a new deterministic, non-agent job fetches
+   `CHANGELOG.md` from this repo at the dispatched tag (the repo is publicly
+   readable; the file travels by ref, not in the 64KB dispatch payload) and
+   transforms it to `changelog.mdx` — Docusaurus front matter (title,
+   description, sidebar position copied from a neighboring `docs/cli/` page)
+   plus the body verbatim. The renderer lives in scribe because omni's page
+   conventions live there; this repo owns only the prose.
+3. **Deliver (in scribe)**: push the rendered file to a **fixed branch** in
+   omni (`dci-cli/changelog-sync`) and open a **draft PR** to omni's `dev`
+   with `doiteng/tech-docs` as reviewers — the established Scribe posture
+   (always a draft, always human-merged, never auto-merge), adopted as-is.
+   If the branch/PR already exists (previous release's delivery not yet
+   merged), force-push the re-rendered page to the same branch: the render
+   is the *whole page* from the canonical file, so the open PR always shows
+   the complete current state, and back-to-back releases (three shipped
+   Aug 19–21) accumulate into **one** PR instead of spamming tech-docs.
+4. **Auth**: scribe already holds the Docs Bot App credentials for omni
+   writes. The only new credential anywhere is in this repo: a minimal
+   dispatch-only token able to fire `repository_dispatch` on
+   `doiteng/scribe` (a fine-grained PAT with actions scope on that one repo,
+   or an App-minted token — settled at implementation). No Docs Bot private
+   key and no Anthropic key ever land in dci-cli; the job is deterministic —
+   no agent, no prose generation, no cost, no review variance.
+5. **Failure isolation**: delivery runs after the release is published;
+   binaries and manifests never wait on omni or scribe. A failed delivery is
+   loud (red workflow in scribe, Slack notify) and re-runnable by re-firing
+   the dispatch — `release.yml`'s dispatch step, or scribe's own
+   `workflow_dispatch` with a tag input, mirroring the DISTRIBUTION.md
+   "Manual Re-runs" pattern.
 
 Retroactive fixes (typo, adding a link once docs land) are ordinary `docs:`
-commits to `CHANGELOG.md` + a manual `workflow_dispatch` of the sync.
+commits to `CHANGELOG.md` + a manual re-fire of the dispatch. The scribe-side
+job is a small addition to that repo, specced here but implemented there.
 
 ## 8. C6 — CLI touchpoints
 
@@ -244,11 +258,12 @@ gives the changelog its first self-referential entry.
 
 ## 9. C5 — Backfill
 
-Seed `CHANGELOG.md` before the first sync so the page never publishes
+Seed `CHANGELOG.md` before the first delivery so the page never publishes
 near-empty:
 
-- **v2.3.0 → current**: one section per release, rewritten in user terms from
-  the GitHub Release bodies (the raw material is good — this audit rewrote
+- **v2.3.0 → current** (decided 2026-08-23): one section per release,
+  rewritten in user terms from the GitHub Release bodies (the raw material
+  is good — this audit rewrote
   v2.5.2 in §3 in a few minutes). v2.3.0 is the natural epoch: it is where
   the current versioning policy starts (AGENTS.md "Versioning").
 - **Before v2.3.0**: a single closing line — *"For earlier releases, see the
@@ -273,7 +288,7 @@ Center page. P3 — do it only if the duplication doesn't annoy.
    reviewed session in this repo.
 3. **Never link a page or anchor that doesn't resolve** — drop the link,
    keep the bullet, add the link later.
-4. **Never block or delay binaries on the Help Center.** The sync is
+4. **Never block or delay binaries on the Help Center.** Delivery is
    downstream of the published release, like manifests; only the C3 gate
    (this repo's own file) can stop a tag.
 5. **Never leak internal vocabulary onto the page** — no restish, no spec
@@ -281,19 +296,27 @@ Center page. P3 — do it only if the duplication doesn't annoy.
 6. **Never skip a version on the page.** Every released tag has a section,
    even if it says "no user-facing changes".
 
-## 12. Open questions for the maintainer
+## 12. Decisions (maintainer, 2026-08-23)
 
-1. **Slug & placement**: `/docs/cli/changelog` inside the CLI section is
-   assumed here. Qing's team also maintains the site-wide "What's new"
-   section — should notable CLI releases additionally feed that (manually,
-   via the product-announcement flow), or is the CLI page enough?
-2. **Backfill depth**: is v2.3.0 the right epoch, or seed from further back?
-3. **Sequencing with Scribe Scenario A**: the pending `update-cli-docs.yml`
-   branch brings the same omni App-token secrets this sync needs. Adopt that
-   PR first and share the plumbing, or land the changelog sync independently
-   (it needs only the secrets, not the agent scaffolding)?
-4. **Date/heading cosmetics**: "v2.5.2 — August 21, 2026" vs ISO dates; keep
-   the `v` prefix on the page or drop it?
-5. **omni-side sign-off**: confirm with tech-docs that a recurring
-   force-pushed draft PR on a fixed branch fits their review flow, and agree
-   on a merge SLA so the page doesn't trail releases by weeks.
+1. **Slug & placement**: `/docs/cli/changelog` inside the CLI section, and
+   nothing else. The site-wide "What's new" section stays a manual,
+   occasional call (via the product-announcement flow) for milestone
+   releases — no standing per-release obligation.
+2. **Backfill depth**: seed from v2.3.0 (§9); earlier history collapses to
+   the GitHub-releases link.
+3. **Delivery mechanism**: Scribe delivers, this repo authors (§7). The
+   originally-drafted self-contained `sync-changelog.yml` (with Docs Bot
+   secrets copied into dci-cli) was considered and rejected — it duplicates
+   omni plumbing scribe already operates. Full Scribe *authoring* (agent
+   writes the entry in omni from release commits) was also rejected: it
+   kills the no-release-without-entry gate and loses release-time authoring
+   context. Consequently the old sequencing question against the pending
+   Scenario-A branch is moot — the changelog work shares no secrets with it
+   and neither blocks the other.
+4. **Heading cosmetics**: `## v2.5.2 — August 21, 2026` as drafted — the
+   `v` prefix matches tags, the releases page, and CLI output; spelled-out
+   dates fit a customer-facing docs site.
+5. **omni-side sign-off**: not a precondition. The draft-PR +
+   `doiteng/tech-docs`-reviewers flow is established Scribe practice,
+   adopted as-is; if tech-docs objects to the fixed-branch force-push
+   cadence once it's running, adjust then.
