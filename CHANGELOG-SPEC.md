@@ -61,7 +61,7 @@ prose is authored here first.
 dispatches `sync-manifests.yml` and `post-release-verify.yml`
 (`.github/workflows/release.yml:36–42`). Both downstream workflows support
 manual `workflow_dispatch` re-runs with a tag input (DISTRIBUTION.md
-"Manually Re-running Workflows") — the changelog sync follows the same
+"Manual Re-runs") — the changelog sync follows the same
 pattern. The CLI itself already ships documentation entry points
 (`docs_command.go:10–19`) and an update notice (`maybeNotifyUpdate`,
 update.go:63) — both natural homes for a changelog pointer (C6).
@@ -152,7 +152,8 @@ Rules, enforced by review and stated in the file header:
 - Links are absolute `https://help.doit.com/...` URLs — the page is read from
   the site, from `.md` mirrors, and from agent corpora, so relative links are
   fragile.
-- **Only link pages that resolve** at release time (validated by C3). A
+- **Only link pages — and anchors — that resolve** at release time
+  (validated by C3, including fragment ids). A
   feature whose documentation ships later gets its bullet without a link;
   the link is added when the docs land (the sync re-renders the whole page,
   so retroactive edits flow through, §7). Never hold a bullet hostage to a
@@ -171,11 +172,18 @@ A step before the GoReleaser step:
    file and the expected heading. The re-release flow already documented in
    DISTRIBUTION.md applies: fix, delete the tag, re-tag.
 2. **Entry is dated** with a plausible date (matches `— <Month D, YYYY>`).
-3. **Links resolve**: every `help.doit.com` URL in the new entry must appear
-   in `https://help.doit.com/llms.txt` or answer an HTTP 200 (HEAD, with the
-   `#fragment` stripped). Network flake tolerance: retry twice, and only the
-   definitive 404 fails the gate — an unreachable help site must not block a
-   release (the gate then warns instead).
+3. **Links resolve — anchors included**: every `help.doit.com` URL in the
+   new entry must resolve. A fragment-less URL passes if it appears in
+   `https://help.doit.com/llms.txt` or answers an HTTP 200. A URL with a
+   `#fragment` needs more — fragments are client-side, so a HEAD on the
+   stripped URL only proves the page exists, and anchors are the dominant
+   link shape here (§5): the gate fetches the page's `.md` mirror (every
+   Help Center page serves one, §2) and requires the fragment's anchor id
+   to appear in the body, so a renamed heading fails loudly instead of
+   shipping a link that lands at the top of the page. Network flake
+   tolerance: retry twice, and only a definitive miss (404, or a live page
+   without the anchor) fails the gate — an unreachable help site must not
+   block a release (the gate then warns instead).
 
 Failing *before* GoReleaser means a missing entry costs a re-tag, never a
 broken half-release. Additionally, a cheap format lint (heading grammar,
@@ -263,8 +271,8 @@ Center page. P3 — do it only if the duplication doesn't annoy.
 2. **Never generate the page from commit subjects.** Commits are the
    inventory (§5); the published text is always authored by a person or a
    reviewed session in this repo.
-3. **Never link a page that doesn't resolve** — drop the link, keep the
-   bullet, add the link later.
+3. **Never link a page or anchor that doesn't resolve** — drop the link,
+   keep the bullet, add the link later.
 4. **Never block or delay binaries on the Help Center.** The sync is
    downstream of the published release, like manifests; only the C3 gate
    (this repo's own file) can stop a tag.
