@@ -74,7 +74,7 @@ This is a different regime from the existing full-screen viewer (`tui_viewer.go`
 
 ### 3.3 Gate
 
-Session mode requires a real TTY on stdin and stdout. `dci ai` in a pipe or with `TERM=dumb` degrades: with args, one-shot mode; without args, a usage error. The existing `tuiActive()` gate (tui.go) is the reference for "a human is present"; the session adds the stricter requirement that stdout also be a TTY since it owns the whole screen bottom.
+Session mode requires a real TTY on stdin and stdout. `dci ai` in a pipe or with `TERM=dumb` degrades: with args, one-shot mode; without args, a usage error. The existing `tuiActive()` gate (tui.go) already encodes exactly this definition of "a human is present" — not agent mode, stdout **and** stdin are TTYs, `TERM != "dumb"`, with the `DCI_NO_TUI` escape hatch — so the session reuses it verbatim rather than defining its own check.
 
 ## 4. Input grammar
 
