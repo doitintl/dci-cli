@@ -46,6 +46,12 @@ Use `--fields id,name` to project list or detail responses before output, and us
 - The default table/TOON view shows `title`, `dailySavings` (from `summary.potentialDailySavings`, formatted as USD like `$500.00`; blank when zero), `provider` (from `cloudProvider`), `categories`, `lastUpdated`, and `source`, with the title column given width priority so it renders untruncated where possible. Easy wins (non-empty `easyWinDescription`) carry an " (easy win)" title suffix in table and TOON views, plus a green title in interactive tables; a row's `reportUrl` becomes a terminal hyperlink on the title. `--output json` and explicit `-C`/`--fields` selections keep the raw field names.
 - Server-side filters already exist as flags: `--cloud-provider aws|gcp|azure`, `--source <source>` (repeatable), `--easy-win`, `--category`, `--priority`, `--tag`, `--search-term`.
 
+## Anomalies, Commitments & Allocation Coverage
+
+- `list-anomalies` sorts with `--sort-by startTime|severityLevel|costOfAnomaly` and `--sort-order asc|desc` — exactly `asc`/`desc`; the API rejects `ascending`/`descending` even though the flag help suggests them. `--min/--max-creation-time` take epoch **milliseconds** and bound the anomaly's usage start time. `--filter` keys: `serviceName`, `billingAccount`, `platform`, `severityLevel` (lowercase values: `information`, `warning`, `critical`).
+- Commitments: `list-commitments --all` for DoiT commitments. The AWS chain is ordered — `list-aws-organizations` first, then `list-aws-savings-plans <org-id>` and `list-aws-recommendations <org-id>` per organization. Realized discounts also surface in `query` via the `savings_description` dimension.
+- Allocation/tag coverage: run the same query twice — total cost, then with `--drop-unlabeled-rows` — and report the difference as unallocated spend. Group by the label under test for per-value coverage.
+
 ## Resource Names
 
 - Positional resource arguments accept names, not just IDs: exact match, unique case-insensitive substring, or close-typo fuzzy (`dci get-report "monthly aws"`). Prefer IDs when known — deterministic and no lookup round-trip; use names when exploring or when the user gave one.
@@ -101,3 +107,4 @@ Load [query-patterns.md](references/query-patterns.md) for payload examples.
 - Load [cost-optimization.md](references/cost-optimization.md) for an anonymized 30-day cost analysis example.
 - Load [finops-baseline.md](references/finops-baseline.md) for the greenfield workflow: bring an account from unmanaged spend to budgets, alerts, and allocations in one session.
 - Load [evals.md](references/evals.md) to validate the skill against realistic user prompts.
+- Load [csp-patterns.md](references/csp-patterns.md) **only for DoiT-employee (doer) accounts** asking multi-customer or book-of-business questions — the CSP all-customers tenant, its dimensions, and its constraints.

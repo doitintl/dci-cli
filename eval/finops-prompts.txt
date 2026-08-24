@@ -1,3 +1,5 @@
+# FinOps-10 (P01-P10) run in any tenant; P11-P12 need a doer account (CSP).
+# Format: id|capability|prompt. Lines starting with # are skipped.
 P01|Reporting & Analytics|What did we spend on cloud last month, and how does it compare to the month before?
 P02|Allocation|Break down last month's cloud spend by service — what are the top 10 cost drivers?
 P03|Anomaly Management|Were there any cost anomalies in the last 30 days? What caused the biggest one?
@@ -8,3 +10,5 @@ P07|Workload Optimization|What are the top cost savings opportunities you can fi
 P08|Unit Economics / Trends|Which services grew the most month-over-month, in dollars and percent?
 P09|Allocation Coverage|What share of our spend is untagged or unallocated to any team?
 P10|GenAI Cost Management|How much do we spend on tokens per AI model?
+P11|Doer: Book of Business (CSP)|Which of my customers are growing the fastest?
+P12|Doer: Cross-Customer (CSP)|Across all DoiT customers, which cloud provider grew the fastest over the last 3 months?

@@ -31,6 +31,20 @@ const (
 // enough for a full --all pagination sweep; a var so tests shrink it.
 var aiToolCommandTimeout = 2 * time.Minute
 
+// aiToolQueryTimeout is the ceiling for query children specifically (F4,
+// AI-FINOPS-SPEC §3.3): cold CSP queries legitimately run 58–97s and the
+// API's own edge timeout (a retryable 524) arrives at ~125s — both past or
+// inside the 2-minute kill. Queries are the only measured >2-minute
+// legitimate children; everything else keeps the fast failure.
+var aiToolQueryTimeout = 5 * time.Minute
+
+func aiToolTimeoutFor(argv []string) time.Duration {
+	if len(argv) > 0 && argv[0] == "query" {
+		return aiToolQueryTimeout
+	}
+	return aiToolCommandTimeout
+}
+
 // aiDeniedCommands are argv[0] values run_dci_command refuses: they open
 // browsers, mutate the binary, or recurse into the session. The model is told
 // to ask the user instead.
@@ -104,13 +118,14 @@ func (e *aiToolExecutor) RunCommand(ctx context.Context, input aiRunCommandInput
 	if approved && !aiArgvHasYes(argv) {
 		argv = append(append([]string{}, argv...), "--yes")
 	}
-	runCtx, cancel := context.WithTimeout(ctx, aiToolCommandTimeout)
+	timeout := aiToolTimeoutFor(argv)
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	output, exitCode, err := e.runner(runCtx, argv)
 	if runCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 		return aiToolOutcome{Data: aiToolError(
 			"COMMAND_TIMED_OUT",
-			fmt.Sprintf("dci %s was stopped after %s", strings.Join(argv, " "), aiToolCommandTimeout),
+			fmt.Sprintf("dci %s was stopped after %s", strings.Join(argv, " "), timeout),
 			"Narrow the request (server-side filters, --fields, a smaller time range) or ask the user to run it themselves",
 		), IsError: true}
 	}

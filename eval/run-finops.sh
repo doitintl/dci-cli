@@ -24,7 +24,7 @@ fi
 # The prompt file is read on fd 3, never fd 0, so nothing in the loop body
 # can consume the remaining prompts.
 while IFS='|' read -r id cap prompt <&3; do
-  [ -z "$id" ] && continue
+  case "$id" in ""|"#"*) continue;; esac
   echo "=== $id ($cap)"
   start=$(date +%s)
   run_prompt "$OUT/$id.txt" "$prompt" || echo "$id exited non-zero"
