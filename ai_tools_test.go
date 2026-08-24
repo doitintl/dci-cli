@@ -79,6 +79,28 @@ func TestAIRunCommandDestructiveApprovalProtocol(t *testing.T) {
 	}
 }
 
+func TestAIRunCommandValidationExit30IsNotDestructive(t *testing.T) {
+	// The error contract maps API VALIDATION_ERROR to exit 30 — the same code
+	// the destructive contract uses. Only the destructive envelope may open
+	// an approval round; a validation error must come back as a plain error
+	// the model can self-correct from (observed live: list-anomalies with
+	// --sort-order descending was auto-declined as "destructive").
+	envelope := `{"error":{"code":"VALIDATION_ERROR","message":"Error In Param: sortOrder, accepted values: asc, desc","retryable":false}}`
+	runner := &scriptedRunner{outputs: []string{envelope}, exits: []int{aiDestructiveExitCode}}
+	executor := newScriptedExecutor(t, runner)
+
+	outcome := executor.RunCommand(context.Background(), aiRunCommandInput{Argv: []string{"list-anomalies", "--sort-order", "descending"}}, false)
+	if outcome.NeedsApproval {
+		t.Fatalf("validation error misread as destructive: %+v", outcome)
+	}
+	if !outcome.IsError || !strings.Contains(outcome.Data, "VALIDATION_ERROR") {
+		t.Fatalf("expected the validation envelope as a plain error result, got %+v", outcome)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("validation error must not trigger a retry, calls = %v", runner.calls)
+	}
+}
+
 func TestAIRunCommandApprovedDoesNotDoubleYes(t *testing.T) {
 	runner := &scriptedRunner{outputs: []string{"ok"}, exits: []int{0}}
 	executor := newScriptedExecutor(t, runner)

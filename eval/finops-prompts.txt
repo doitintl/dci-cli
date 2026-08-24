@@ -1,0 +1,10 @@
+P01|Reporting & Analytics|What did we spend on cloud last month, and how does it compare to the month before?
+P02|Allocation|Break down last month's cloud spend by service — what are the top 10 cost drivers?
+P03|Anomaly Management|Were there any cost anomalies in the last 30 days? What caused the biggest one?
+P04|Forecasting|Based on the current trend, roughly what will our total cloud bill be for this month?
+P05|Budgeting|Are any of our budgets at risk of being exceeded this month?
+P06|Rate Optimization|How much are we saving from committed-use discounts and savings plans, and how much eligible spend is still on-demand?
+P07|Workload Optimization|What are the top cost savings opportunities you can find right now?
+P08|Unit Economics / Trends|Which services grew the most month-over-month, in dollars and percent?
+P09|Allocation Coverage|What share of our spend is untagged or unallocated to any team?
+P10|GenAI Cost Management|How much do we spend on tokens per AI model?

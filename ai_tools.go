@@ -117,7 +117,12 @@ func (e *aiToolExecutor) RunCommand(ctx context.Context, input aiRunCommandInput
 	if err != nil {
 		return aiToolOutcome{Data: aiToolError("EXEC_FAILED", err.Error(), ""), IsError: true}
 	}
-	if exitCode == aiDestructiveExitCode && !approved {
+	// Exit 30 alone is ambiguous: the error contract maps API VALIDATION_ERROR
+	// to the same code (error_contract.go's exitValidation). Only the
+	// destructive contract's own envelope may open an approval round —
+	// otherwise a mistyped flag value surfaces as a bogus y/N prompt and, in
+	// one-shot mode, an auto-decline that blocks the model's self-correction.
+	if exitCode == aiDestructiveExitCode && !approved && aiEnvelopeCode(output) == "DESTRUCTIVE_REQUIRES_CONFIRMATION" {
 		return aiToolOutcome{
 			NeedsApproval: true,
 			Summary:       aiDestructiveSummary(output, argv),
@@ -140,6 +145,22 @@ func aiArgvHasYes(argv []string) bool {
 
 // aiDestructiveSummary extracts the human-facing confirmation line from the
 // child's structured error, falling back to the command line itself.
+// aiEnvelopeCode extracts the structured error envelope's code from a child's
+// output ("" when no envelope line parses).
+func aiEnvelopeCode(output []byte) string {
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if json.Unmarshal([]byte(line), &envelope) == nil && envelope.Error.Code != "" {
+			return envelope.Error.Code
+		}
+	}
+	return ""
+}
+
 func aiDestructiveSummary(output []byte, argv []string) string {
 	var envelope struct {
 		Error struct {
