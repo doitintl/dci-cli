@@ -89,8 +89,8 @@ token columns (`in` = uncached input, `out` = output, both summed across rounds)
 | P08 | 35s | 36s | 33s | 2 | 1 | 3.2k / 1.5k |
 | P09 | 90s | 62s | 57s | 4 | 5 | 5.1k / 2.0k |
 | P10 | 91s | 61s | 74s³ | 2 | 1 | 7.8k / **5.0k** |
-| P11 | 133s (failed) | 49s | 44s ✓ | 6 | 7 | 5.4k / 2.3k |
-| P12 | 36s (wrong tenant) | 18s | 24s ✓ | 3 | 2 | 1.6k / 0.8k |
+| P11 | 133s (failed)⁴ | 49s | 44s ✓ | 6 | 7 | 5.4k / 2.3k |
+| P12 | 36s (wrong tenant)⁴ | 18s | 24s ✓ | 3 | 2 | 1.6k / 0.8k |
 
 ¹ TTFT 18.3s — the run pays the ~16.5k-token prompt-cache **write**; every later run in
 the 5-minute window reads it (TTFT 1.4–3.7s). Interactive sessions pay this once.
@@ -100,6 +100,10 @@ concurrency is visible in the transcript (six calls issued back-to-back); P06 re
 the noisiest prompt — single-run deltas on it are not meaningful.
 ³ P10's cost is now dominated by its own answer: 5.0k output tokens (a 20+-row table
 plus caveats) is roughly half the wall clock at streaming speed.
+⁴ Not suite runs (§1.1 correctly notes P11/P12 entered the suite without a baseline):
+these are the pre-F1–F3 exploratory baselines B1/B2 recorded in §3.4 — the 133s
+flailing run and the silently-wrong-tenant answer that motivated the CSP work — shown
+here for the before/after story.
 
 Suite total (P01–P10): 572s at the original baseline (with one hard failure) → **411s,
 12/12 correct** on the full stack.
