@@ -58,31 +58,31 @@ func aiTestCatalog() []aiCatalogEntry {
 func TestAIRouteLine(t *testing.T) {
 	catalog := aiTestCatalog()
 
-	if route := aiRouteLine("   ", catalog); route.kind != aiRouteEmpty {
+	if route := aiRouteLine("   ", catalog, nil); route.kind != aiRouteEmpty {
 		t.Fatalf("blank line routed as %v, want empty", route.kind)
 	}
-	if route := aiRouteLine("why did spend spike?", catalog); route.kind != aiRouteChat || route.text != "why did spend spike?" {
+	if route := aiRouteLine("why did spend spike?", catalog, nil); route.kind != aiRouteChat || route.text != "why did spend spike?" {
 		t.Fatalf("plain text routed as %+v, want chat", route)
 	}
-	if route := aiRouteLine("/help", catalog); route.kind != aiRouteVerb || route.verb != "help" {
+	if route := aiRouteLine("/help", catalog, nil); route.kind != aiRouteVerb || route.verb != "help" {
 		t.Fatalf("/help routed as %+v, want verb help", route)
 	}
-	if route := aiRouteLine("/exit", catalog); route.kind != aiRouteVerb || route.verb != "quit" {
+	if route := aiRouteLine("/exit", catalog, nil); route.kind != aiRouteVerb || route.verb != "quit" {
 		t.Fatalf("/exit routed as %+v, want verb quit (alias)", route)
 	}
-	if route := aiRouteLine("/customer acme.com", catalog); route.kind != aiRouteVerb || route.verb != "customer" || len(route.args) != 1 || route.args[0] != "acme.com" {
+	if route := aiRouteLine("/customer acme.com", catalog, nil); route.kind != aiRouteVerb || route.verb != "customer" || len(route.args) != 1 || route.args[0] != "acme.com" {
 		t.Fatalf("/customer acme.com routed as %+v", route)
 	}
-	route := aiRouteLine("/list-budgets --output json", catalog)
+	route := aiRouteLine("/list-budgets --output json", catalog, nil)
 	if route.kind != aiRouteDispatch || strings.Join(route.argv, " ") != "list-budgets --output json" {
 		t.Fatalf("/list-budgets routed as %+v, want dispatch", route)
 	}
 	// Multi-token catalog paths dispatch on their first token.
-	if route := aiRouteLine("/customer-context show", catalog); route.kind != aiRouteDispatch {
+	if route := aiRouteLine("/customer-context show", catalog, nil); route.kind != aiRouteDispatch {
 		t.Fatalf("/customer-context show routed as %+v, want dispatch", route)
 	}
 	// Unknown token with a catalog present: suggestions, never dispatch.
-	route = aiRouteLine("/lst-budgets", catalog)
+	route = aiRouteLine("/lst-budgets", catalog, nil)
 	if route.kind != aiRouteUnknown {
 		t.Fatalf("/lst-budgets routed as %+v, want unknown", route)
 	}
@@ -90,13 +90,13 @@ func TestAIRouteLine(t *testing.T) {
 		t.Fatalf("suggestions = %v, want list-budgets first", route.suggestions)
 	}
 	// Empty catalog (no cached spec yet): dispatch optimistically.
-	if route := aiRouteLine("/list-budgets", nil); route.kind != aiRouteDispatch {
+	if route := aiRouteLine("/list-budgets", nil, nil); route.kind != aiRouteDispatch {
 		t.Fatalf("empty-catalog dispatch routed as %+v", route)
 	}
-	if route := aiRouteLine(`/get-report "oops`, catalog); route.kind != aiRouteInvalid {
+	if route := aiRouteLine(`/get-report "oops`, catalog, nil); route.kind != aiRouteInvalid {
 		t.Fatalf("unterminated quote routed as %+v, want invalid", route)
 	}
-	if route := aiRouteLine("/", catalog); route.kind != aiRouteEmpty {
+	if route := aiRouteLine("/", catalog, nil); route.kind != aiRouteEmpty {
 		t.Fatalf("bare slash routed as %+v, want empty", route)
 	}
 }
@@ -119,31 +119,31 @@ func TestAISuggestionsPrefixBeforeSubstringAndCapped(t *testing.T) {
 func TestAICompletionsFor(t *testing.T) {
 	catalog := aiTestCatalog()
 
-	if got := aiCompletionsFor("list", catalog, 6); got != nil {
+	if got := aiCompletionsFor("list", catalog, nil, 6); got != nil {
 		t.Fatalf("non-slash input completed: %v", got)
 	}
-	if got := aiCompletionsFor("/list-budgets --out", catalog, 6); got != nil {
+	if got := aiCompletionsFor("/list-budgets --out", catalog, nil, 6); got != nil {
 		t.Fatalf("post-token input completed: %v", got)
 	}
-	got := aiCompletionsFor("/", catalog, 20)
+	got := aiCompletionsFor("/", catalog, nil, 20)
 	if len(got) != len(aiSessionVerbs)+len(catalog) {
 		t.Fatalf("bare slash offers %d candidates, want %d", len(got), len(aiSessionVerbs)+len(catalog))
 	}
 	if got[0].Value != aiSessionVerbs[0].name {
 		t.Fatalf("session verbs must list first, got %q", got[0].Value)
 	}
-	got = aiCompletionsFor("/LI", catalog, 6)
+	got = aiCompletionsFor("/LI", catalog, nil, 6)
 	if len(got) != 2 || got[0].Value != "list-anomalies" || got[1].Value != "list-budgets" {
 		t.Fatalf("case-insensitive prefix completion = %v", got)
 	}
-	got = aiCompletionsFor("/budg", catalog, 6)
+	got = aiCompletionsFor("/budg", catalog, nil, 6)
 	if len(got) != 1 || got[0].Value != "list-budgets" {
 		t.Fatalf("substring completion = %v", got)
 	}
-	if got := aiCompletionsFor("/xyz", catalog, 6); len(got) != 0 {
+	if got := aiCompletionsFor("/xyz", catalog, nil, 6); len(got) != 0 {
 		t.Fatalf("no-match completion = %v", got)
 	}
-	if got := aiCompletionsFor("/", catalog, 3); len(got) != 3 {
+	if got := aiCompletionsFor("/", catalog, nil, 3); len(got) != 3 {
 		t.Fatalf("limit not applied: %v", got)
 	}
 }

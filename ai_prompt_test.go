@@ -1,0 +1,106 @@
+package main
+
+import (
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestAISystemPromptModes(t *testing.T) {
+	catalog := aiTestCatalog()
+
+	doer := aiSystemPrompt(catalog, true)
+	if !strings.Contains(doer, "# Customer context") || !strings.Contains(doer, "set_customer_context") {
+		t.Fatal("tenant-aware prompt missing the customer context section")
+	}
+	customer := aiSystemPrompt(catalog, false)
+	if strings.Contains(customer, "Customer context") || strings.Contains(customer, "tenant") {
+		t.Fatal("customer-mode prompt leaks tenant vocabulary (AI-SPEC §6.2)")
+	}
+	for _, prompt := range []string{doer, customer} {
+		if !strings.Contains(prompt, "list-budgets — List budgets") {
+			t.Fatal("catalog line missing from prompt")
+		}
+		if !strings.Contains(prompt, "run_dci_command") {
+			t.Fatal("tool guidance missing from prompt")
+		}
+	}
+}
+
+func TestAISystemPromptEmptyCatalog(t *testing.T) {
+	prompt := aiSystemPrompt(nil, false)
+	if !strings.Contains(prompt, "dci login") {
+		t.Fatal("empty-catalog prompt must point at login")
+	}
+}
+
+func TestAIVolatileSystem(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	volatile := aiVolatileSystem(dir, now)
+	if !strings.Contains(volatile, "2026-08-24") {
+		t.Fatalf("volatile system missing date: %q", volatile)
+	}
+	if strings.Contains(volatile, "customer context") {
+		t.Fatalf("no context set, but volatile mentions one: %q", volatile)
+	}
+	if err := os.WriteFile(customerContextPath(dir), []byte("acme.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if volatile := aiVolatileSystem(dir, now); !strings.Contains(volatile, "acme.com") {
+		t.Fatalf("volatile system missing active context: %q", volatile)
+	}
+}
+
+func TestAIEstimateTokens(t *testing.T) {
+	if got := aiEstimateTokens(strings.Repeat("a", 400)); got != 100 {
+		t.Fatalf("estimate = %d, want 100", got)
+	}
+}
+
+func TestAIUserCommands(t *testing.T) {
+	dir := t.TempDir()
+	content := `{
+		"top5": {"command": "list-reports --limit 5", "summary": "Top five reports"},
+		"review": {"prompt": "Review last month's spend for"},
+		"help": {"command": "status"},
+		"bad name": {"command": "status"},
+		"empty": {}
+	}`
+	if err := os.WriteFile(dir+"/"+aiUserCommandsFileName, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commands := loadAIUserCommands(dir)
+	if len(commands) != 3 {
+		t.Fatalf("loaded %d commands, want 3 (verb-shadowing and bad names dropped): %v", len(commands), commands)
+	}
+	if _, shadowed := commands["help"]; shadowed {
+		t.Fatal("verb-shadowing name survived")
+	}
+
+	route := aiRouteLine("/top5 --output json", aiTestCatalog(), commands)
+	if route.kind != aiRouteDispatch || strings.Join(route.argv, " ") != "list-reports --limit 5 --output json" {
+		t.Fatalf("saved command route = %+v", route)
+	}
+	route = aiRouteLine("/review acme.com", aiTestCatalog(), commands)
+	if route.kind != aiRouteChat || route.text != "Review last month's spend for acme.com" {
+		t.Fatalf("saved prompt route = %+v", route)
+	}
+	// Empty entries fall through to the catalog/unknown path.
+	route = aiRouteLine("/empty", aiTestCatalog(), commands)
+	if route.kind != aiRouteUnknown {
+		t.Fatalf("empty saved command route = %+v", route)
+	}
+
+	completions := aiCompletionsFor("/", aiTestCatalog(), commands, 30)
+	var found bool
+	for _, completion := range completions {
+		if completion.Value == "top5" && completion.Summary == "Top five reports" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("saved commands missing from completion: %+v", completions)
+	}
+}

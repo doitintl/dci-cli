@@ -8,6 +8,7 @@ package main
 // guidance.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,7 +32,8 @@ type aiSessionVerb struct {
 
 var aiSessionVerbs = []aiSessionVerb{
 	{name: "customer", usage: "/customer [name|id]", summary: "Show or set the customer context"},
-	{name: "clear", usage: "/clear", summary: "Clear the screen"},
+	{name: "model", usage: "/model [id]", summary: "Show or set the AI model"},
+	{name: "clear", usage: "/clear", summary: "Clear the screen and start a new conversation"},
 	{name: "help", usage: "/help", summary: "Show how the session works"},
 	{name: "quit", usage: "/quit", summary: "Leave the session"},
 }
@@ -76,12 +78,13 @@ type aiRoute struct {
 }
 
 // aiRouteLine implements the input grammar (AI-SPEC §4): `/` is deterministic,
-// plain text is AI, and a failed `/` never falls through to the model. The
-// catalog may be empty (no cached spec yet — e.g. before first login); then an
-// unrecognized first token dispatches optimistically, because the child
-// process's own error is still a deterministic outcome, which is all the
-// grammar promises.
-func aiRouteLine(line string, catalog []aiCatalogEntry) aiRoute {
+// plain text is AI, and a failed `/` never falls through to the model.
+// Resolution order per §4.2: session verbs, then user-defined commands (D5),
+// then the CLI catalog. The catalog may be empty (no cached spec yet — e.g.
+// before first login); then an unrecognized first token dispatches
+// optimistically, because the child process's own error is still a
+// deterministic outcome, which is all the grammar promises.
+func aiRouteLine(line string, catalog []aiCatalogEntry, userCommands map[string]aiUserCommand) aiRoute {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return aiRoute{kind: aiRouteEmpty}
@@ -99,10 +102,70 @@ func aiRouteLine(line string, catalog []aiCatalogEntry) aiRoute {
 	if verb, ok := aiLookupVerb(argv[0]); ok {
 		return aiRoute{kind: aiRouteVerb, verb: verb.name, args: argv[1:]}
 	}
+	if command, ok := userCommands[argv[0]]; ok {
+		if route, expanded := aiExpandUserCommand(command, argv[1:]); expanded {
+			return route
+		}
+	}
 	if len(catalog) == 0 || aiCatalogHasCommand(catalog, argv[0]) {
 		return aiRoute{kind: aiRouteDispatch, argv: argv}
 	}
 	return aiRoute{kind: aiRouteUnknown, text: argv[0], suggestions: aiSuggestions(catalog, argv[0], 5)}
+}
+
+// --- User-defined slash commands (D5) ----------------------------------------
+
+const aiUserCommandsFileName = "ai_commands.json"
+
+// aiUserCommand is one saved command: either a prompt (expands to an AI
+// question) or a command line (expands to a dispatch). Exactly one is set;
+// prompt wins if both are.
+type aiUserCommand struct {
+	Prompt  string `json:"prompt,omitempty"`
+	Command string `json:"command,omitempty"`
+	Summary string `json:"summary,omitempty"`
+}
+
+// loadAIUserCommands reads the user's saved commands. Names shadowed by
+// session verbs are dropped — the resolution order makes them unreachable,
+// so surfacing them in completion would lie. Best-effort: a broken file is
+// an empty set.
+func loadAIUserCommands(configDir string) map[string]aiUserCommand {
+	data, err := os.ReadFile(filepath.Join(configDir, aiUserCommandsFileName))
+	if err != nil {
+		return nil
+	}
+	var commands map[string]aiUserCommand
+	if err := json.Unmarshal(data, &commands); err != nil {
+		return nil
+	}
+	for name := range commands {
+		if _, shadowed := aiLookupVerb(name); shadowed || strings.ContainsAny(name, " \t/") || name == "" {
+			delete(commands, name)
+		}
+	}
+	return commands
+}
+
+// aiExpandUserCommand turns a saved command plus trailing args into a route:
+// prompts become chat text (args appended), command lines become dispatches
+// (args appended to the argv). expanded=false means the entry was empty.
+func aiExpandUserCommand(command aiUserCommand, args []string) (aiRoute, bool) {
+	if command.Prompt != "" {
+		text := command.Prompt
+		if len(args) > 0 {
+			text += " " + strings.Join(args, " ")
+		}
+		return aiRoute{kind: aiRouteChat, text: text}, true
+	}
+	if command.Command != "" {
+		argv, err := splitCommandLine(command.Command)
+		if err != nil || len(argv) == 0 {
+			return aiRoute{kind: aiRouteInvalid, text: "saved command does not parse: " + command.Command}, true
+		}
+		return aiRoute{kind: aiRouteDispatch, argv: append(argv, args...)}, true
+	}
+	return aiRoute{}, false
 }
 
 // splitCommandLine splits a command line into argv the way a POSIX-ish shell
@@ -302,10 +365,10 @@ type aiCompletion struct {
 }
 
 // aiCompletionsFor returns popup candidates for the current input. The popup
-// only completes the first token (P1): once a space follows a committed
-// token, it stays hidden. Session verbs list first, then catalog prefix
-// matches, then catalog substring matches.
-func aiCompletionsFor(input string, catalog []aiCatalogEntry, limit int) []aiCompletion {
+// only completes the first token: once a space follows a committed token, it
+// stays hidden. Session verbs list first, then user-defined commands, then
+// catalog prefix matches, then catalog substring matches (the §4.2 order).
+func aiCompletionsFor(input string, catalog []aiCatalogEntry, userCommands map[string]aiUserCommand, limit int) []aiCompletion {
 	if !strings.HasPrefix(input, "/") || strings.ContainsAny(input, " \t") {
 		return nil
 	}
@@ -314,6 +377,20 @@ func aiCompletionsFor(input string, catalog []aiCatalogEntry, limit int) []aiCom
 	for _, verb := range aiSessionVerbs {
 		if strings.HasPrefix(verb.name, token) {
 			verbs = append(verbs, aiCompletion{Value: verb.name, Summary: verb.summary})
+		}
+	}
+	userNames := make([]string, 0, len(userCommands))
+	for name := range userCommands {
+		userNames = append(userNames, name)
+	}
+	sort.Strings(userNames)
+	for _, name := range userNames {
+		if strings.HasPrefix(strings.ToLower(name), token) {
+			summary := userCommands[name].Summary
+			if summary == "" {
+				summary = "saved command"
+			}
+			verbs = append(verbs, aiCompletion{Value: name, Summary: summary})
 		}
 	}
 	for _, entry := range catalog {
