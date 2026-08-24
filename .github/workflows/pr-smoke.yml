@@ -1,0 +1,53 @@
+name: PR Branch Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: PR branch or ref to build and smoke test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  branch-binary-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build dci from PR branch
+        run: go build -o dci .
+
+      - name: Smoke test against dev
+        # Best-effort/non-blocking: a broken DCI_API_KEY or transient API
+        # issue should not gate PR merges. Scoped to this step only, so a
+        # genuine Checkout/Build failure still surfaces as a red run.
+        # See CMP-50052.
+        continue-on-error: true
+        env:
+          DCI_API_KEY: ${{ secrets.DCI_API_KEY }}
+          # Hardcoded, not sourced from a secret: this step must never fall
+          # back to dci's production default (api.doit.com) if a secret is
+          # left unset.
+          DCI_API_BASE_URL: https://api-dev.doit.com
+        run: |
+          if [ -z "$DCI_API_KEY" ]; then
+            echo "::warning::DCI_API_KEY is not set; skipping branch-built smoke test."
+            exit 0
+          fi
+          # Output is discarded, not printed to the (world-readable, since
+          # this is a public repo) job log: this only asserts the branch's
+          # binary can successfully authenticate and call the API.
+          ./dci list-reports --output table > /dev/null
