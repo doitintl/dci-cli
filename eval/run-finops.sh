@@ -10,6 +10,8 @@
 # RUNS=N repeats every prompt N times (transcripts $id.run1.txt …) and prints
 # a per-prompt summary: median and min-max for wall clock, tool calls, and
 # output tokens, parsed from the [ai-stats] telemetry lines (DCI_AI_STATS=1).
+# Runs that exit non-zero or produce no telemetry are excluded from the
+# summary (it then reports how many runs were usable).
 # Single runs sit near the noise floor — P06 measured 69s/9 tools and
 # 90s/11 tools on back-to-back runs of the same binary — so regression calls
 # need RUNS>=3. Repeats run sequentially on purpose: the runs share the
@@ -30,8 +32,11 @@ DIR="$(dirname "$0")"
 RUNS="${RUNS:-1}"
 JUDGE="${JUDGE:-0}"
 case "$RUNS" in
-  ''|*[!0-9]*|0) echo "RUNS must be a positive integer, got '$RUNS'" >&2; exit 2;;
+  ''|*[!0-9]*) echo "RUNS must be a positive integer, got '$RUNS'" >&2; exit 2;;
 esac
+if [ "$RUNS" -eq 0 ]; then  # numeric compare catches 0, 00, 000, …
+  echo "RUNS must be a positive integer, got '$RUNS'" >&2; exit 2
+fi
 mkdir -p "$OUT"
 
 # Per-turn telemetry: dci ai prints one [ai-stats] line per turn to stderr,
@@ -64,12 +69,38 @@ strip_ansi() {
     -e "s/${ESC}[@-Z\\\\^_]//g"
 }
 
+# The model's chain-of-thought is streamed as dim text (ESC[2m … ESC[0m,
+# ai_command.go) with no other delimiter, so it must be dropped while the
+# escape codes are still present — after strip_ansi it would be
+# indistinguishable from the answer. Spans can cross newlines (dim state
+# carries across records); lines consumed entirely by thinking are dropped.
+strip_thinking() {
+  awk -v esc="$ESC" '
+    BEGIN { dim = 0 }
+    {
+      rest = $0; out = ""; had = length(rest)
+      while (length(rest)) {
+        if (dim) {
+          i = index(rest, esc "[0m")
+          if (!i) { rest = ""; break }
+          rest = substr(rest, i + 4); dim = 0
+        } else {
+          i = index(rest, esc "[2m")
+          if (!i) { out = out rest; break }
+          out = out substr(rest, 1, i - 1)
+          rest = substr(rest, i + 4); dim = 1
+        }
+      }
+      if (length(out) || !had) print out
+    }'
+}
+
 # Final answer = everything after the last tool-result footer (a bare Go
 # duration like "600ms" / "1.2s", optionally "· truncated for the model", or
-# "tool failed · …"), minus [ai-stats] lines. With no tool calls the whole
-# transcript is the answer.
+# "tool failed · …"), minus thinking text and [ai-stats] lines. With no tool
+# calls the whole transcript is the answer.
 extract_answer() {
-  strip_ansi <"$1" | awk '
+  strip_thinking <"$1" | strip_ansi | awk '
     /^[0-9][0-9a-zµ.]*s( · truncated for the model)?$/ { last = NR }
     /^tool failed · /                                  { last = NR }
     { line[NR] = $0 }
@@ -116,7 +147,7 @@ fi
 while IFS='|' read -r id cap prompt <&3; do
   case "$id" in ""|"#"*) continue;; esac
   echo "=== $id ($cap)"
-  walls= toolvals= outvals= last_txt=
+  walls= toolvals= outvals= last_txt= good=0
   k=1
   while [ "$k" -le "$RUNS" ]; do
     if [ "$RUNS" -eq 1 ]; then
@@ -124,23 +155,30 @@ while IFS='|' read -r id cap prompt <&3; do
     else
       txt="$OUT/$id.run$k.txt"; label="$id run$k"
     fi
+    ok=1
     start=$(date +%s)
-    run_prompt "$txt" "$prompt" || echo "$label exited non-zero"
+    run_prompt "$txt" "$prompt" || { ok=0; echo "$label exited non-zero"; }
     end=$(date +%s)
     secs=$((end-start))
     tools=$(grep -c "⚙" "$txt" 2>/dev/null || true)
     stats=$(grep -a '\[ai-stats\]' "$txt" 2>/dev/null | tail -1 | tr -d '\r' | sed 's/.*\[ai-stats\] //' || true)
     echo "$label: ${secs}s, ${tools:-0} tool calls${stats:+, $stats}"
-    w=$(stat_field "$stats" wall); [ -n "$w" ] || w=$secs
-    walls="$walls $w"
-    toolvals="$toolvals $(stat_field "$stats" tools)"
-    outvals="$outvals $(stat_field "$stats" out)"
+    # Only clean runs with telemetry contribute samples — a failed or
+    # stats-less run would skew the median/range against the baselines.
+    if [ "$ok" -eq 1 ] && [ -n "$stats" ]; then
+      good=$((good+1))
+      walls="$walls $(stat_field "$stats" wall)"
+      toolvals="$toolvals $(stat_field "$stats" tools)"
+      outvals="$outvals $(stat_field "$stats" out)"
+    fi
     last_txt=$txt
     k=$((k+1))
   done
   if [ "$RUNS" -gt 1 ]; then
+    n="$RUNS runs"
+    [ "$good" -eq "$RUNS" ] || n="$good of $RUNS runs usable"
     # shellcheck disable=SC2086 # word splitting feeds one number per line
-    echo "$id summary ($RUNS runs): wall $(printf '%s\n' $walls | fmt_stat s), tools $(printf '%s\n' $toolvals | fmt_stat ''), out $(printf '%s\n' $outvals | fmt_stat '')"
+    echo "$id summary ($n): wall $(printf '%s\n' $walls | fmt_stat s), tools $(printf '%s\n' $toolvals | fmt_stat ''), out $(printf '%s\n' $outvals | fmt_stat '')"
   fi
   if [ "$JUDGE" = "1" ]; then
     {
