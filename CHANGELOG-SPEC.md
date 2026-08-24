@@ -215,11 +215,16 @@ stays out of it: authoring remains C1–C3 in this repo.
    omni (`dci-cli/changelog-sync`) and open a **draft PR** to omni's `dev`
    with `doiteng/tech-docs` as reviewers — the established Scribe posture
    (always a draft, always human-merged, never auto-merge), adopted as-is.
-   If the branch/PR already exists (previous release's delivery not yet
-   merged), force-push the re-rendered page to the same branch: the render
-   is the *whole page* from the canonical file, so the open PR always shows
-   the complete current state, and back-to-back releases (three shipped
-   Aug 19–21) accumulate into **one** PR instead of spamming tech-docs.
+   The PR is also **assigned to the dci-cli maintainers** — spark2ignite,
+   apgiorgi, taltultc, chaim0m (CODEOWNERS' individuals; teams can't be
+   assignees) — so each delivery lands on their radar (decided 2026-08-24);
+   assignment is idempotent on both the create and update paths and
+   best-effort per user. If the branch/PR already exists (previous
+   release's delivery not yet merged), force-push the re-rendered page to
+   the same branch: the render is the *whole page* from the canonical
+   file, so the open PR always shows the complete current state, and
+   back-to-back releases (three shipped Aug 19–21) accumulate into **one**
+   PR instead of spamming tech-docs.
 4. **Auth**: scribe already holds the Docs Bot App credentials for omni
    writes. The only new credential anywhere is in this repo: a minimal
    dispatch-only token able to fire `repository_dispatch` on
