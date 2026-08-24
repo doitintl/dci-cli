@@ -86,6 +86,22 @@ func resolveAIModel(settings aiSettings) string {
 	return aiDefaultModel
 }
 
+// aiValidateAPIKey applies shape checks before persisting a key: a wrong
+// paste silently breaks every question with a 401, so obvious mistakes are
+// rejected at save time (Anthropic keys start with sk-).
+func aiValidateAPIKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("the key is empty")
+	}
+	if strings.ContainsAny(key, " \t\r\n") {
+		return fmt.Errorf("the key contains whitespace — check the paste")
+	}
+	if !strings.HasPrefix(key, "sk-") || len(key) < 20 {
+		return fmt.Errorf("that does not look like an Anthropic API key (they start with sk-)")
+	}
+	return nil
+}
+
 func aiValidateModel(model string) error {
 	if !strings.HasPrefix(model, "claude-") {
 		return fmt.Errorf("model %q does not look like a Claude model id (expected claude-…)", model)

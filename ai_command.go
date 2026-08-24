@@ -1,10 +1,9 @@
 package main
 
-// P2 of AI-SPEC: the `dci ai` cobra wiring. Hidden while the mode is doer
-// dogfood (it unhides in P3 per the spec's phase plan). No arguments opens
-// the interactive session (ai_tui.go); arguments run the one-shot form (D7):
-// the same conversation session, consumed without a TUI — narration streams
-// to stdout, tool traffic to stderr when a human is watching, and
+// P3 of AI-SPEC: the `dci ai` cobra wiring, unhidden for GA. No arguments
+// opens the interactive session (ai_tui.go); arguments run the one-shot form
+// (D7): the same conversation session, consumed without a TUI — narration
+// streams to stdout, tool traffic to stderr when a human is watching, and
 // destructive commands are auto-declined unless --yes was passed (§7.6).
 // Kept in a sibling file per the AGENTS.md chapter-split guidance.
 
@@ -21,10 +20,15 @@ import (
 
 func registerAICommand(configDir string) {
 	command := &cobra.Command{
-		Use:    "ai [question]",
-		Short:  "Interactive session: run commands and ask questions (preview)",
-		Hidden: true,
-		Args:   cobra.ArbitraryArgs,
+		Use:   "ai [question]",
+		Short: "Ask questions in plain English, or run commands, in an interactive session",
+		Long: "Open an interactive session where plain text asks the AI about your cloud\n" +
+			"costs (it runs dci commands for you) and /commands run dci directly.\n" +
+			"With a question as the argument, answers once and exits.\n\n" +
+			"AI features need an Anthropic API key (yours): export ANTHROPIC_API_KEY or\n" +
+			"save it in the session's guided setup. Questions and command results are\n" +
+			"sent to Anthropic's API under your key.",
+		Args: cobra.ArbitraryArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				yes, _ := command.Flags().GetBool("yes")

@@ -150,7 +150,11 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 		})
 	}
 	for _, command := range cli.Root.Commands() {
-		if command.Hidden || command.Name() == "dci" || command.Name() == "help" || command.Name() == "completion" {
+		// "ai" stays out of the machine catalog: it is the interactive agent
+		// session itself — an external agent driving it would nest agents
+		// (the session's own tool layer deny-lists it for the same reason).
+		if command.Hidden || command.Name() == "dci" || command.Name() == "help" ||
+			command.Name() == "completion" || command.Name() == "ai" {
 			continue
 		}
 		entries = append(entries, localCatalogEntries(command, nil)...)

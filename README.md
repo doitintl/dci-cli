@@ -60,6 +60,39 @@ dci list-budgets --help
 dci commands --json
 ```
 
+## AI Assistant
+
+`dci ai` opens an interactive session where you can ask questions in plain English — the AI runs `dci` commands for you and explains the results — or run any command yourself with a `/` prefix:
+
+```bash
+dci ai
+```
+
+```text
+› which of my budgets are at risk this month?
+› /list-budgets --output table
+› why is the second one over 90%?
+```
+
+Inside the session: type `/` to browse every command with completion, `↑/↓` for history, `Esc` to cancel a running command or answer, `/customer` to switch customer context, `/model` to pick the AI model, and `/help` for everything else. Commands you run yourself stay in the conversation, so follow-up questions can refer to what's on screen. Destructive commands the AI proposes always stop for your y/N confirmation first.
+
+One-shot mode answers a single question and exits — handy in scripts:
+
+```bash
+dci ai "top 3 cost anomalies this month"
+```
+
+**Bring your own key.** AI features use your own Anthropic API key: export `ANTHROPIC_API_KEY`, or just ask a question in the session and it will walk you through saving one (stored locally with owner-only permissions). Your questions and the command results the AI reads are sent to Anthropic's API under your key; conversations are never stored anywhere but your terminal. Everything else — running `/` commands — works without a key.
+
+Define your own shortcuts in `ai_commands.json` next to your dci config:
+
+```json
+{
+  "top5": {"command": "list-reports --limit 5", "summary": "Top five reports"},
+  "review": {"prompt": "Review last month's spend and flag anything unusual"}
+}
+```
+
 ## Resource Names
 
 Commands that take a report, budget, or allocation accept the resource **name** as well as its ID — quoting is optional:

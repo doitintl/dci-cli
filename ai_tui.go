@@ -95,6 +95,11 @@ type aiModel struct {
 	streamBuf   strings.Builder
 	approval    *aiApprovalRequest
 	lastUsage   *aiTurnDone
+
+	// Guided key setup (P3): entering a key inline instead of editing files.
+	keyEntry        bool
+	keyBuf          string
+	pendingQuestion string
 }
 
 // runAISession is the entry point behind `dci ai` (ai_command.go).
@@ -135,11 +140,11 @@ func newAIModel(configDir string) aiModel {
 		modelName:    modelName,
 	}
 	if key := resolveAIKey(settings); key != "" {
-		m.session = newLocalAISession(configDir, key, modelName, catalog)
+		m.session = newAIConversationSession(configDir, key, modelName, catalog)
 		m.input.Placeholder = "Ask about your cloud costs, or type / for commands"
 	} else {
-		m.sessionNote = "AI needs an Anthropic API key: export ANTHROPIC_API_KEY, or add {\"api_key\": \"…\"} to " + aiSettingsPath(configDir)
-		m.input.Placeholder = "Type / for commands (AI needs an API key — /help explains)"
+		m.sessionNote = "AI needs an Anthropic API key — ask a question to set one up, or export ANTHROPIC_API_KEY"
+		m.input.Placeholder = "Ask a question to set up AI, or type / for commands"
 	}
 	return m
 }
@@ -168,6 +173,12 @@ func (m aiModel) Init() tea.Cmd {
 		commands = append(commands, aiListen(m.session))
 	}
 	return tea.Batch(commands...)
+}
+
+// newAIConversationSession builds the session behind a var so tests can
+// substitute a fake without touching the Claude API.
+var newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
+	return newLocalAISession(configDir, apiKey, model, catalog)
 }
 
 // aiListen delivers the next protocol event as a tea.Msg; the handler re-arms
@@ -301,6 +312,11 @@ func aiDisplayContext(context string) string {
 
 func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+
+	// The guided key setup owns the keyboard while active (P3).
+	if m.keyEntry {
+		return m.handleKeyEntryKey(msg)
+	}
 
 	// A pending destructive approval owns the keyboard: y runs it, n or esc
 	// declines. Nothing else falls through, so a queued keystroke can't
@@ -485,12 +501,73 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 
 func (m aiModel) submitChat(text string, echo tea.Cmd) (tea.Model, tea.Cmd) {
 	if m.session == nil {
-		return m, tea.Sequence(echo, tea.Println(aiNoticeStyle.Render(m.sessionNote)))
+		// Guided setup (P3): capture a key inline, then answer the question
+		// that triggered it. The data-flow disclosure (D3) renders before the
+		// user commits anything.
+		m.keyEntry = true
+		m.keyBuf = ""
+		m.pendingQuestion = text
+		return m, tea.Sequence(echo, tea.Println(renderAIKeyOnboarding()))
 	}
 	if err := m.session.Send(aiUserInput{Kind: aiInputChat, Text: text}); err != nil {
 		return m, tea.Sequence(echo, tea.Println(aiEchoStyle.Render(err.Error())))
 	}
 	return m, echo
+}
+
+func renderAIKeyOnboarding() string {
+	return strings.Join([]string{
+		aiNoticeStyle.Render("AI questions need an Anthropic API key (yours)."),
+		aiEchoStyle.Render("Get one at console.anthropic.com → API keys, then paste it below."),
+		aiEchoStyle.Render("It is stored only in " + aiSettingsFileName + " under your dci config directory (0600)."),
+		aiNoticeStyle.Render("Note: your questions and dci command results are sent to Anthropic's API under this key."),
+	}, "\n")
+}
+
+// handleKeyEntryKey owns the keyboard while the key setup is active.
+func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.keyEntry = false
+		m.keyBuf = ""
+		m.pendingQuestion = ""
+		return m, tea.Println(aiEchoStyle.Render("key setup canceled — export ANTHROPIC_API_KEY works too"))
+	case "enter":
+		key := strings.TrimSpace(m.keyBuf)
+		if err := aiValidateAPIKey(key); err != nil {
+			return m, tea.Println(aiErrorStyle.Render(err.Error()))
+		}
+		settings := loadAISettings(m.configDir)
+		settings.APIKey = key
+		if err := saveAISettings(m.configDir, settings); err != nil {
+			return m, tea.Println(aiErrorStyle.Render("could not save: " + err.Error()))
+		}
+		m.keyEntry = false
+		m.keyBuf = ""
+		m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
+		m.sessionNote = ""
+		m.input.Placeholder = "Ask about your cloud costs, or type / for commands"
+		commands := []tea.Cmd{
+			tea.Println(tuiSuccessStyle.Render("Key saved — AI is ready.")),
+			aiListen(m.session),
+		}
+		if question := m.pendingQuestion; question != "" {
+			m.pendingQuestion = ""
+			if err := m.session.Send(aiUserInput{Kind: aiInputChat, Text: question}); err == nil {
+				commands = append(commands, tea.Println(aiEchoStyle.Render("› "+question)))
+			}
+		}
+		return m, tea.Batch(commands...)
+	case "backspace":
+		if runes := []rune(m.keyBuf); len(runes) > 0 {
+			m.keyBuf = string(runes[:len(runes)-1])
+		}
+		return m, nil
+	}
+	if msg.Type == tea.KeyRunes {
+		m.keyBuf += string(msg.Runes)
+	}
+	return m, nil
 }
 
 func (m aiModel) runVerb(route aiRoute, echo tea.Cmd) (tea.Model, tea.Cmd) {
@@ -504,7 +581,7 @@ func (m aiModel) runVerb(route aiRoute, echo tea.Cmd) (tea.Model, tea.Cmd) {
 			_ = m.session.Close()
 			settings := loadAISettings(m.configDir)
 			if key := resolveAIKey(settings); key != "" {
-				m.session = newLocalAISession(m.configDir, key, m.modelName, m.catalog)
+				m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
 				return m, tea.Batch(tea.ClearScreen, aiListen(m.session))
 			}
 			m.session = nil
@@ -729,6 +806,7 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 	}
 	lines = append(lines, "",
 		aiEchoStyle.Render("Saved commands: define your own in "+aiUserCommandsFileName+" — {\"top5\": {\"command\": \"list-reports --limit 5\"}, \"review\": {\"prompt\": \"Review last month's spend\"}}"),
+		aiEchoStyle.Render("Privacy: AI questions and dci command results are sent to Anthropic's API under your key."),
 		"",
 		"  tab completes · ↑/↓ history or popup · esc clears input or cancels a running command/turn")
 	return strings.Join(lines, "\n")
@@ -736,6 +814,12 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 
 func (m aiModel) View() string {
 	var b strings.Builder
+	if m.keyEntry {
+		masked := strings.Repeat("•", len([]rune(m.keyBuf)))
+		b.WriteString("API key: " + masked + "\n")
+		b.WriteString(aiEchoStyle.Render("paste your key · enter save · esc cancel"))
+		return b.String()
+	}
 	if m.turnActive {
 		if tail := aiStreamTail(m.streamBuf.String(), 6); tail != "" {
 			b.WriteString(aiAgentStyle.Render(tail))
