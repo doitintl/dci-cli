@@ -513,6 +513,26 @@ func TestAIValidateAPIKey(t *testing.T) {
 	}
 }
 
+func TestAIFriendlyAPIError(t *testing.T) {
+	dir := t.TempDir()
+	raw401 := `POST "https://api.anthropic.com/v1/messages": 401 Unauthorized {"type":"error","error":{"type":"authentication_error","message":"API key is invalid."}}`
+
+	t.Setenv("ANTHROPIC_API_KEY", "sk-bogus")
+	if got := aiFriendlyAPIError(dir, raw401); !strings.Contains(got, "ANTHROPIC_API_KEY environment variable") {
+		t.Fatalf("env-key 401 hint = %q", got)
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	if got := aiFriendlyAPIError(dir, raw401); !strings.Contains(got, aiSettingsFileName) {
+		t.Fatalf("saved-key 401 hint = %q", got)
+	}
+	if got := aiFriendlyAPIError(dir, "429 rate_limit_error"); !strings.Contains(got, "rate limit") {
+		t.Fatalf("429 hint = %q", got)
+	}
+	if got := aiFriendlyAPIError(dir, "something novel"); got != "something novel" {
+		t.Fatalf("unknown error rewritten: %q", got)
+	}
+}
+
 func TestAIUnknownSlashNeverDispatches(t *testing.T) {
 	m := aiTestModel(t)
 	m = aiType(m, "/lst-budgets")

@@ -277,7 +277,7 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		if message == "turn canceled" {
 			commands = append(commands, tea.Println(aiEchoStyle.Render("canceled")))
 		} else {
-			commands = append(commands, tea.Println(aiErrorStyle.Render("AI error: "+message)))
+			commands = append(commands, tea.Println(aiErrorStyle.Render("AI error: "+aiFriendlyAPIError(m.configDir, message))))
 		}
 
 	case event.TurnDone != nil:
@@ -677,6 +677,31 @@ func aiDispatchCommand(ctx context.Context, run *aiRunState) tea.Cmd {
 		}
 		return msg
 	}
+}
+
+// aiFriendlyAPIError translates the common Claude API failures into
+// actionable hints — a raw 401 doesn't say which key source is wrong, and
+// the env var silently overriding the saved key is exactly the case a user
+// can't see. Unrecognized errors pass through verbatim.
+func aiFriendlyAPIError(configDir, message string) string {
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "authentication_error") || strings.Contains(lower, "401"):
+		source := "the key saved in " + aiSettingsPath(configDir)
+		if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
+			source = "the ANTHROPIC_API_KEY environment variable — it overrides any saved key"
+		}
+		return "Anthropic rejected the API key. Check " + source + "."
+	case strings.Contains(lower, "rate_limit") || strings.Contains(lower, "429"):
+		return "Anthropic rate limit reached — wait a moment and ask again."
+	case strings.Contains(lower, "overloaded") || strings.Contains(lower, "529"):
+		return "Anthropic is overloaded right now — try again shortly."
+	case strings.Contains(lower, "credit balance") || strings.Contains(lower, "billing"):
+		return "The Anthropic account behind this key has a billing problem: " + message
+	case strings.Contains(lower, "not_found_error") && strings.Contains(lower, "model"):
+		return "The selected model was not accepted — check /model. (" + message + ")"
+	}
+	return message
 }
 
 // aiExecutablePath resolves the binary to re-exec: the running executable,
