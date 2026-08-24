@@ -115,6 +115,15 @@ type aiModel struct {
 	picker       *aiNameSelection
 	pickerFilter string
 	pickerIndex  int
+
+	// F3 parity for user slash dispatches: a child blocked by the destructive
+	// contract (exit 30) waits here for the y/N answer; y re-runs with --yes.
+	dispatchApproval *aiDispatchApproval
+}
+
+type aiDispatchApproval struct {
+	argv    []string
+	summary string
 }
 
 // runAISession is the entry point behind `dci ai` (ai_command.go).
@@ -291,6 +300,13 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case aiCmdDoneMsg:
 		m.running = nil
+		// The destructive contract blocked the command (F3): ask here — the
+		// child had no terminal to ask on — and re-run with --yes on approval.
+		if msg.exitCode == aiDestructiveExitCode && !msg.canceled && msg.runErr == "" && !aiArgvHasYes(msg.argv) {
+			m.dispatchApproval = &aiDispatchApproval{argv: msg.argv, summary: aiDispatchSummary(msg.output, msg.argv)}
+			m.append(renderAIDispatchApproval(*m.dispatchApproval))
+			return m, nil
+		}
 		m.append(renderAIRunCard(msg))
 		// A finished user command joins the conversation so follow-up
 		// questions can reference what is on screen (§4.4).
@@ -398,6 +414,22 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// A pending name selection owns it next (ai_picker.go).
 	if m.picker != nil {
 		return m.handlePickerKey(msg)
+	}
+
+	// A user command blocked by the destructive contract waits for y/N (F3).
+	if m.dispatchApproval != nil {
+		switch key {
+		case "y", "Y":
+			approval := m.dispatchApproval
+			m.dispatchApproval = nil
+			m.append(aiEchoStyle.Render("↳ approved"))
+			return m, m.startDispatch(append(append([]string{}, approval.argv...), "--yes"))
+		case "n", "N", "esc", "ctrl+c":
+			m.dispatchApproval = nil
+			m.append(aiEchoStyle.Render("↳ declined"))
+			return m, nil
+		}
+		return m, nil
 	}
 
 	// Viewport scrolling works in every other state.
@@ -591,6 +623,14 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 		return m.runVerb(route)
 
 	case aiRouteDispatch:
+		// The interactive query builder (TUI-SPEC F4) needs a real terminal
+		// the child does not have; a bare /query would just die on empty
+		// stdin, so say what works instead.
+		if len(route.argv) == 1 && route.argv[0] == "query" {
+			m.append(aiNoticeStyle.Render("The interactive query builder needs a regular terminal — run dci query in your shell.") + "\n" +
+				aiEchoStyle.Render("In here: ask the AI to build and run the query for you, or pass shorthand body arguments to /query."))
+			return m, nil
+		}
 		if selection := aiNameSelectionFor(route.argv, m.configDir); selection != nil {
 			m.picker = selection
 			m.pickerFilter = ""
@@ -870,11 +910,22 @@ func (m aiModel) modelInfoText() string {
 // DCI_NO_TUI keeps the child deterministic even if a PTY-ish stdio ever
 // leaks through. The child shares this process's config dir, so auth and
 // customer context apply unchanged.
+// aiDispatchEnv is the slash child's environment. DCI_AGENT_MODE=0 matters:
+// the child's stdout is a pipe, and without the override the non-TTY soft
+// signal flips it into agent behavior — TOON instead of tables, structured
+// error envelopes, cobra usage dumps — nothing like what the same command
+// shows a human. COLOR=1 keeps the human table styling that piped output
+// would otherwise drop; DCI_NO_TUI blocks any interactive prompt from a
+// child that has no terminal to ask on.
+func aiDispatchEnv() []string {
+	return append(os.Environ(), "DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "COLOR=1")
+}
+
 func aiDispatchCommand(ctx context.Context, run *aiRunState) tea.Cmd {
 	argv, started, customer := run.argv, run.started, run.customer
 	return func() tea.Msg {
 		command := exec.CommandContext(ctx, aiExecutablePath(), argv...)
-		command.Env = append(os.Environ(), "DCI_NO_TUI=1")
+		command.Env = aiDispatchEnv()
 		output, err := command.CombinedOutput()
 		msg := aiCmdDoneMsg{argv: argv, output: string(output), elapsed: time.Since(started), customer: customer}
 		if ctx.Err() == context.Canceled {
@@ -1015,6 +1066,27 @@ func renderAIToolResult(result aiToolResult) string {
 	return b.String()
 }
 
+// aiDispatchSummary pulls the child's own confirmation line out of its
+// output for the approval prompt; the raw argv is the fallback.
+func aiDispatchSummary(output string, argv []string) string {
+	for _, line := range strings.Split(strings.TrimSpace(stripANSI(output)), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Error:"))
+		if line != "" {
+			return line
+		}
+	}
+	return "dci " + strings.Join(argv, " ")
+}
+
+func renderAIDispatchApproval(approval aiDispatchApproval) string {
+	return strings.Join([]string{
+		aiApproveStyle.Render("This command is destructive:"),
+		"  dci " + strings.Join(approval.argv, " "),
+		aiEchoStyle.Render("  " + approval.summary),
+		aiApproveStyle.Render("y") + " run it · " + aiApproveStyle.Render("n") + " decline",
+	}, "\n")
+}
+
 func renderAIApprovalRequest(request aiApprovalRequest) string {
 	lines := []string{
 		aiApproveStyle.Render("The agent wants to run a destructive command:"),
@@ -1134,7 +1206,7 @@ func (m aiModel) statusLine() string {
 	if m.picker != nil {
 		return aiEchoStyle.Render("↑/↓ select · enter run · esc cancel")
 	}
-	if m.approval != nil {
+	if m.approval != nil || m.dispatchApproval != nil {
 		return aiApproveStyle.Render("destructive command pending — y run · n decline")
 	}
 	if m.running != nil {
