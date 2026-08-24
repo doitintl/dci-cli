@@ -120,22 +120,23 @@ func (intent *aiPickerIntent) selection(entries []nameCacheEntry) *aiNameSelecti
 }
 
 // cachedEntries serves the intent from the on-disk name cache; empty means a
-// fetch is needed.
-func (intent *aiPickerIntent) cachedEntries(configDir string) []nameCacheEntry {
-	context := readCustomerContext(configDir)
-	cache, _ := readNameCache(configDir, context, time.Now())
+// fetch is needed. customerContext must be the session's effective tenant —
+// an agent session-scoped switch included — or names would resolve against
+// the persisted tenant's cache and dispatch another customer's IDs.
+func (intent *aiPickerIntent) cachedEntries(configDir, customerContext string) []nameCacheEntry {
+	cache, _ := readNameCache(configDir, customerContext, time.Now())
 	return cache.Resources[intent.target.resource]
 }
 
 // aiNameSelectionFor is the cache-only path: intent gates plus the on-disk
 // cache. The session falls back to an async fetch when this returns nil with
 // a live intent.
-func aiNameSelectionFor(argv []string, configDir string) *aiNameSelection {
+func aiNameSelectionFor(argv []string, configDir, customerContext string) *aiNameSelection {
 	intent := aiPickerIntentFor(argv)
 	if intent == nil {
 		return nil
 	}
-	return intent.selection(intent.cachedEntries(configDir))
+	return intent.selection(intent.cachedEntries(configDir, customerContext))
 }
 
 // apply rewrites the argv with the chosen entry: the ID replaces the first

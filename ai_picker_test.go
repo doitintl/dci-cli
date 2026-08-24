@@ -47,7 +47,7 @@ func TestAINameSelectionFor(t *testing.T) {
 	seedAIPickerFixtures(t, dir)
 
 	// Zero-argument resolvable command: pick from everything.
-	selection := aiNameSelectionFor([]string{"get-report", "--chart"}, dir)
+	selection := aiNameSelectionFor([]string{"get-report", "--chart"}, dir, readCustomerContext(dir))
 	if selection == nil || len(selection.candidates) != 3 || len(selection.positionals) != 0 {
 		t.Fatalf("zero-arg selection = %+v", selection)
 	}
@@ -56,43 +56,43 @@ func TestAINameSelectionFor(t *testing.T) {
 	}
 
 	// Ambiguous name: only the matching candidates.
-	selection = aiNameSelectionFor([]string{"get-report", "bigquery", "--chart"}, dir)
+	selection = aiNameSelectionFor([]string{"get-report", "bigquery", "--chart"}, dir, readCustomerContext(dir))
 	if selection == nil || len(selection.candidates) != 2 {
 		t.Fatalf("ambiguous selection = %+v", selection)
 	}
 
 	// Unique match: the child resolves it identically — no picker.
-	if s := aiNameSelectionFor([]string{"get-report", "Monthly AWS Spend"}, dir); s != nil {
+	if s := aiNameSelectionFor([]string{"get-report", "Monthly AWS Spend"}, dir, readCustomerContext(dir)); s != nil {
 		t.Fatalf("unique match opened a picker: %+v", s)
 	}
 	// Multi-word split name matching several entries still picks.
-	if s := aiNameSelectionFor([]string{"get-report", "BigQuery", "Storage"}, dir); s == nil || len(s.candidates) != 2 {
+	if s := aiNameSelectionFor([]string{"get-report", "BigQuery", "Storage"}, dir, readCustomerContext(dir)); s == nil || len(s.candidates) != 2 {
 		t.Fatalf("multi-word ambiguous selection = %+v", s)
 	}
 	// Non-resolvable command: never.
-	if s := aiNameSelectionFor([]string{"status"}, dir); s != nil {
+	if s := aiNameSelectionFor([]string{"status"}, dir, readCustomerContext(dir)); s != nil {
 		t.Fatalf("non-resolvable command picked: %+v", s)
 	}
 	// --id opts out; ID-shaped input skips.
-	if s := aiNameSelectionFor([]string{"get-report", "--id", "bigquery"}, dir); s != nil {
+	if s := aiNameSelectionFor([]string{"get-report", "--id", "bigquery"}, dir, readCustomerContext(dir)); s != nil {
 		t.Fatal("--id did not opt out")
 	}
-	if s := aiNameSelectionFor([]string{"get-report", "AAAAAAAAAAAAAAAAAAA1"}, dir); s != nil {
+	if s := aiNameSelectionFor([]string{"get-report", "AAAAAAAAAAAAAAAAAAA1"}, dir, readCustomerContext(dir)); s != nil {
 		t.Fatal("ID-shaped argument opened a picker")
 	}
 	// Body-taking operations keep their usage error on zero args.
-	if s := aiNameSelectionFor([]string{"create-report"}, dir); s != nil {
+	if s := aiNameSelectionFor([]string{"create-report"}, dir, readCustomerContext(dir)); s != nil {
 		t.Fatal("hasBody operation opened the zero-arg picker")
 	}
 	// DCI_NO_RESOLVE opts the whole feature out.
 	t.Setenv("DCI_NO_RESOLVE", "1")
-	if s := aiNameSelectionFor([]string{"get-report"}, dir); s != nil {
+	if s := aiNameSelectionFor([]string{"get-report"}, dir, readCustomerContext(dir)); s != nil {
 		t.Fatal("DCI_NO_RESOLVE ignored")
 	}
 	t.Setenv("DCI_NO_RESOLVE", "")
 
 	// Empty cache: dispatch as today.
-	if s := aiNameSelectionFor([]string{"get-report"}, t.TempDir()); s != nil {
+	if s := aiNameSelectionFor([]string{"get-report"}, t.TempDir(), ""); s != nil {
 		t.Fatal("empty cache opened a picker")
 	}
 }
@@ -210,6 +210,31 @@ func TestAIDispatchEnvForcesHumanMode(t *testing.T) {
 		if !found {
 			t.Fatalf("dispatch env missing %s", want)
 		}
+	}
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "DCI_CUSTOMER_CONTEXT=") {
+			t.Fatalf("no override set, but dispatch env carries %s", entry)
+		}
+	}
+}
+
+func TestAIDispatchEnvCarriesSessionCustomer(t *testing.T) {
+	// User dispatches must run against the agent's session-scoped tenant —
+	// exactly once, with any inherited value replaced, since getenv semantics
+	// on duplicate entries are platform-defined.
+	t.Setenv("DCI_CUSTOMER_CONTEXT", "stale.example.com")
+	env := aiDispatchEnv(132, "csp.doit.com")
+	count := 0
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "DCI_CUSTOMER_CONTEXT=") {
+			count++
+			if entry != "DCI_CUSTOMER_CONTEXT=csp.doit.com" {
+				t.Fatalf("dispatch env context = %s", entry)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("DCI_CUSTOMER_CONTEXT appears %d times, want exactly 1", count)
 	}
 }
 

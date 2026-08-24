@@ -303,6 +303,44 @@ func TestAIDispatchIsDestructiveDisambiguatesExit30(t *testing.T) {
 	}
 }
 
+func TestAISessionCustomerOverrideLifecycle(t *testing.T) {
+	m := aiTestModel(t)
+	m.session = newFakeAISession()
+
+	m, _ = aiEventUpdate(m, aiEvent{ContextSwitched: &aiContextSwitched{From: "", To: "csp.doit.com", By: "agent"}})
+	if m.sessionCustomer != "csp.doit.com" {
+		t.Fatalf("sessionCustomer = %q after agent switch", m.sessionCustomer)
+	}
+	if !strings.Contains(m.contextLabel(), "session-scoped") {
+		t.Fatalf("context label hides the session scope: %q", m.contextLabel())
+	}
+	if got := m.effectiveCustomer(); got != "csp.doit.com" {
+		t.Fatalf("effectiveCustomer = %q", got)
+	}
+	m.fetchedNames["reports"] = []nameCacheEntry{{ID: "AAAAAAAAAAAAAAAAAAA1", Name: "Old tenant report"}}
+
+	// Another agent switch invalidates the previous tenant's fetched names.
+	m, _ = aiEventUpdate(m, aiEvent{ContextSwitched: &aiContextSwitched{From: "csp.doit.com", To: "acme.com", By: "agent"}})
+	if len(m.fetchedNames) != 0 {
+		t.Fatal("fetched names survived a tenant switch")
+	}
+
+	// /clear starts a fresh conversation: the rebuilt session has no
+	// override, so the TUI mirror must reset with it.
+	m.fetchedNames["reports"] = []nameCacheEntry{{ID: "AAAAAAAAAAAAAAAAAAA1", Name: "Old tenant report"}}
+	m = aiType(m, "/clear")
+	m, _ = aiPress(m, tea.KeyEnter)
+	if m.sessionCustomer != "" {
+		t.Fatalf("sessionCustomer = %q after /clear, want cleared", m.sessionCustomer)
+	}
+	if len(m.fetchedNames) != 0 {
+		t.Fatal("fetched names survived /clear")
+	}
+	if strings.Contains(m.contextLabel(), "session-scoped") {
+		t.Fatalf("stale session-scoped label after /clear: %q", m.contextLabel())
+	}
+}
+
 func TestAITurnLifecycleEvents(t *testing.T) {
 	m := aiTestModel(t)
 	m.session = newFakeAISession()

@@ -344,6 +344,17 @@ func aiUserLine() string {
 // contextLabel is the tenant line: the customer display name when resolved,
 // with the raw context in parentheses; doers with no context get the fix
 // spelled out; single-tenant customers see no tenant vocabulary (§6.1).
+// effectiveCustomer is the tenant this session actually operates against:
+// the agent's session-scoped override when set, otherwise the persisted (or
+// env) context. Name resolution, dispatches, and the fetch-backed picker all
+// key off this — never off the persisted context alone.
+func (m *aiModel) effectiveCustomer() string {
+	if m.sessionCustomer != "" {
+		return m.sessionCustomer
+	}
+	return readCustomerContext(m.configDir)
+}
+
 func (m *aiModel) contextLabel() string {
 	if m.sessionCustomer != "" {
 		label := m.sessionCustomer
@@ -572,6 +583,9 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		if event.ContextSwitched.By == "agent" {
 			m.sessionCustomer = event.ContextSwitched.To
 		}
+		// Fetched picker names are tenant-scoped: entries from the previous
+		// tenant must not resolve names (and dispatch IDs) in the new one.
+		m.fetchedNames = map[string][]nameCacheEntry{}
 		m.customerName = ""
 		m.identity = m.contextLabel()
 		m.refreshBanner()
@@ -898,7 +912,7 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if intent := aiPickerIntentFor(route.argv); intent != nil {
-			entries := intent.cachedEntries(m.configDir)
+			entries := intent.cachedEntries(m.configDir, m.effectiveCustomer())
 			if len(entries) == 0 {
 				entries = m.fetchedNames[intent.target.resource]
 			}
@@ -906,7 +920,7 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 				// No names on hand: fetch them (what the child's own F1/F2
 				// would do) instead of degrading to a usage error.
 				m.fetchIntent = intent
-				return m, tea.Batch(m.spin.Tick, aiFetchNames(intent, readCustomerContext(m.configDir)))
+				return m, tea.Batch(m.spin.Tick, aiFetchNames(intent, m.effectiveCustomer()))
 			}
 			if selection := intent.selection(entries); selection != nil {
 				m.openPicker(selection)
@@ -966,13 +980,9 @@ func (m aiModel) handleNamesFetched(msg aiNamesFetchedMsg) (tea.Model, tea.Cmd) 
 // startDispatch spawns one slash command subprocess and arms the spinner.
 func (m *aiModel) startDispatch(argv []string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
-	customer := m.sessionCustomer
-	if customer == "" {
-		customer = readCustomerContext(m.configDir)
-	}
 	m.running = &aiRunState{
 		argv: argv, cancel: cancel, started: time.Now(),
-		customer:        customer,
+		customer:        m.effectiveCustomer(),
 		sessionCustomer: m.sessionCustomer,
 		width:           m.width,
 	}
@@ -1115,9 +1125,16 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "clear":
 		// A new screen is a new conversation: drop the session history too,
-		// so stale tenant data can't leak into the next question (§6.2).
+		// so stale tenant data can't leak into the next question (§6.2). The
+		// rebuilt session starts with no customer override, so the TUI's
+		// mirror of it — and the tenant-scoped fetched names — reset with it.
 		m.transcript = nil
 		m.stream = ""
+		m.sessionCustomer = ""
+		m.fetchedNames = map[string][]nameCacheEntry{}
+		m.customerName = ""
+		m.identity = m.contextLabel()
+		m.refreshBanner()
 		m.append(aiBannerBlock(&m))
 		if m.session != nil {
 			_ = m.session.Close()
@@ -1142,8 +1159,10 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		}
 		if len(route.args) > 0 {
 			// The user persisted a context: that wins over any earlier agent
-			// session-scoped switch, in the session and in its children.
+			// session-scoped switch, in the session and in its children —
+			// and the previous tenant's fetched names go with it.
 			m.sessionCustomer = ""
+			m.fetchedNames = map[string][]nameCacheEntry{}
 			if session, ok := m.session.(interface{ ClearCustomerOverride() }); ok {
 				session.ClearCustomerOverride()
 			}

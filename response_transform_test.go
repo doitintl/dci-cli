@@ -1169,3 +1169,27 @@ func TestTransformRollupUnknownColumnSelfCorrects(t *testing.T) {
 		t.Fatalf("rollupError = %q", message)
 	}
 }
+
+func TestTransformRollupNumericKeyIsNotDoubleCounted(t *testing.T) {
+	// A numeric column used as the rollup key groups rows; it must not also
+	// be summed (which would duplicate it in the schema and emit nonsense).
+	resetTransformConfig(t)
+	viper.Set("report-rollup", "cost")
+	body := reportBody(
+		[]interface{}{"BigQuery", "2026", "05", 10.0, float64(1778000000)},
+		[]interface{}{"GCS", "2026", "06", 10.0, float64(1780000000)},
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	container := root["result"].(map[string]interface{})
+	rows := container["rows"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %v, want the two cost-10 rows grouped into one", rows)
+	}
+	cells := rows[0].([]interface{})
+	if len(cells) != 1 {
+		t.Fatalf("cells = %v, want the key column only (no duplicate summed cost)", cells)
+	}
+	if schema := container["schema"].([]interface{}); len(schema) != 1 {
+		t.Fatalf("schema = %v, want cost exactly once", schema)
+	}
+}

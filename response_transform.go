@@ -851,8 +851,15 @@ func applyReportRollup(container map[string]interface{}, rows []interface{}, sch
 	if len(keyIndexes) == 0 {
 		return rows, schema
 	}
+	keyed := map[int]bool{}
+	for _, i := range keyIndexes {
+		keyed[i] = true
+	}
 	sumIndexes := []int{}
 	for i, col := range schema {
+		if keyed[i] {
+			continue // a numeric rollup key groups; it must not also sum
+		}
 		switch strings.ToLower(col.Type) {
 		case "float", "int", "integer", "number":
 			sumIndexes = append(sumIndexes, i)
