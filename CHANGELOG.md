@@ -26,6 +26,53 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.6.0 — August 24, 2026
+
+### New
+
+- `dci ai` opens an interactive AI session in your terminal: ask about your
+  cloud costs in plain English and the AI runs `dci` commands for you and
+  explains the results — or run any command yourself with a `/` prefix, with
+  completion and history. One-shot mode answers a single question and exits:
+  `dci ai "top 3 cost anomalies this month"`. AI features use your own
+  Anthropic API key (the session walks you through saving one securely);
+  your questions and the command results the AI reads are sent to Anthropic
+  under your key, and conversations are never stored anywhere but your
+  terminal.
+- Inside the session: `/customer` shows or switches the customer context
+  (switches the AI makes itself apply to the session only — your saved
+  context is never changed), `/model` picks the AI model, `/export` saves
+  the transcript to a file, and `Esc` cancels a running command or answer.
+  Define your own shortcuts as saved commands.
+- Tune AI answer speed versus depth with the `DCI_AI_EFFORT` environment
+  variable or the `effort` setting (`low`, `medium`, `high`; `default`
+  restores uncapped reasoning). The default is `medium`, measured to keep
+  answer quality while responding noticeably faster.
+- `--rollup <columns>` totals report and query rows in the CLI: rows group
+  by the listed result columns, metric columns are summed, and per-period
+  rows collapse into one total per group — no more spreadsheet step for
+  "total per service over the quarter".
+- `--search <substring>` finds items in any list command by keyword,
+  case-insensitively, across every text field and every page — e.g.
+  `dci list-dimensions --search genai`.
+- `DCI_AI_STATS=1` prints one telemetry line per AI answer (rounds, tool
+  calls, tokens, timing) for scripting and benchmarking.
+
+### Improved
+
+- The AI session answers multi-step questions faster: independent commands
+  it batches now run concurrently, and long results are presented as a
+  top-10 table plus an aggregated total — ask for the full breakdown when
+  you want every row.
+
+### Fixed
+
+- Unauthenticated headless runs (CI, scripts) of `--help` on API commands
+  fail fast with a structured error instead of hanging on a browser login
+  that can never complete.
+- A mistyped flag value no longer surfaces as a destructive-command
+  confirmation prompt.
+
 ## v2.5.2 — August 21, 2026
 
 ### New
