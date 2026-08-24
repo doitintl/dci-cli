@@ -1265,8 +1265,13 @@ func (m aiModel) modelInfoText() string {
 	stable := aiSystemPrompt(m.catalog, isDoer || readCustomerContext(m.configDir) != "", isDoer)
 	lines = append(lines, aiEchoStyle.Render(fmt.Sprintf("System prompt (cached prefix): ~%d tokens, %d commands in catalog", aiEstimateTokens(stable), len(m.catalog))))
 	if m.lastUsage != nil {
-		lines = append(lines, aiEchoStyle.Render(fmt.Sprintf("Last turn: %d in / %d out / %d cache-read tokens",
-			m.lastUsage.InputTokens, m.lastUsage.OutputTokens, m.lastUsage.CacheRead)))
+		usage := m.lastUsage
+		line := fmt.Sprintf("Last turn: %d in / %d out / %d cache-read tokens; %d rounds, %d tool calls, %.1fs",
+			usage.InputTokens, usage.OutputTokens, usage.CacheRead, usage.Rounds, usage.ToolCalls, usage.Wall.Seconds())
+		if usage.FirstText > 0 {
+			line += fmt.Sprintf(" (first text at %.1fs)", usage.FirstText.Seconds())
+		}
+		lines = append(lines, aiEchoStyle.Render(line))
 	}
 	return strings.Join(lines, "\n")
 }

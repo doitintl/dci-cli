@@ -153,6 +153,15 @@ func TestAISessionPlainTextTurn(t *testing.T) {
 	if done.InputTokens != 100 || done.OutputTokens != 10 || done.CacheRead != 50 {
 		t.Fatalf("usage = %+v", done)
 	}
+	if done.Rounds != 1 || done.ToolCalls != 0 {
+		t.Fatalf("rounds/tools = %d/%d, want 1/0", done.Rounds, done.ToolCalls)
+	}
+	if done.Wall <= 0 {
+		t.Fatalf("wall = %v, want > 0", done.Wall)
+	}
+	if done.FirstText <= 0 || done.FirstText > done.Wall {
+		t.Fatalf("first text = %v (wall %v), want within (0, wall]", done.FirstText, done.Wall)
+	}
 	if len(session.history) != 2 {
 		t.Fatalf("history = %d messages, want user+assistant", len(session.history))
 	}
@@ -170,6 +179,10 @@ func TestAISessionToolRoundTrip(t *testing.T) {
 	}
 	if len(runner.calls) != 1 || strings.Join(runner.calls[0], " ") != "list-budgets" {
 		t.Fatalf("runner calls = %v", runner.calls)
+	}
+	done := events[len(events)-1].TurnDone
+	if done.Rounds != 2 || done.ToolCalls != 1 {
+		t.Fatalf("rounds/tools = %d/%d, want 2/1", done.Rounds, done.ToolCalls)
 	}
 	// user, assistant(tool_use), user(tool_result), assistant(text)
 	if len(session.history) != 4 {

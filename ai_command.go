@@ -44,6 +44,20 @@ func registerAICommand(configDir string) {
 	cli.Root.AddCommand(command)
 }
 
+// aiStatsLine formats one turn's telemetry as a machine-parseable key=value
+// line for DCI_AI_STATS=1 consumers — the eval harness greps it out of pty
+// transcripts to track token cost, not just wall clock. ttft is omitted when
+// the turn produced no answer text.
+func aiStatsLine(done aiTurnDone) string {
+	line := fmt.Sprintf("[ai-stats] turn=%s rounds=%d tools=%d in=%d out=%d cache_read=%d wall=%.1fs",
+		strings.TrimPrefix(done.TurnID, "t"), done.Rounds, done.ToolCalls,
+		done.InputTokens, done.OutputTokens, done.CacheRead, done.Wall.Seconds())
+	if done.FirstText > 0 {
+		line += fmt.Sprintf(" ttft=%.1fs", done.FirstText.Seconds())
+	}
+	return line
+}
+
 // runAIOneShot drives one question through the conversation session without
 // a TUI: the answer streams to stdout; tool activity goes to stderr only when
 // stderr is a terminal (piped/agent callers get clean streams).
@@ -54,6 +68,7 @@ func runAIOneShot(configDir, question string, approveDestructive bool) error {
 		return errors.New("AI needs an Anthropic API key: export ANTHROPIC_API_KEY, or add {\"api_key\": \"…\"} to " + aiSettingsPath(configDir))
 	}
 	verbose := term.IsTerminal(int(os.Stderr.Fd()))
+	stats := os.Getenv("DCI_AI_STATS") == "1"
 	session := newLocalAISession(configDir, key, resolveAIModel(settings), aiSessionCatalog())
 	defer session.Close()
 	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: question}); err != nil {
@@ -121,6 +136,9 @@ func runAIOneShot(configDir, question string, approveDestructive bool) error {
 			closeThinking()
 			if printedText {
 				fmt.Println()
+			}
+			if stats {
+				fmt.Fprintln(os.Stderr, aiStatsLine(*event.TurnDone))
 			}
 			return failure
 		}
