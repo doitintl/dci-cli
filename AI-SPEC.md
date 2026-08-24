@@ -3,9 +3,9 @@
 Status: **draft for maintainer review**.
 Audited at commit `94268b6`; every claim about existing code cites the function and file it is based on.
 
-Scope: the interactive agent mode agreed in conversation — a Claude Code-style terminal session where typed `/` commands run the existing CLI deterministically and plain-text questions go to an AI agent that drives the same CLI behind the scenes, rendering tables and charts natively. Covers the TUI, the input grammar, the agent loop, the doer/customer tenant model, and the renderer-agnostic event protocol that keeps a future web (Console) client a port rather than a rewrite.
+Scope: the interactive agent mode agreed in conversation — a Claude Code-style terminal session where typed `/` commands run the existing CLI deterministically and plain-text questions go to an AI agent that drives the same CLI behind the scenes, rendering tables and charts natively. Covers the TUI, the input grammar, the agent loop, the doer/customer tenant model, and the renderer-agnostic event protocol that keeps other renderers (a future Console client, §13) possible. The open questions from the first draft are settled — see the decision log (§14).
 
-Out of scope, deliberately: the DoiT backend agent service, Console web client, and server-side transcript storage. Those live outside this repo; this spec's only commitment to them is the event protocol (§8) and the session interface (§7.2). Also out of scope: any change to non-interactive behavior — agent mode, pipes, and CI are byte-for-byte unchanged.
+Out of scope: a hosted DoiT agent service and server-side transcript storage — **decided against** (D1, D4, §14); a Console web client remains conceivable over the same event protocol (§13) but is not planned. Also out of scope: any change to non-interactive behavior — agent mode, pipes, and CI are byte-for-byte unchanged.
 
 ---
 
@@ -32,8 +32,8 @@ Decision table (rationale in the cited sections):
 | TUI mode | Bubble Tea **inline** renderer + `tea.Println` scrollback; no alt-screen for the session | §3 |
 | Input routing | Explicit `/` prefix; plain text is always AI; a failed `/` never falls through to the model | §4 |
 | Agent loop | Headless core emitting a versioned event stream; TUI is one renderer of it | §7, §8 |
-| Loop location | In-process first (P2, user-supplied key), remote DoiT service later (P3) — same interface | §7.2, §12 |
-| Model | `claude-opus-5`, adaptive thinking, streaming, prompt-cached catalog prefix | §7.5 |
+| Loop location | In-process, permanently: the user's machine holds the key and runs the loop (D1) | §7.2, §12 |
+| Model | `claude-opus-5` default, user-selectable via `/model` + config (D2); adaptive thinking, streaming, prompt-cached catalog prefix | §7.5 |
 | Rendering | Model proposes declarative view specs; our renderers draw them; numbers on screen never come from model text | §9 |
 | Tenancy | Session owns the customer context; the model switches it only through an explicit, visible tool | §6 |
 | New dependency | `anthropic-sdk-go` only — the Charm stack is already in the tree (go.mod) | §10 |
@@ -42,7 +42,7 @@ Decision table (rationale in the cited sections):
 
 `ai` names the promise (answers), not the plumbing (a REPL); it matches ecosystem convention (`docker ai`, `kubectl-ai`, `gh copilot`, `q chat`) and self-explains in `dci --help`. Typed commands still working inside it does not make it a shell — that is a feature *of* the AI session, exactly as `!` shell lines are in Claude Code.
 
-The hazard of the name is shipping it AI-less. Therefore the phases (§12): P1 builds the session shell but ships **hidden**; the command unhides only when the natural-language path works, even in its minimal user-supplied-key form. When AI credentials are absent, `dci ai` still opens and says so plainly: `/` commands work, plain text explains what is missing.
+The hazard of the name is shipping it AI-less. Therefore the phases (§12): P1 builds the session shell but ships **hidden**; the command unhides only when the natural-language path works with a user-supplied key (the permanent mechanism, D1). When AI credentials are absent, `dci ai` still opens and says so plainly: `/` commands work, plain text explains what is missing.
 
 Reserved now, in the same grammar decision: `dci ai <question>` one-shot mode. Args → one-shot, no args → session. One-shot honors agent-mode conventions when stdout is not a TTY (structured output, exit codes per the error contract), so it composes with pipes and CI from day one.
 
@@ -88,10 +88,10 @@ Corollary: a `/` line that matches nothing **never** falls through to the model.
 
 One namespace, two populations, resolved in this order:
 
-1. **Session commands** (reserved verbs): `/customer` (§6.2), `/clear` (new conversation), `/compact` (summarize history in place), `/export` (write transcript to a file), `/model` (P3, if the backend offers a choice), `/help`, `/quit`. A build-time check asserts no API command group shadows a reserved verb.
+1. **Session commands** (reserved verbs): `/customer` (§6.2), `/clear` (new conversation), `/compact` (summarize history in place), `/export` (write transcript to a file), `/model` (switch the session model; D2), `/help`, `/quit`. A build-time check asserts no API command group shadows a reserved verb.
 2. **The CLI catalog, verbatim**: `/anomalies list --filter x` ≡ `dci anomalies list --filter x`. The parity rule is absolute — same argv semantics after the slash, so every existing doc and shell-history snippet transfers by prepending `/`. Implementation is slash-strip → the same argv the outer CLI would see → dispatch (§7.4).
 
-Space is reserved (resolution order slot between 1 and 2) for **user-defined slash commands** — saved prompts/queries in a config file, the `dci` analog of Claude Code custom commands. Not designed here; the parser just must not preclude it.
+**User-defined slash commands** — saved prompts/queries in a config file, the `dci` analog of Claude Code custom commands — ship in P2 (D5), occupying the resolution slot between 1 and 2: app verbs → user-defined → catalog. A user-defined name expands to either a parameterized NL prompt (sent to the agent) or a fixed command line (dispatched deterministically); definitions live in a config file under the config dir, with the same completion popup treatment. Detailed format is P2 implementation scope.
 
 ### 4.3 Completion
 
@@ -154,7 +154,7 @@ type ConversationSession interface {
 }
 ```
 
-Two implementations, one per phase: **local** (P2 — in-process loop against the Claude API, user-supplied key) and **remote** (P3 — SSE/WebSocket client of the DoiT agent service). The TUI and the one-shot runner never know which they hold. Moving billing behind the DoiT backend and moving the loop server-side are the same milestone, by construction.
+One planned implementation: **local** — an in-process loop against the Claude API using the user's own key (D1; there is no DoiT agent service in this plan). The interface still earns its keep: it enforces the core/renderer split that the TUI and one-shot runner share, and it keeps a remote implementation *possible* should a hosted service ever be revisited — but none is planned, and no code should anticipate one beyond honoring this seam.
 
 ### 7.3 Tool surface
 
@@ -175,11 +175,11 @@ Both slash dispatch and `run_dci_command` execute via **subprocess re-exec**: `o
 
 ### 7.5 Model and API usage
 
-- **Model**: `claude-opus-5`, adaptive thinking, streamed responses. SDK: `anthropic-sdk-go` (the only new dependency).
+- **Model**: `claude-opus-5` by default, adaptive thinking, streamed responses; user-selectable per session via `/model` and persistently via config (D2). The system prompt is written model-agnostically and validated against the selectable set. SDK: `anthropic-sdk-go` (the only new dependency).
 - **Prompt layout for caching**: stable prefix first — system prompt (mode-specific, §6.2, but fixed for the session) + serialized catalog — with a cache breakpoint after it; volatile content (active tenant, date, conversation) after the breakpoint. The catalog's token size must be **measured** at implementation time (`count_tokens`); if it blows the budget, `search_commands` + a summarized catalog is the fallback. Verified via `cache_read_input_tokens` in dogfooding.
 - **Loop**: the SDK's tool-runner helper if its per-turn hooks accommodate the approval gate (§7.6); otherwise the manual loop — it is small, and the approval/interrupt/event plumbing is the actual work either way.
 - **Ceilings**: max turns per question and a max-token guard, with an event (§8) when a ceiling is hit, so a runaway loop is visible and bounded. Exact numbers are implementation-time tunables.
-- **P2 credentials**: `ANTHROPIC_API_KEY` (or config-file equivalent), explicitly labeled experimental. P3 replaces this with the DoiT-authenticated backend (open question Q1).
+- **Credentials**: a user-supplied Anthropic API key — `ANTHROPIC_API_KEY` env var or a config-file equivalent under the config dir (0600) — is the **permanent** mechanism (D1), not a dogfood stopgap. `dci ai` without a key opens, runs `/` commands, and explains how to configure one; there is no DoiT-billed path.
 
 ### 7.6 Approvals and limits
 
@@ -228,38 +228,40 @@ Per the chapter-per-file convention (AGENTS.md), new siblings in `package main`,
 | `ai_slash.go` | `/` parsing, reserved verbs, completion popup, history |
 | `ai_command.go` | `dci ai` cobra wiring: session vs one-shot, gates, hidden flag |
 
-Dependencies: **add `anthropic-sdk-go`; add nothing else.** bubbletea/bubbles/lipgloss/huh/ntcharts/asciigraph are already direct dependencies (go.mod). The P3 remote session adds no dependency (SSE over net/http).
+Dependencies: **add `anthropic-sdk-go`; add nothing else.** bubbletea/bubbles/lipgloss/huh/ntcharts/asciigraph are already direct dependencies (go.mod).
 
 ## 11. Security and privacy
 
 - Authorization is the API's, via the user's OAuth token — unchanged, including for every agent-initiated call (§6). The session never widens access; it only spends it.
-- **Data flow to the model is the new surface**: tool results (customer cost data) enter model context. P2 sends them to the Anthropic API under the user's own key, which is why P2 stays experimental and doer-dogfood-first; the governance posture for customers (sub-processor, DPA, retention) is a P3/backend decision — open question Q3.
+- **Data flow to the model is the new surface**: tool results (customer cost data) enter model context. Under D1, model traffic flows directly from the user's machine to the Anthropic API under the user's **own** key and agreement — DoiT is not the processor for it. DoiT's posture is to rely on its existing AI terms for the feature itself (D3); legal verifies that coverage before customer-facing GA (§12 P3 gate). The docs must state plainly that question data and result data are sent to the model provider under the user's key.
 - Tokens and secrets never enter model context: the executor passes credentials via the child's environment/config exactly as the CLI does today, and transcripts/`/export` contain events, not env.
 - The User-Agent `mode=` token (uaMode, main.go) gains an `ai` value so agent-session traffic is distinguishable in analytics from both `interactive` and external-`agent` traffic.
-- Local persistence (history, exports) lives under the config dir with 0600, like the token cache and customerContext file today.
+- Local persistence (history, exports) lives under the config dir with 0600, like the token cache and customerContext file today — and it is the **only** persistence: transcripts are never stored server-side (D4).
 
 ## 12. Phases
 
 | Phase | Ships | Gate |
 |---|---|---|
 | **P1** | The session shell, hidden: inline TUI, `/` grammar + catalog completion, slash dispatch, status line, `/customer` + picker, history. Zero AI dependency. | Hidden command; doer dogfood |
-| **P2** | The local loop: NL path, tool cards, approvals, view specs, slash-results-into-context, one-shot mode. Requires user-supplied key; labeled experimental. `ai_events.go` schema reviewed before this code starts. | Still hidden or key-gated; doer + friendly-partner dogfood |
-| **P3** | Remote session against the DoiT agent service: DoiT-authenticated, DoiT-billed, no user key. Unhide `dci ai`, README + docs, **minor version bump**. | Maintainer + backend readiness (Q1–Q3) |
+| **P2** | The loop: NL path, tool cards, approvals, view specs, slash-results-into-context, one-shot mode (D7), user-defined slash commands (D5), `/model` + model config (D2), catalog token measurement (D6). Requires a user-supplied key (the permanent mechanism, D1). `ai_events.go` schema reviewed before this code starts. | Still hidden; doer + friendly-partner dogfood |
+| **P3** | GA hardening: key onboarding/config polish, prompt + model tuning from dogfood, README + docs (including the D3 data-flow disclosure), unhide `dci ai`, **minor version bump**. | Maintainer sign-off + legal verification of existing AI-terms coverage (D3) |
 
 Each phase is independently shippable to its audience; P1 is pure UI with no external dependencies and immediately useful to doers as a context-aware shell.
 
 ## 13. Web replication path (informative)
 
-What P1–P3 leave behind for a Console client: the versioned event protocol (§8), ANSI-free view specs (§9), a session interface with a remote implementation (§7.2), and — once the loop is server-side — conversations that can be persisted, resumed across surfaces, and shared (transcript access inherits tenant rules: a doer transcript containing a customer's data is governed like the data). The slash catalog becomes a ⌘K command palette from the same catalog JSON. None of that work lives in this repo beyond keeping the protocol clean.
+With D1 (no hosted service) and D4 (local-only transcripts), the web story narrows deliberately. What stays portable: the versioned event protocol (§8) and the ANSI-free view specs (§9) — a future Console client would render the same events, and the slash catalog would become a ⌘K command palette from the same catalog JSON. What a web client would have to solve for itself: a credential story (it cannot use a key on the user's machine) and history (it starts with none — cross-device resume and sharing are out of scope by D4). In practice, revisiting web means revisiting D1 and D4 first. The CLI-side commitment is unchanged and cheap: keep the protocol clean.
 
-## 14. Open questions for the maintainer
+## 14. Decision log
 
-| # | Question | Blocks |
+The seven open questions from the first draft were decided by the maintainer on 2026-08-24 (Q# → D#):
+
+| # | Decision | Consequences in this spec |
 |---|---|---|
-| Q1 | Token billing & endpoint: user Anthropic keys are a dogfood hack — is the P3 path a DoiT backend proxy authenticated with the existing Console OAuth? Owned by which team? | P3 |
-| Q2 | Model policy: default `claude-opus-5` — confirm; is a cheaper model wanted for one-shot/CI usage, and is `/model` exposed at all? | P2 defaults |
-| Q3 | Data governance: customer data in model context — sub-processor/DPA/retention posture for customer-facing GA. | P3 GA |
-| Q4 | Transcript persistence server-side (resume/share/web) — in scope for the agent service v1? | P3/web |
-| Q5 | User-defined slash commands (saved prompts/queries): worth a slot in the P-plan or explicitly later? | grammar only reserves space |
-| Q6 | Catalog token budget: if measurement (§7.5) shows the full catalog too large for the cached prefix, accept the `search_commands` fallback or invest in a condensed catalog? | P2 |
-| Q7 | One-shot in CI for customers pre-P3 (needs a key): support at all, or one-shot lands with P3? | P2 scope |
+| D1 | **Token billing: user-supplied Anthropic keys, permanently.** No DoiT agent service or proxy. | The local loop is the final architecture (§7.2); P3 becomes GA hardening, not a backend migration (§12); a web client would need its own credential story (§13). |
+| D2 | **Model: `claude-opus-5` default, user-selectable** via `/model` and config. | `/model` is a real session command from P2 (§4.2); system prompt written model-agnostically and validated against the selectable set (§7.5). |
+| D3 | **Governance: rely on existing DoiT AI terms.** | With D1, model traffic is a direct user↔Anthropic relationship under the user's own key and agreement; legal verifies existing coverage before customer-facing GA, and the docs disclose the data flow (§11, §12 P3 gate). |
+| D4 | **Transcripts: local-only, indefinitely.** No server-side persistence, resume, or sharing. | History and `/export` live under the config dir only (§11); web continuity is out of scope (§13). |
+| D5 | **User-defined slash commands ship in P2.** | Config-file saved prompts/commands with the reserved resolution slot and completion treatment (§4.2); detailed format is P2 implementation scope. |
+| D6 | **Catalog: full catalog in the cached prefix, measured in P2**; `search_commands` is the ready fallback if it proves too large. | §7.5 unchanged — now a plan rather than a question. |
+| D7 | **One-shot ships in P2** alongside the interactive loop, same key requirement. | §12 P2 scope; under D1 there is no separate customer-CI story — the key requirement *is* the permanent model. |
