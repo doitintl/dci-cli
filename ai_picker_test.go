@@ -197,3 +197,85 @@ func TestAIPickerEscCancels(t *testing.T) {
 		t.Fatal("cancel note missing from the transcript")
 	}
 }
+
+func TestAIDispatchEnvForcesHumanMode(t *testing.T) {
+	env := aiDispatchEnv()
+	for _, want := range []string{"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "COLOR=1"} {
+		found := false
+		for _, entry := range env {
+			if entry == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("dispatch env missing %s", want)
+		}
+	}
+}
+
+func TestAIDispatchDestructiveApprovalFlow(t *testing.T) {
+	m := aiTestModel(t)
+	updated, _ := m.Update(aiCmdDoneMsg{
+		argv:     []string{"delete-report", "AAAAAAAAAAAAAAAAAAA1"},
+		output:   "Error: delete-report targets report \"prod\" (AAAAAAAAAAAAAAAAAAA1); re-run with --yes\n",
+		exitCode: aiDestructiveExitCode,
+		elapsed:  time.Second,
+	})
+	m = updated.(aiModel)
+	if m.dispatchApproval == nil {
+		t.Fatal("exit 30 did not open the dispatch approval")
+	}
+	if !strings.Contains(m.dispatchApproval.summary, "targets report") {
+		t.Fatalf("summary = %q", m.dispatchApproval.summary)
+	}
+	if !strings.Contains(m.statusLine(), "destructive") {
+		t.Fatalf("status = %q", m.statusLine())
+	}
+	// Stray keys are ignored; y re-runs with --yes.
+	m = aiType(m, "x")
+	if m.dispatchApproval == nil || m.input.Value() != "" {
+		t.Fatal("stray key answered or typed during dispatch approval")
+	}
+	updated2, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = updated2.(aiModel)
+	if m.dispatchApproval != nil || m.running == nil || cmd == nil {
+		t.Fatal("y did not re-dispatch")
+	}
+	got := strings.Join(m.running.argv, " ")
+	if got != "delete-report AAAAAAAAAAAAAAAAAAA1 --yes" {
+		t.Fatalf("re-dispatch argv = %q", got)
+	}
+	m.running.cancel()
+}
+
+func TestAIDispatchDestructiveDeclined(t *testing.T) {
+	m := aiTestModel(t)
+	updated, _ := m.Update(aiCmdDoneMsg{argv: []string{"delete-report", "x"}, output: "Error: needs --yes", exitCode: aiDestructiveExitCode})
+	m = updated.(aiModel)
+	m, _ = aiPress(m, tea.KeyEsc)
+	if m.dispatchApproval != nil || m.running != nil {
+		t.Fatal("esc did not decline")
+	}
+	if !strings.Contains(aiTranscriptText(m), "declined") {
+		t.Fatal("decline note missing")
+	}
+	// An approved run that still exits 30 renders as a card, never loops.
+	updated2, _ := m.Update(aiCmdDoneMsg{argv: []string{"delete-report", "x", "--yes"}, output: "still blocked", exitCode: aiDestructiveExitCode})
+	m = updated2.(aiModel)
+	if m.dispatchApproval != nil {
+		t.Fatal("--yes exit 30 reopened the approval")
+	}
+}
+
+func TestAIBareQueryGetsBuilderNotice(t *testing.T) {
+	m := aiTestModel(t)
+	m.catalog = append(m.catalog, aiCatalogEntry{Path: "query", Summary: "Run an analytics query"})
+	m = aiType(m, "/query")
+	m, _ = aiPress(m, tea.KeyEnter)
+	if m.running != nil {
+		t.Fatal("bare /query dispatched a child that cannot run the builder")
+	}
+	if !strings.Contains(aiTranscriptText(m), "query builder needs a regular terminal") {
+		t.Fatal("builder notice missing")
+	}
+}
