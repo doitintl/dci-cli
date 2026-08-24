@@ -128,6 +128,15 @@ func newAIModel(configDir string) aiModel {
 	input.CharLimit = 0
 	input.SetHeight(1)
 	input.KeyMap.InsertNewline.SetEnabled(false)
+	// The default textarea styles paint a background band across the cursor
+	// line (adaptive, and often guessed wrong inside the alt screen), leaving
+	// gray-on-gray input. The session wants the terminal's own colors: no
+	// band, bright text, faint placeholder.
+	input.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	input.FocusedStyle.Text = lipgloss.NewStyle()
+	input.FocusedStyle.Prompt = lipgloss.NewStyle().Bold(true)
+	input.FocusedStyle.Placeholder = lipgloss.NewStyle().Faint(true)
+	input.BlurredStyle = input.FocusedStyle
 	input.Focus()
 
 	history := loadAIHistory(configDir)
