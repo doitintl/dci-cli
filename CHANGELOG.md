@@ -143,7 +143,84 @@ the CLI guide.
 
 - Terminal hyperlinks in cells no longer shear table column alignment.
 
+## v2.2.0 — August 18, 2026
+
+### Improved
+
+- `list-insights` opens with a curated, savings-ranked view: title-led
+  columns, potential daily savings in USD, easy-win markers, and links to
+  each insight's underlying report.
+  ([Insights on the cheat sheet](https://help.doit.com/docs/cli/cheatsheet#insights))
+
+## v2.1.1 — August 17, 2026
+
+### Fixed
+
+- Completing a partial first word offers the matching root commands.
+- A Tab press never triggers a network call or an OAuth login — completion
+  on a cold cache stays local.
+  ([Shell completion](https://help.doit.com/docs/cli#shell-completion))
+
+## v2.1.0 — August 17, 2026
+
+### New
+
+- Use resource names instead of ids: commands resolve names like
+  `dci get-report "Monthly costs"`, and shell completion offers your
+  resource names — `dci get-report Mon<TAB>` — served from a local cache
+  that refreshes in the background.
+  ([Shell completion](https://help.doit.com/docs/cli#shell-completion))
+- Shell completion scripts ship inside every install package.
+
+### Improved
+
+- The embedded agent guidance covers name resolution, so AI agents address
+  resources by name too.
+
+### Fixed
+
+- Multi-word resource names work unquoted in `dci open`, in name
+  resolution, and in completion — and shells that strip quotes still
+  complete quoted names correctly.
+- Sourcing the zsh completion script registers it without extra setup.
+
+## v2.0.0 — August 16, 2026
+
+The CLI's human experience overhaul — see
+[CLI v2.0: before and after](https://help.doit.com/docs/cli/before-after-v2)
+for the full gallery of what changed.
+
+### New
+
+- Report results render for humans: pivoted tables with heatmap shading
+  and trend columns, matching how the console presents a report; machine
+  formats get the same results as structured rows.
+- `dci docs` prints every documentation entry point, for people and for
+  AI agents.
+  ([Documentation for agents](https://help.doit.com/docs/cli#documentation-for-agents))
+- Built-in FinOps workflows and command discovery guidance for AI agents
+  driving the CLI.
+  ([Agent mode](https://help.doit.com/docs/cli#agent-mode))
+
+### Improved
+
+- Requests are validated before they are sent: unknown body fields,
+  malformed path parameters, and invalid non-interactive invocations fail
+  fast with hints instead of opaque server errors.
+- Errors classify by the API's real HTTP status and map to distinct exit
+  codes, and authentication failures come with tailored hints.
+  ([Exit codes](https://help.doit.com/docs/cli#exit-codes))
+
+### Fixed
+
+- The CLI repairs an unusable saved API configuration, recovers from an
+  invalid saved API base, and honors the API base you configure.
+- Customer context resolves from the canonical customer id, and console
+  customers resolve even before any report data exists.
+- Generated pivot totals rows are labeled as such, and successful empty
+  API responses are accepted instead of reported as errors.
+
 ---
 
-For releases before v2.3.0, see the
+For releases before v2.0.0, see the
 [GitHub releases page](https://github.com/doitintl/dci-cli/releases).
