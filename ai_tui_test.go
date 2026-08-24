@@ -104,13 +104,13 @@ func TestAIDispatchSetsRunningAndDoneClearsIt(t *testing.T) {
 		t.Fatalf("input not cleared: %q", m.input.Value())
 	}
 
-	updated2, cmd := m.Update(aiCmdDoneMsg{argv: []string{"status"}, output: "ok", elapsed: time.Second})
+	updated2, _ := m.Update(aiCmdDoneMsg{argv: []string{"status"}, output: "ok", elapsed: time.Second})
 	m = updated2.(aiModel)
 	if m.running != nil {
 		t.Fatal("running state not cleared by aiCmdDoneMsg")
 	}
-	if cmd == nil {
-		t.Fatal("result card not printed")
+	if !strings.Contains(aiTranscriptText(m), "dci status") {
+		t.Fatal("result card missing from the transcript")
 	}
 }
 
@@ -132,13 +132,13 @@ func TestAIEscCancelsRunningCommand(t *testing.T) {
 func TestAIPlainTextRoutesToChatNotice(t *testing.T) {
 	m := aiTestModel(t)
 	m = aiType(m, "why did spend spike?")
-	updated, cmd := aiPress(m, tea.KeyEnter)
+	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
 	if m.running != nil {
 		t.Fatal("chat input must not dispatch a subprocess")
 	}
-	if cmd == nil {
-		t.Fatal("chat notice not printed")
+	if !m.keyEntry {
+		t.Fatal("keyless chat must open the guided key setup")
 	}
 	if len(m.history) != 1 || m.history[0] != "why did spend spike?" {
 		t.Fatalf("history = %v", m.history)
@@ -212,10 +212,10 @@ func TestAIQuitVerb(t *testing.T) {
 func TestAICustomerVerbUpdatesIdentity(t *testing.T) {
 	m := aiTestModel(t)
 	m = aiType(m, "/customer acme.com")
-	updated, cmd := aiPress(m, tea.KeyEnter)
+	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
-	if cmd == nil {
-		t.Fatal("/customer returned no command")
+	if !strings.Contains(aiTranscriptText(m), "Customer context set") {
+		t.Fatal("/customer confirmation missing from the transcript")
 	}
 	if !strings.Contains(m.identity, "acme.com") {
 		t.Fatalf("identity = %q after /customer", m.identity)
@@ -268,11 +268,8 @@ func TestAIChatSendsToSession(t *testing.T) {
 	session := newFakeAISession()
 	m.session = session
 	m = aiType(m, "why did spend spike?")
-	updated, cmd := aiPress(m, tea.KeyEnter)
+	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
-	if cmd == nil {
-		t.Fatal("chat submit returned no command")
-	}
 	if len(session.sent) != 1 || session.sent[0].Kind != aiInputChat || session.sent[0].Text != "why did spend spike?" {
 		t.Fatalf("session received %+v", session.sent)
 	}
@@ -398,10 +395,10 @@ func TestAIContextSwitchEventRefreshesIdentity(t *testing.T) {
 func TestAIModelVerb(t *testing.T) {
 	m := aiTestModel(t)
 	m = aiType(m, "/model claude-sonnet-5")
-	updated, cmd := aiPress(m, tea.KeyEnter)
+	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
-	if cmd == nil {
-		t.Fatal("/model returned no command")
+	if !strings.Contains(aiTranscriptText(m), "Model set to claude-sonnet-5") {
+		t.Fatal("/model confirmation missing from the transcript")
 	}
 	if m.modelName != "claude-sonnet-5" {
 		t.Fatalf("modelName = %q", m.modelName)
@@ -441,10 +438,13 @@ func TestAIKeyOnboardingFlow(t *testing.T) {
 
 	// A question without a key opens the guided setup, stashing the question.
 	m = aiType(m, "why is spend up?")
-	updated, cmd := aiPress(m, tea.KeyEnter)
+	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
-	if !m.keyEntry || cmd == nil {
-		t.Fatalf("keyless chat did not open key entry (keyEntry=%v)", m.keyEntry)
+	if !m.keyEntry {
+		t.Fatal("keyless chat did not open key entry")
+	}
+	if !strings.Contains(aiTranscriptText(m), "sent to Anthropic's API under this key") {
+		t.Fatal("disclosure missing from the transcript")
 	}
 	if m.pendingQuestion != "why is spend up?" {
 		t.Fatalf("pending question = %q", m.pendingQuestion)
@@ -470,7 +470,7 @@ func TestAIKeyOnboardingFlow(t *testing.T) {
 		m = updated.(aiModel)
 	}
 	m = aiType(m, "sk-ant-test-0123456789")
-	updated, cmd = aiPress(m, tea.KeyEnter)
+	updated, cmd := aiPress(m, tea.KeyEnter)
 	m = updated
 	if m.keyEntry || m.session == nil || cmd == nil {
 		t.Fatalf("valid key not accepted (keyEntry=%v session=%v)", m.keyEntry, m.session != nil)
@@ -489,13 +489,13 @@ func TestAIKeyOnboardingEscCancels(t *testing.T) {
 	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
 	m = aiType(m, "sk-partial")
-	updated2, cmd := aiPress(m, tea.KeyEsc)
+	updated2, _ := aiPress(m, tea.KeyEsc)
 	m = updated2
 	if m.keyEntry || m.keyBuf != "" || m.pendingQuestion != "" {
 		t.Fatalf("esc did not fully cancel: %+v", m)
 	}
-	if cmd == nil {
-		t.Fatal("cancel printed nothing")
+	if !strings.Contains(aiTranscriptText(m), "key setup canceled") {
+		t.Fatal("cancel note missing from the transcript")
 	}
 	if loadAISettings(m.configDir).APIKey != "" {
 		t.Fatal("canceled setup persisted a key")
@@ -536,12 +536,68 @@ func TestAIFriendlyAPIError(t *testing.T) {
 func TestAIUnknownSlashNeverDispatches(t *testing.T) {
 	m := aiTestModel(t)
 	m = aiType(m, "/lst-budgets")
-	updated, cmd := aiPress(m, tea.KeyEnter)
+	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
 	if m.running != nil {
 		t.Fatal("unknown slash command dispatched a subprocess")
 	}
-	if cmd == nil {
-		t.Fatal("unknown slash printed nothing")
+	if !strings.Contains(aiTranscriptText(m), "unknown command: /lst-budgets") {
+		t.Fatal("unknown-command note missing from the transcript")
+	}
+}
+
+// aiTranscriptText flattens the transcript for content assertions.
+func aiTranscriptText(m aiModel) string {
+	return strings.Join(m.transcript, "\n")
+}
+
+func TestAITranscriptCapAndExport(t *testing.T) {
+	m := aiTestModel(t)
+	for i := 0; i < aiTranscriptBlocks+25; i++ {
+		m.append("block")
+	}
+	if len(m.transcript) != aiTranscriptBlocks {
+		t.Fatalf("transcript = %d blocks, want cap %d", len(m.transcript), aiTranscriptBlocks)
+	}
+
+	dir := t.TempDir()
+	path, err := aiExportTranscript([]string{aiEchoStyle.Render("› /status"), "plain"}, []string{dir + "/out.txt"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "› /status\nplain\n" {
+		t.Fatalf("export = %q, want ANSI stripped", data)
+	}
+	if _, err := aiExportTranscript(nil, []string{"a", "b"}, time.Now()); err == nil {
+		t.Fatal("two-arg export accepted")
+	}
+}
+
+func TestAIScrollKeysAndFollow(t *testing.T) {
+	m := aiTestModel(t)
+	m.height = 10
+	m.layout()
+	for i := 0; i < 50; i++ {
+		m.append("line")
+	}
+	if !m.follow || !m.view.AtBottom() {
+		t.Fatal("viewport not following the bottom after appends")
+	}
+	m, _ = aiPress(m, tea.KeyPgUp)
+	if m.follow {
+		t.Fatal("PgUp did not release follow mode")
+	}
+	if !strings.Contains(m.headerLine(), "scrolled up") {
+		t.Fatalf("header = %q, want scroll hint", m.headerLine())
+	}
+	for i := 0; i < 20; i++ {
+		m, _ = aiPress(m, tea.KeyPgDown)
+	}
+	if !m.follow {
+		t.Fatal("PgDn to the bottom did not restore follow mode")
 	}
 }

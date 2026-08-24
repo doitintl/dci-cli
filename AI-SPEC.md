@@ -29,7 +29,7 @@ Decision table (rationale in the cited sections):
 | Decision | Choice | § |
 |---|---|---|
 | Command name | `dci ai` (not `shell`/`chat`); never ships without a working AI path | §2 |
-| TUI mode | Bubble Tea **inline** renderer + `tea.Println` scrollback; no alt-screen for the session | §3 |
+| TUI mode | Stable frame: alt-screen + internal scrolling viewport (D9 — supersedes the draft's inline mode after dogfood) | §3 |
 | Input routing | Explicit `/` prefix; plain text is always AI; a failed `/` never falls through to the model | §4 |
 | Agent loop | Headless core emitting a versioned event stream; TUI is one renderer of it | §7, §8 |
 | Loop location | In-process, permanently: the user's machine holds the key and runs the loop (D1) | §7.2, §12 |
@@ -50,26 +50,27 @@ Versioning: a new command group is the "notable milestone" case — the release 
 
 ## 3. Terminal UX
 
-### 3.1 Inline, not alt-screen
+### 3.1 Stable frame (D9 — supersedes the first draft's inline mode)
 
-The session runs the Bubble Tea program **without** `tea.WithAltScreen()`. Completed output — command results, agent text, tool cards — is emitted via `tea.Println` and lands in the terminal's native scrollback; only the bottom region (input + status line) is managed. This is the defining feel of Claude Code and Codex: users scroll and copy previous output with their terminal, and quitting leaves the transcript in place.
+The session runs in the **alternate screen** with a stable frame: a one-line header, the transcript in a `bubbles/viewport`, and the input + status pinned at the bottom. The frame never scrolls; the transcript scrolls *inside* the viewport (mouse wheel, PgUp/PgDn, ctrl+u/ctrl+d), auto-following the bottom until the user scrolls up. The first draft specified inline scrollback here; dogfood preferred the stable frame (D9), accepting the trade: native terminal scrollback/selection is exchanged for a frame that never jumps, with `/export` covering transcript retention and `/clear` resetting it.
 
-This is a different regime from the existing full-screen viewer (`tui_viewer.go`, F5 in TUI-SPEC.md), which is a per-command alternate-screen view. The two coexist: the session is inline; a result card can still offer "open in viewer" to jump into the F5 table for one result and return.
+The existing full-screen viewer (`tui_viewer.go`, F5 in TUI-SPEC.md) remains a separate per-command program; the two do not nest.
 
 ### 3.2 Layout
 
 ```
-  ... native scrollback: transcript, tool cards, tables, charts ...
-
+  dci ai · Cloud Intelligence™                                   header (fixed)
   ┌──────────────────────────────────────────────────────────┐
-  │ › _                                                      │  input (bubbles/textarea, grows to ~5 lines)
+  │ ... transcript: chat, tool cards, tables, charts ...     │  viewport (scrolls inside;
+  │                                                          │  wheel / PgUp / PgDn)
   └──────────────────────────────────────────────────────────┘
-    doer · acme.com                     esc interrupt · /help    status line
+  › _                                                            input (fixed)
+    doer · acme.com                     esc interrupt · /help    status line (fixed)
 ```
 
 - **Input**: `bubbles/textarea`, Enter submits, Shift+Enter (where the terminal reports it) or trailing `\` continues the line. History on ↑/↓ (persisted per user under the config dir, chmod 0600).
 - **Status line**: identity mode + active customer context (§6), a spinner + elapsed time while a turn is running, and Esc-to-interrupt. For a plain single-tenant customer the tenant segment is omitted entirely (§6.1).
-- **Streaming**: agent text streams into the managed region as it arrives and is committed to scrollback (one `tea.Println`) when the block completes, so resizes never corrupt history.
+- **Streaming**: agent text streams into the viewport tail as it arrives and is committed as a rendered transcript block when it completes; the viewport auto-follows the bottom unless the user has scrolled up.
 - **Interrupt**: Esc cancels the in-flight turn (context cancellation ends the API stream and any running command subprocess). Ctrl+C on an idle prompt behaves like Claude Code: first press clears input, second exits.
 
 ### 3.3 Gate
@@ -265,3 +266,5 @@ The seven open questions from the first draft were decided by the maintainer on 
 | D5 | **User-defined slash commands ship in P2.** | Config-file saved prompts/commands with the reserved resolution slot and completion treatment (§4.2); detailed format is P2 implementation scope. |
 | D6 | **Catalog: full catalog in the cached prefix, measured in P2**; `search_commands` is the ready fallback if it proves too large. | §7.5 unchanged — now a plan rather than a question. |
 | D7 | **One-shot ships in P2** alongside the interactive loop, same key requirement. | §12 P2 scope; under D1 there is no separate customer-CI story — the key requirement *is* the permanent model. |
+| D8 | **Workload Identity Federation: recorded, not implemented** (researched 2026-08-24 at the maintainer's request). Anthropic WIF (GA) exchanges short-lived OIDC JWTs for API tokens via federation rules — viable in two tiers: **(a)** cheap — relax the key gate so ambient SDK credentials (the `ANTHROPIC_FEDERATION_RULE_ID`/`ANTHROPIC_ORGANIZATION_ID`/`ANTHROPIC_SERVICE_ACCOUNT_ID`/`ANTHROPIC_IDENTITY_TOKEN[_FILE]` env vars) work in CI without a static key; **(b)** a doer identity bridge — register DoiT's IdP as an issuer on DoiT's Anthropic org so `dci ai` could exchange the DoiT OAuth token doers already hold: key-less doers with **no proxy service**, but it makes DoiT's org the billed party for doer usage (a deliberate partial reopen of D1) and needs Console admin setup (rule, workspace spend limits) plus an issuer/claims check with whoever owns DoiT's IdP. Not viable for the general customer-laptop case — no ambient OIDC issuer there; BYO key stands. | No code change yet. Tier (a) is a one-conditional change in `ai_session.go` when wanted; tier (b) is an org/IdP decision outside this repo. |
+| D9 | **Stable frame TUI** (2026-08-24, from dogfood): the session runs in the alternate screen with fixed chrome — header, input, status — and the transcript scrolling *inside* a viewport (mouse wheel / PgUp / PgDn), superseding the first draft's inline-scrollback mode (§3). | Trade-off accepted knowingly: native terminal scrollback/selection is exchanged for a stable frame; `/export` covers transcript retention. §3 updated. |
