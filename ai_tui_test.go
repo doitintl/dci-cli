@@ -253,7 +253,7 @@ func TestAIStatusLineStates(t *testing.T) {
 	m := aiTestModel(t)
 	m.identity = "doer · acme.com"
 	idle := m.statusLine()
-	if !strings.Contains(idle, "doer · acme.com") || !strings.Contains(idle, "/help") {
+	if !strings.Contains(idle, "doer · acme.com") || !strings.Contains(idle, "/ for commands") {
 		t.Fatalf("idle status = %q", idle)
 	}
 	m.running = &aiRunState{argv: []string{"status"}, cancel: func() {}, started: time.Now()}
@@ -591,8 +591,8 @@ func TestAIScrollKeysAndFollow(t *testing.T) {
 	if m.follow {
 		t.Fatal("PgUp did not release follow mode")
 	}
-	if !strings.Contains(m.headerLine(), "scrolled up") {
-		t.Fatalf("header = %q, want scroll hint", m.headerLine())
+	if !strings.Contains(m.topRule(), "scrolled up") {
+		t.Fatalf("top rule = %q, want scroll hint", m.topRule())
 	}
 	for i := 0; i < 20; i++ {
 		m, _ = aiPress(m, tea.KeyPgDown)
@@ -608,5 +608,22 @@ func TestAIInputLineHasNoBackgroundBand(t *testing.T) {
 	rendered := m.input.View()
 	if strings.Contains(rendered, "\x1b[48;") || strings.Contains(rendered, "\x1b[47m") || strings.Contains(rendered, "\x1b[107m") {
 		t.Fatalf("input line paints a background band: %q", rendered)
+	}
+}
+
+func TestAIBannerAndFrame(t *testing.T) {
+	m := aiTestModel(t)
+	banner := aiTranscriptText(m)
+	for _, want := range []string{"Cloud Intelligence™ CLI", "v" + version, "AI off", "commands"} {
+		if !strings.Contains(banner, want) {
+			t.Fatalf("banner missing %q: %s", want, banner)
+		}
+	}
+	view := m.View()
+	if got := strings.Count(view, strings.Repeat("─", 10)); got < 2 {
+		t.Fatalf("view has %d rule lines, want the two around the input", got)
+	}
+	if strings.Contains(m.input.View(), "Ask about") {
+		t.Fatal("placeholder text still renders — the input should show a bare cursor")
 	}
 }
