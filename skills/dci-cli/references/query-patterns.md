@@ -63,6 +63,10 @@ Practical rules:
   itself still does the full work.
 - **Add a `metricFilter`** (e.g. cost > 0.1) to drop zero-cost noise rows.
 - Use `timeInterval: "month"` for trend questions — far fewer rows than daily granularity.
+- For **period totals** ("total per service over the last 3 months"), pass `--rollup <column>[,<column>]`:
+  the CLI groups the result rows by those columns client-side, sums the numeric metric columns, and
+  drops everything else including per-period timestamps (`rolledUpFrom` marks the collapse; an unknown
+  column returns `rollupError` naming the valid ones). Never sum per-period rows yourself.
 - Use `--rows keyed` when consuming results programmatically (`result.rows` become objects
   keyed by schema names).
 - In TOON output, a column whose value is identical in every row (e.g. the timestamp of a

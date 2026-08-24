@@ -16,7 +16,7 @@ type scriptedRunner struct {
 	errs    []error
 }
 
-func (r *scriptedRunner) run(_ context.Context, argv []string) ([]byte, int, error) {
+func (r *scriptedRunner) run(_ context.Context, argv, _ []string) ([]byte, int, error) {
 	index := len(r.calls)
 	r.calls = append(r.calls, append([]string{}, argv...))
 	if index >= len(r.outputs) {
@@ -140,7 +140,7 @@ func TestAIRunCommandTimesOutWedgedChild(t *testing.T) {
 	t.Cleanup(func() { aiToolCommandTimeout = previousTimeout })
 
 	executor := newAIToolExecutor(t.TempDir())
-	executor.runner = func(ctx context.Context, argv []string) ([]byte, int, error) {
+	executor.runner = func(ctx context.Context, argv, _ []string) ([]byte, int, error) {
 		<-ctx.Done() // a wedged child: only dies when the executor kills it
 		return nil, -1, ctx.Err()
 	}
@@ -155,7 +155,7 @@ func TestAIRunCommandUserCancelIsNotATimeout(t *testing.T) {
 	// error, not as COMMAND_TIMED_OUT telling the model to narrow the query.
 	ctx, cancel := context.WithCancel(context.Background())
 	executor := newAIToolExecutor(t.TempDir())
-	executor.runner = func(runCtx context.Context, argv []string) ([]byte, int, error) {
+	executor.runner = func(runCtx context.Context, argv, _ []string) ([]byte, int, error) {
 		cancel()
 		<-runCtx.Done()
 		return nil, -1, runCtx.Err()
@@ -181,14 +181,46 @@ func TestAICapToolResult(t *testing.T) {
 }
 
 func TestAISetCustomerTool(t *testing.T) {
+	// Agent switches are session-scoped: the override reaches children as
+	// DCI_CUSTOMER_CONTEXT, and the persisted context file is never written —
+	// a crashed or forgetful session must not change what the user's next
+	// plain dci invocation runs against.
 	executor := newAIToolExecutor(t.TempDir())
 	from, to, outcome := executor.SetCustomer(aiSetCustomerInput{Customer: "acme.com"})
 	if outcome.IsError || from != "" || to != "acme.com" {
 		t.Fatalf("set customer = from %q to %q outcome %+v", from, to, outcome)
 	}
-	if got := readCustomerContext(executor.configDir); got != "acme.com" {
-		t.Fatalf("persisted context = %q", got)
+	if got := readCustomerContext(executor.configDir); got != "" {
+		t.Fatalf("agent switch persisted to disk: %q", got)
 	}
+	if got := executor.CustomerOverride(); got != "acme.com" {
+		t.Fatalf("session override = %q", got)
+	}
+	if got := executor.EffectiveCustomer(); got != "acme.com" {
+		t.Fatalf("effective customer = %q", got)
+	}
+
+	// Children inherit the override as env; a later switch reports the
+	// current override as its from.
+	runner := &scriptedRunner{outputs: []string{"ok"}, exits: []int{0}}
+	executor.runner = func(ctx context.Context, argv, extraEnv []string) ([]byte, int, error) {
+		if len(extraEnv) != 1 || extraEnv[0] != "DCI_CUSTOMER_CONTEXT=acme.com" {
+			t.Fatalf("child env = %v", extraEnv)
+		}
+		return runner.run(ctx, argv, extraEnv)
+	}
+	executor.RunCommand(context.Background(), aiRunCommandInput{Argv: []string{"list-budgets"}}, false)
+	from, to, outcome = executor.SetCustomer(aiSetCustomerInput{Customer: "globex.com"})
+	if outcome.IsError || from != "acme.com" || to != "globex.com" {
+		t.Fatalf("second switch = from %q to %q outcome %+v", from, to, outcome)
+	}
+
+	// The user persisting a context clears the override.
+	executor.ClearCustomerOverride()
+	if got := executor.CustomerOverride(); got != "" {
+		t.Fatalf("override survived clear: %q", got)
+	}
+
 	_, _, outcome = executor.SetCustomer(aiSetCustomerInput{Customer: "  "})
 	if !outcome.IsError {
 		t.Fatal("blank customer accepted")

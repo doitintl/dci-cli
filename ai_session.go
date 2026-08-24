@@ -248,6 +248,11 @@ func newAnthropicStreamer(client anthropic.Client) aiModelStreamer {
 
 func (s *localAISession) Events() <-chan aiEvent { return s.events }
 
+// ClearCustomerOverride drops the agent's session-scoped context switch —
+// the TUI calls it (via interface assertion) when the user persists a context
+// with /customer, which must win over any earlier agent switch.
+func (s *localAISession) ClearCustomerOverride() { s.executor.ClearCustomerOverride() }
+
 // SetModel applies a model change (D2) to future requests. History is kept:
 // thinking blocks from another model are dropped server-side, so a mid-
 // conversation switch is safe.
@@ -395,7 +400,7 @@ func (s *localAISession) params() anthropic.MessageNewParams {
 	model := s.model
 	s.mu.Unlock()
 	stable := anthropic.TextBlockParam{Text: s.stablePrompt, CacheControl: anthropic.NewCacheControlEphemeralParam()}
-	volatile := anthropic.TextBlockParam{Text: aiVolatileSystem(s.configDir, time.Now())}
+	volatile := anthropic.TextBlockParam{Text: aiVolatileSystem(s.configDir, time.Now(), s.executor.CustomerOverride())}
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(model),
 		MaxTokens: aiMaxOutputTokens,
@@ -505,7 +510,7 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 // means the context was canceled while waiting or running.
 func (s *localAISession) executeToolCall(ctx context.Context, turnID string, toolUse anthropic.ToolUseBlock) (anthropic.ContentBlockParamUnion, bool) {
 	rawInput := []byte(toolUse.JSON.Input.Raw())
-	customer := readCustomerContext(s.configDir)
+	customer := s.executor.EffectiveCustomer()
 
 	switch toolUse.Name {
 	case aiToolSetCustomer:

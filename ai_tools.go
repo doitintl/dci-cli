@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -79,20 +80,87 @@ type aiSetCustomerInput struct {
 // so tests script outcomes without spawning processes.
 type aiToolExecutor struct {
 	configDir string
-	runner    func(ctx context.Context, argv []string) (output []byte, exitCode int, err error)
+	runner    func(ctx context.Context, argv, extraEnv []string) (output []byte, exitCode int, err error)
+
+	mu sync.Mutex
+	// customerOverride is the session-scoped customer context set by the
+	// agent's set_customer_context. It never touches the persisted context
+	// file: children receive it as DCI_CUSTOMER_CONTEXT (which the CLI reads
+	// before the file), so a crashed or forgetful session can never leave the
+	// user's saved context pointing at another tenant.
+	customerOverride string
 }
 
 func newAIToolExecutor(configDir string) *aiToolExecutor {
 	return &aiToolExecutor{configDir: configDir, runner: aiAgentModeRunner}
 }
 
+// CustomerOverride returns the session-scoped context ("" when unset).
+func (e *aiToolExecutor) CustomerOverride() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.customerOverride
+}
+
+// ClearCustomerOverride drops the session-scoped context — called when the
+// user persists a context themselves (/customer), which must win over any
+// earlier agent switch.
+func (e *aiToolExecutor) ClearCustomerOverride() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.customerOverride = ""
+}
+
+// EffectiveCustomer is the tenant children actually run against: the session
+// override when set, otherwise the environment/persisted context.
+func (e *aiToolExecutor) EffectiveCustomer() string {
+	if override := e.CustomerOverride(); override != "" {
+		return override
+	}
+	return readCustomerContext(e.configDir)
+}
+
+// aiCustomerEnv shapes a session-scoped context as child environment; the
+// caller must place it after os.Environ() with any inherited duplicate
+// removed (aiChildEnv).
+func aiCustomerEnv(customer string) []string {
+	if customer == "" {
+		return nil
+	}
+	return []string{"DCI_CUSTOMER_CONTEXT=" + customer}
+}
+
+// aiChildEnv builds a child environment from the parent's, dropping any
+// inherited DCI_CUSTOMER_CONTEXT when extras carry one — getenv semantics on
+// duplicate entries are platform-defined, so the override must be the only
+// occurrence.
+func aiChildEnv(extras []string) []string {
+	env := os.Environ()
+	overriding := false
+	for _, extra := range extras {
+		if strings.HasPrefix(extra, "DCI_CUSTOMER_CONTEXT=") {
+			overriding = true
+		}
+	}
+	if overriding {
+		kept := env[:0]
+		for _, entry := range env {
+			if !strings.HasPrefix(entry, "DCI_CUSTOMER_CONTEXT=") {
+				kept = append(kept, entry)
+			}
+		}
+		env = kept
+	}
+	return append(env, extras...)
+}
+
 // aiAgentModeRunner re-execs this binary with DCI_AGENT_MODE=1: compact
 // deterministic output, structured errors on stderr, the documented exit
 // taxonomy. Combined output keeps the structured error envelope adjacent to
 // any partial stdout, which is exactly what the model needs to self-correct.
-func aiAgentModeRunner(ctx context.Context, argv []string) ([]byte, int, error) {
+func aiAgentModeRunner(ctx context.Context, argv, extraEnv []string) ([]byte, int, error) {
 	command := exec.CommandContext(ctx, aiExecutablePath(), argv...)
-	command.Env = append(os.Environ(), "DCI_AGENT_MODE=1", "DCI_NO_TUI=1")
+	command.Env = aiChildEnv(append([]string{"DCI_AGENT_MODE=1", "DCI_NO_TUI=1"}, extraEnv...))
 	output, err := command.CombinedOutput()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -121,7 +189,7 @@ func (e *aiToolExecutor) RunCommand(ctx context.Context, input aiRunCommandInput
 	timeout := aiToolTimeoutFor(argv)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	output, exitCode, err := e.runner(runCtx, argv)
+	output, exitCode, err := e.runner(runCtx, argv, aiCustomerEnv(e.CustomerOverride()))
 	if runCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 		return aiToolOutcome{Data: aiToolError(
 			"COMMAND_TIMED_OUT",
@@ -193,15 +261,19 @@ func aiDestructiveSummary(output []byte, argv []string) string {
 // SetCustomer executes set_customer_context: validate, persist through the
 // same write path as /customer, report the from→to transition.
 func (e *aiToolExecutor) SetCustomer(input aiSetCustomerInput) (from, to string, outcome aiToolOutcome) {
-	from = readCustomerContext(e.configDir)
+	from = e.EffectiveCustomer()
 	token := strings.TrimSpace(input.Customer)
 	if err := validateCustomerContextValue(token); err != nil {
 		return from, "", aiToolOutcome{Data: aiToolError("INVALID_CUSTOMER_CONTEXT", err.Error(), ""), IsError: true}
 	}
-	if err := os.WriteFile(customerContextPath(e.configDir), []byte(token+"\n"), 0o600); err != nil {
-		return from, "", aiToolOutcome{Data: aiToolError("WRITE_FAILED", err.Error(), ""), IsError: true}
-	}
-	return from, token, aiToolOutcome{Data: fmt.Sprintf("customer context switched from %q to %q", from, token)}
+	// Session-scoped on purpose: the switch reaches children via
+	// DCI_CUSTOMER_CONTEXT, never the persisted context file — an agent
+	// switch (or a crash right after one) must not change what the user's
+	// next plain dci invocation runs against. /customer persists.
+	e.mu.Lock()
+	e.customerOverride = token
+	e.mu.Unlock()
+	return from, token, aiToolOutcome{Data: fmt.Sprintf("customer context switched from %q to %q for this session (the saved context is unchanged)", from, token)}
 }
 
 // aiCapToolResult bounds one tool result entering model context (§7.6),

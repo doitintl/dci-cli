@@ -102,7 +102,7 @@ CSP-only dimensions (all type "fixed"):
 CSP constraints (hard limits, not preferences):
 - No customer labels, tags, or project labels, and no resource-level dimensions. NEVER group by a system_label in CSP — those queries time out server-side. For label- or resource-level detail, switch to that customer's own tenant.
 - Cold unfiltered CSP queries take 1–2 minutes; repeats are seconds, and a dimension filter (e.g. one AM's book: "filters": [{"id": "csp_strategic_account_manager", "type": "fixed", "values": ["<email>"]}]) makes even a cold query fast. Prefer filtered queries; scope narrow first (1 month, one group, top-N limit, metricFilter), then refine.
-- Growth questions: 3 monthly buckets of cost grouped by csp_primary_domain with a top-N limit, then compare months.
+- Growth questions: 3 monthly buckets of cost grouped by csp_primary_domain with a top-N limit, then compare months. Totals over a period ("biggest customers this quarter"): same query plus --rollup csp_primary_domain.
 `
 
 // aiQueryPatternsSection is the embedded skill's query-patterns reference —
@@ -158,10 +158,16 @@ func aiCatalogPromptSection(catalog []aiCatalogEntry) string {
 
 // aiVolatileSystem is the post-breakpoint tail: everything here may change
 // between requests without touching the cached prefix.
-func aiVolatileSystem(configDir string, now time.Time) string {
+func aiVolatileSystem(configDir string, now time.Time, customerOverride string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Today's date: %s.\n", now.Format("2006-01-02"))
-	if context := readCustomerContext(configDir); context != "" {
+	switch context := readCustomerContext(configDir); {
+	case customerOverride != "":
+		// The agent's own session-scoped switch (set_customer_context) wins
+		// over the persisted context for everything this session runs.
+		fmt.Fprintf(&b, "Active customer context: %s (session-scoped switch; the saved context is %s)\n",
+			customerOverride, aiDisplayContext(context))
+	case context != "":
 		fmt.Fprintf(&b, "Active customer context: %s\n", context)
 	}
 	// Signed-in identity (F1, AI-FINOPS-SPEC): without it, "my customers" /
