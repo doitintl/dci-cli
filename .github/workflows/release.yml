@@ -23,6 +23,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Changelog release gate (CHANGELOG-SPEC.md §6): no entry for the tag,
+      # or a dead help.doit.com link/anchor in it, stops the release before
+      # anything is built. Fix CHANGELOG.md, delete the tag, re-tag.
+      - name: Check changelog entry for this tag
+        run: ./.github/changelog/check-changelog.sh --gate "${GITHUB_REF#refs/tags/}"
+
       - name: Release via goreleaser-cross
         run: |
           docker run --rm \
@@ -40,3 +46,24 @@ jobs:
           tag="${GITHUB_REF#refs/tags/}"
           gh workflow run "Sync Package Manifests" --field tag="$tag"
           gh workflow run "Post-release Verify" --field tag="$tag"
+
+      # Help Center changelog delivery (CHANGELOG-SPEC.md §7): hand the tag to
+      # doiteng/scribe, whose deterministic job renders CHANGELOG.md into the
+      # omni draft PR. Runs after the release is published — never blocks
+      # binaries. Skips with a notice until the scribe-side job and the
+      # dispatch token exist.
+      - name: Dispatch changelog delivery to scribe
+        env:
+          SCRIBE_DISPATCH_TOKEN: ${{ secrets.SCRIBE_DISPATCH_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          if [ -z "$SCRIBE_DISPATCH_TOKEN" ]; then
+            echo "::notice::SCRIBE_DISPATCH_TOKEN not set — skipping Help Center changelog delivery for $tag"
+            exit 0
+          fi
+          curl -sS --fail-with-body \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $SCRIBE_DISPATCH_TOKEN" \
+            https://api.github.com/repos/doiteng/scribe/dispatches \
+            -d "{\"event_type\":\"dci-cli-changelog\",\"client_payload\":{\"tag\":\"$tag\"}}"
