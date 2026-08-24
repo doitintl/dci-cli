@@ -122,8 +122,8 @@ The active tenant is the existing persisted `customerContext` (`customerContextP
 ### 6.1 In the session
 
 - **Status line** always shows the mode and active context for doers/partners (`doer · acme.com`). A single-tenant customer sees no tenant vocabulary anywhere — status line, prompts, or `/help`.
-- **`/customer <name|id>`** switches context: name-resolved and completed via the existing cache, validated via `validateCustomerContextValue` (main.go), scoped to whatever the API authorizes (which handles partners with zero special-casing). `/customer` with no argument opens the F1-style picker (tui_picker.go).
-- A doer with no context set gets the picker on session start — the interactive upgrade of `maybeHintDoerContext` (main.go).
+- **`/customer <name|id>`** switches context, validated via `validateCustomerContextValue` (main.go) and persisted through the same write path as `dci customer-context set`; the API authorizes whatever the token allows (which handles partners with zero special-casing). `/customer` with no argument shows the current context. *(Implementation note: a fuzzy picker needs a customer list source, and none exists — the name cache in name_resolution.go is resource-scoped per tenant, not a tenant list. A picker follows in P2 only if the API offers a listable customers source.)*
+- A doer with no context set sees it called out in the status line, with `/customer` as the fix — the session upgrade of `maybeHintDoerContext` (main.go).
 
 ### 6.2 Agent rules (the important part)
 
@@ -171,7 +171,7 @@ Tool schemas for `run_dci_command` are grounded by embedding the catalog (paths,
 
 ### 7.4 Command execution
 
-Both slash dispatch and `run_dci_command` execute via **subprocess re-exec**: `os.Args[0]` with the target argv, `DCI_AGENT_MODE=1` (honored first in `resolveAgentMode`, main.go), and the session's `-D <context>`. Rationale over in-process cobra re-execution: pflag/viper/restish package-level state does not persist across invocations, `os.Exit` in error paths cannot kill the session, stdout capture is trivial, and per-command cost is invisible against network-bound API calls. The child inherits the parent's config dir and token cache, so auth is shared. The existing agent-mode output contract (`shapeResponseBody` and the output guard, output_contract.go) is exactly the model-facing shape; exit codes and stderr JSON map to structured tool errors per error_contract.go.
+Both slash dispatch and `run_dci_command` execute via **subprocess re-exec** of this binary with the target argv. Output mode differs by consumer: `run_dci_command` (P2) runs with `DCI_AGENT_MODE=1` (honored first in `resolveAgentMode`, main.go) because its output feeds the model; a user's slash dispatch renders for the human, so it runs without agent mode (the child's piped, `DCI_NO_TUI` stdio already keeps it deterministic) — when P2 injects slash results into model context (§4.4), that injection applies the agent-mode shaping, not the on-screen render. Both inherit the session's customer context via the shared config dir (the `-D` flag covers a per-call override). Rationale over in-process cobra re-execution: pflag/viper/restish package-level state does not persist across invocations, `os.Exit` in error paths cannot kill the session, stdout capture is trivial, and per-command cost is invisible against network-bound API calls. The child inherits the parent's config dir and token cache, so auth is shared. The existing agent-mode output contract (`shapeResponseBody` and the output guard, output_contract.go) is exactly the model-facing shape; exit codes and stderr JSON map to structured tool errors per error_contract.go.
 
 ### 7.5 Model and API usage
 
@@ -242,7 +242,7 @@ Dependencies: **add `anthropic-sdk-go`; add nothing else.** bubbletea/bubbles/li
 
 | Phase | Ships | Gate |
 |---|---|---|
-| **P1** | The session shell, hidden: inline TUI, `/` grammar + catalog completion, slash dispatch, status line, `/customer` + picker, history. Zero AI dependency. | Hidden command; doer dogfood |
+| **P1** | The session shell, hidden: inline TUI, `/` grammar + catalog completion, slash dispatch, status line, `/customer` set/show, history. Zero AI dependency. **Implemented** in `ai_command.go` / `ai_tui.go` / `ai_slash.go`. | Hidden command; doer dogfood |
 | **P2** | The loop: NL path, tool cards, approvals, view specs, slash-results-into-context, one-shot mode (D7), user-defined slash commands (D5), `/model` + model config (D2), catalog token measurement (D6). Requires a user-supplied key (the permanent mechanism, D1). `ai_events.go` schema reviewed before this code starts. | Still hidden; doer + friendly-partner dogfood |
 | **P3** | GA hardening: key onboarding/config polish, prompt + model tuning from dogfood, README + docs (including the D3 data-flow disclosure), unhide `dci ai`, **minor version bump**. | Maintainer sign-off + legal verification of existing AI-terms coverage (D3) |
 
