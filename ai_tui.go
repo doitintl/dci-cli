@@ -449,7 +449,10 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = nil
 		// The destructive contract blocked the command (F3): ask here — the
 		// child had no terminal to ask on — and re-run with --yes on approval.
-		if msg.exitCode == aiDestructiveExitCode && !msg.canceled && msg.runErr == "" && !aiArgvHasYes(msg.argv) {
+		// Exit 30 alone is ambiguous (API VALIDATION_ERROR shares the code,
+		// error_contract.go), and the human-mode child prints no structured
+		// envelope — so also require the command to be in the destructive set.
+		if msg.exitCode == aiDestructiveExitCode && !msg.canceled && msg.runErr == "" && !aiArgvHasYes(msg.argv) && aiDispatchIsDestructive(msg.argv) {
 			m.dispatchApproval = &aiDispatchApproval{argv: msg.argv, summary: aiDispatchSummary(msg.output, msg.argv)}
 			m.append(renderAIDispatchApproval(*m.dispatchApproval))
 			return m, nil
@@ -1434,6 +1437,20 @@ func renderAIToolResult(result aiToolResult) string {
 
 // aiDispatchSummary pulls the child's own confirmation line out of its
 // output for the approval prompt; the raw argv is the fallback.
+// aiDispatchIsDestructive reports whether a dispatched command is in the
+// destructive set, disambiguating exit 30 (VALIDATION_ERROR shares the code).
+// A metadata failure fails toward asking: a destructive child must never run
+// unconfirmed just because the operation metadata could not be loaded.
+func aiDispatchIsDestructive(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	if err := ensureDestructiveOperations(); err != nil {
+		return true
+	}
+	return destructiveCommandSet[argv[0]]
+}
+
 func aiDispatchSummary(output string, argv []string) string {
 	for _, line := range strings.Split(strings.TrimSpace(stripANSI(output)), "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Error:"))

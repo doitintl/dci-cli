@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -273,6 +274,32 @@ func TestAIChatSendsToSession(t *testing.T) {
 	m = updated
 	if len(session.sent) != 1 || session.sent[0].Kind != aiInputChat || session.sent[0].Text != "why did spend spike?" {
 		t.Fatalf("session received %+v", session.sent)
+	}
+}
+
+func TestAIDispatchIsDestructiveDisambiguatesExit30(t *testing.T) {
+	// Exit 30 is shared by the destructive contract and API VALIDATION_ERROR
+	// (error_contract.go). The dispatch approval must consult the destructive
+	// set, not the exit code alone.
+	prevSet, prevRead, prevErr := destructiveCommandSet, destructiveMetadataRead, destructiveMetadataErr
+	t.Cleanup(func() {
+		destructiveCommandSet, destructiveMetadataRead, destructiveMetadataErr = prevSet, prevRead, prevErr
+	})
+	destructiveCommandSet = map[string]bool{"delete-budget": true}
+	destructiveMetadataRead = true
+	destructiveMetadataErr = nil
+
+	if !aiDispatchIsDestructive([]string{"delete-budget", "prod"}) {
+		t.Fatal("destructive command not recognized")
+	}
+	if aiDispatchIsDestructive([]string{"list-anomalies", "--sort-order", "descending"}) {
+		t.Fatal("read-only command misclassified as destructive")
+	}
+	// Metadata failure fails toward asking — never run destructive work
+	// unconfirmed because the spec cache was cold.
+	destructiveMetadataErr = errors.New("metadata unavailable")
+	if !aiDispatchIsDestructive([]string{"delete-budget", "prod"}) {
+		t.Fatal("metadata failure must fail toward approval")
 	}
 }
 
