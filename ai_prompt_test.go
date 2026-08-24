@@ -43,6 +43,12 @@ func TestAISystemPromptModes(t *testing.T) {
 		if !strings.Contains(prompt, `--sort-order asc|desc`) {
 			t.Fatal("anomaly sort enums missing (F2; the API help text misleads with ascending/descending)")
 		}
+		// The AWS chain dependency must be stated as a hard prerequisite —
+		// concurrent batching (PR #106) means soft ordering language lets the
+		// model fire list-aws-savings-plans without an org-id speculatively.
+		if !strings.Contains(prompt, "REQUIRE an org-id argument from list-aws-organizations") {
+			t.Fatal("AWS chain org-id prerequisite missing from FinOps surfaces (F2)")
+		}
 	}
 }
 

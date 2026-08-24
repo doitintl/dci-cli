@@ -49,7 +49,7 @@ Use `--fields id,name` to project list or detail responses before output, and us
 ## Anomalies, Commitments & Allocation Coverage
 
 - `list-anomalies` sorts with `--sort-by startTime|severityLevel|costOfAnomaly` and `--sort-order asc|desc` — exactly `asc`/`desc`; the API rejects `ascending`/`descending` even though the flag help suggests them. `--min/--max-creation-time` take epoch **milliseconds** and bound the anomaly's usage start time. `--filter` keys: `serviceName`, `billingAccount`, `platform`, `severityLevel` (lowercase values: `information`, `warning`, `critical`).
-- Commitments: `list-commitments --all` for DoiT commitments. The AWS chain is ordered — `list-aws-organizations` first, then `list-aws-savings-plans <org-id>` and `list-aws-recommendations <org-id>` per organization. Realized discounts also surface in `query` via the `savings_description` dimension.
+- Commitments: `list-commitments --all` for DoiT commitments. `list-aws-savings-plans` and `list-aws-recommendations` REQUIRE an org-id argument from `list-aws-organizations` — never call them without it: fetch the organizations first (alone), then batch the per-org calls together in your next response. Realized discounts also surface in `query` via the `savings_description` dimension.
 - Allocation/tag coverage: run the same query twice — total cost, then with `--drop-unlabeled-rows` — and report the difference as unallocated spend. Group by the label under test for per-value coverage.
 
 ## Resource Names
