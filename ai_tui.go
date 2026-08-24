@@ -53,6 +53,7 @@ type aiRunState struct {
 	cancel   context.CancelFunc
 	started  time.Time
 	customer string
+	width    int
 }
 
 // aiCmdDoneMsg reports a finished user dispatch back into the Update loop.
@@ -136,7 +137,11 @@ type aiDispatchApproval struct {
 
 // runAISession is the entry point behind `dci ai` (ai_command.go).
 func runAISession(configDir string) error {
-	program := tea.NewProgram(newAIModel(configDir), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Mouse capture starts OFF so the terminal's own selection/copy works out
+	// of the box (dogfood: capture broke copy/paste even with modifier keys in
+	// some terminals); /mouse opts into wheel scrolling. Keyboard scrolling
+	// (PgUp/PgDn) always works.
+	program := tea.NewProgram(newAIModel(configDir), tea.WithAltScreen())
 	model, err := program.Run()
 	if m, ok := model.(aiModel); ok && m.session != nil {
 		_ = m.session.Close()
@@ -181,7 +186,7 @@ func newAIModel(configDir string) aiModel {
 		historyPos:   len(history),
 		userLine:     aiUserLine(),
 		modelName:    modelName,
-		mouseOn:      true,
+		mouseOn:      false,
 		fetchedNames: map[string][]nameCacheEntry{},
 	}
 	m.identity = m.contextLabel()
@@ -860,6 +865,7 @@ func (m *aiModel) startDispatch(argv []string) tea.Cmd {
 	m.running = &aiRunState{
 		argv: argv, cancel: cancel, started: time.Now(),
 		customer: readCustomerContext(m.configDir),
+		width:    m.width,
 	}
 	return tea.Batch(m.spin.Tick, aiDispatchCommand(ctx, m.running))
 }
@@ -1133,22 +1139,27 @@ func (m aiModel) modelInfoText() string {
 // DCI_NO_TUI keeps the child deterministic even if a PTY-ish stdio ever
 // leaks through. The child shares this process's config dir, so auth and
 // customer context apply unchanged.
-// aiDispatchEnv is the slash child's environment. DCI_AGENT_MODE=0 matters:
-// the child's stdout is a pipe, and without the override the non-TTY soft
-// signal flips it into agent behavior — TOON instead of tables, structured
-// error envelopes, cobra usage dumps — nothing like what the same command
-// shows a human. COLOR=1 keeps the human table styling that piped output
-// would otherwise drop; DCI_NO_TUI blocks any interactive prompt from a
-// child that has no terminal to ask on.
-func aiDispatchEnv() []string {
-	return append(os.Environ(), "DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "COLOR=1")
+// aiDispatchEnv is the slash child's environment, shaped so a piped child
+// renders exactly what the same command shows a human at a terminal:
+// DCI_AGENT_MODE=0 (the non-TTY soft signal would flip it to TOON output and
+// agent error envelopes), DCI_SESSION_RENDER=1 (human-shaped hints, colored
+// tables, stacked charts despite the pipe), CLICOLOR_FORCE=1 + COLOR=1
+// (lipgloss and restish emit color on the pipe), COLUMNS (the child cannot
+// measure the terminal, so it inherits the session's width), and DCI_NO_TUI
+// (no interactive prompt from a child that has no terminal to ask on).
+func aiDispatchEnv(width int) []string {
+	return append(os.Environ(),
+		"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "DCI_SESSION_RENDER=1",
+		"COLOR=1", "CLICOLOR_FORCE=1",
+		fmt.Sprintf("COLUMNS=%d", width),
+	)
 }
 
 func aiDispatchCommand(ctx context.Context, run *aiRunState) tea.Cmd {
-	argv, started, customer := run.argv, run.started, run.customer
+	argv, started, customer, width := run.argv, run.started, run.customer, run.width
 	return func() tea.Msg {
 		command := exec.CommandContext(ctx, aiExecutablePath(), argv...)
-		command.Env = aiDispatchEnv()
+		command.Env = aiDispatchEnv(width)
 		output, err := command.CombinedOutput()
 		msg := aiCmdDoneMsg{argv: argv, output: string(output), elapsed: time.Since(started), customer: customer}
 		if ctx.Err() == context.Canceled {
@@ -1340,9 +1351,9 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 	lines = append(lines, "",
 		aiEchoStyle.Render("Saved commands: define your own in "+aiUserCommandsFileName+" — {\"top5\": {\"command\": \"list-reports --limit 5\"}, \"review\": {\"prompt\": \"Review last month's spend\"}}"),
 		aiEchoStyle.Render("Privacy: AI questions and dci command results are sent to Anthropic's API under your key."),
-		aiEchoStyle.Render("Copying text: /mouse turns capture off for normal selection (or hold Shift/Option while selecting); /export saves the whole transcript."),
+		aiEchoStyle.Render("Copying text: select and copy normally (mouse capture is off by default); /mouse enables wheel scrolling instead; /export saves the whole transcript."),
 		"",
-		"  tab completes · ↑/↓ history or popup · wheel/PgUp/PgDn scroll · esc clears or cancels")
+		"  tab completes · ↑/↓ history or popup · PgUp/PgDn scroll (wheel via /mouse) · esc clears or cancels")
 	return strings.Join(lines, "\n")
 }
 
