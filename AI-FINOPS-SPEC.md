@@ -70,6 +70,40 @@ opts back into the API's uncapped adaptive thinking — `high` is *not* that opt
 is a cap above medium. P11/P12 have no baseline column: this run is their first
 recorded measurement.
 
+### 1.2 Full-stack retest (2026-08-24, post-#104–#107) — with token telemetry
+
+Full suite on main carrying everything: medium default, concurrent tool batches (#106),
+`DCI_AI_STATS` telemetry (#104), rollup, session-scoped context. 12/12 substantively
+correct (P10 hand-checked: numbers identical to the original baseline). First run with
+token columns (`in` = uncached input, `out` = output, both summed across rounds).
+
+| # | Orig baseline | §1.1 medium | Full stack | Rounds | Tools | in / out tokens |
+|---|---|---|---|---|---|---|
+| P01 | 32s | 26s | 28s¹ | 2 | 1 | 1.3k / 1.1k |
+| P02 | 25s | 22s | 22s | 2 | 1 | 1.2k / 0.7k |
+| P03 | 17s (failed) | 33s | 29s ✓ | 4 | 3 | 17.5k / 1.1k |
+| P04 | 53s | 41s | 30s | 2 | 2 | 1.8k / 1.0k |
+| P05 | 15s | 13s | 15s | 2 | 1 | 0.6k / 0.4k |
+| P06 | 151s | 69s | 90s² | 6 | 11 | 36.5k / 3.4k |
+| P07 | 63s | 28s | 33s | 4 | 4 | 17.0k / 1.2k |
+| P08 | 35s | 36s | 33s | 2 | 1 | 3.2k / 1.5k |
+| P09 | 90s | 62s | 57s | 4 | 5 | 5.1k / 2.0k |
+| P10 | 91s | 61s | 74s³ | 2 | 1 | 7.8k / **5.0k** |
+| P11 | 133s (failed) | 49s | 44s ✓ | 6 | 7 | 5.4k / 2.3k |
+| P12 | 36s (wrong tenant) | 18s | 24s ✓ | 3 | 2 | 1.6k / 0.8k |
+
+¹ TTFT 18.3s — the run pays the ~16.5k-token prompt-cache **write**; every later run in
+the 5-minute window reads it (TTFT 1.4–3.7s). Interactive sessions pay this once.
+² Run-to-run variance, not regression: this path took 11 calls including one
+self-corrected flag error (savings-plans before the org id) where §1.1's took 9. The
+concurrency is visible in the transcript (six calls issued back-to-back); P06 remains
+the noisiest prompt — single-run deltas on it are not meaningful.
+³ P10's cost is now dominated by its own answer: 5.0k output tokens (a 20+-row table
+plus caveats) is roughly half the wall clock at streaming speed.
+
+Suite total (P01–P10): 572s at the original baseline (with one hard failure) → **411s,
+12/12 correct** on the full stack.
+
 ## 2. Findings
 
 ### 2.1 Exit-30 collision: validation errors masquerade as destructive commands — FIXED
