@@ -93,7 +93,7 @@ func runAIOneShot(configDir, question string, approveDestructive bool) error {
 			failure = fmt.Errorf("stopped: the turn hit the %s ceiling", event.LimitReached.Kind)
 
 		case event.Error != nil:
-			failure = errors.New(event.Error.Message)
+			failure = errors.New(aiFriendlyAPIError(configDir, event.Error.Message))
 
 		case event.TurnDone != nil:
 			if printedText {
