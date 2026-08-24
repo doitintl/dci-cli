@@ -245,6 +245,7 @@ func printFirstRunOnboarding(configured bool) {
 	fmt.Fprintln(os.Stderr, "  dci status")
 	fmt.Fprintln(os.Stderr, "  dci list-budgets")
 	fmt.Fprintln(os.Stderr, "  dci list-reports --output table")
+	fmt.Fprintln(os.Stderr, "  dci ai   (ask questions in plain English)")
 	fmt.Fprintln(os.Stderr, "")
 }
 

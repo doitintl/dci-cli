@@ -427,6 +427,92 @@ func TestAIChatWithoutKeyExplains(t *testing.T) {
 	}
 }
 
+func TestAIKeyOnboardingFlow(t *testing.T) {
+	m := aiTestModel(t)
+	fake := newFakeAISession()
+	oldFactory := newAIConversationSession
+	newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
+		if apiKey != "sk-ant-test-0123456789" {
+			t.Fatalf("factory received key %q", apiKey)
+		}
+		return fake
+	}
+	t.Cleanup(func() { newAIConversationSession = oldFactory })
+
+	// A question without a key opens the guided setup, stashing the question.
+	m = aiType(m, "why is spend up?")
+	updated, cmd := aiPress(m, tea.KeyEnter)
+	m = updated
+	if !m.keyEntry || cmd == nil {
+		t.Fatalf("keyless chat did not open key entry (keyEntry=%v)", m.keyEntry)
+	}
+	if m.pendingQuestion != "why is spend up?" {
+		t.Fatalf("pending question = %q", m.pendingQuestion)
+	}
+	if view := m.View(); !strings.Contains(view, "API key:") {
+		t.Fatalf("key entry view = %q", view)
+	}
+
+	// A bad paste is rejected and the mode stays open.
+	m = aiType(m, "not-a-key")
+	updated, _ = aiPress(m, tea.KeyEnter)
+	m = updated
+	if !m.keyEntry {
+		t.Fatal("invalid key closed the setup")
+	}
+	if masked := m.View(); strings.Contains(masked, "not-a-key") {
+		t.Fatal("key text rendered unmasked")
+	}
+
+	// Clear it and paste a valid key: saved, session built, question sent.
+	for range "not-a-key" {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		m = updated.(aiModel)
+	}
+	m = aiType(m, "sk-ant-test-0123456789")
+	updated, cmd = aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.keyEntry || m.session == nil || cmd == nil {
+		t.Fatalf("valid key not accepted (keyEntry=%v session=%v)", m.keyEntry, m.session != nil)
+	}
+	if got := loadAISettings(m.configDir).APIKey; got != "sk-ant-test-0123456789" {
+		t.Fatalf("persisted key = %q", got)
+	}
+	if len(fake.sent) != 1 || fake.sent[0].Kind != aiInputChat || fake.sent[0].Text != "why is spend up?" {
+		t.Fatalf("pending question not sent: %+v", fake.sent)
+	}
+}
+
+func TestAIKeyOnboardingEscCancels(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "hello")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	m = aiType(m, "sk-partial")
+	updated2, cmd := aiPress(m, tea.KeyEsc)
+	m = updated2
+	if m.keyEntry || m.keyBuf != "" || m.pendingQuestion != "" {
+		t.Fatalf("esc did not fully cancel: %+v", m)
+	}
+	if cmd == nil {
+		t.Fatal("cancel printed nothing")
+	}
+	if loadAISettings(m.configDir).APIKey != "" {
+		t.Fatal("canceled setup persisted a key")
+	}
+}
+
+func TestAIValidateAPIKey(t *testing.T) {
+	for _, bad := range []string{"", "sk-short", "notakey-0123456789012345", "sk-ant with space 12345"} {
+		if err := aiValidateAPIKey(bad); err == nil {
+			t.Fatalf("key %q accepted", bad)
+		}
+	}
+	if err := aiValidateAPIKey("sk-ant-api03-0123456789"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAIUnknownSlashNeverDispatches(t *testing.T) {
 	m := aiTestModel(t)
 	m = aiType(m, "/lst-budgets")
