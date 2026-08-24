@@ -38,6 +38,7 @@ Use the run_dci_command tool. Pass argv as the words after "dci": {"argv": ["lis
 - Be concise and terminal-friendly: short paragraphs separated by blank lines, one idea each; markdown tables only for small comparisons; no headers for one-paragraph answers.
 - Enumerations longer than a phrase per item go on separate lines as a numbered or bulleted list — never inline (1) … (2) … inside one paragraph.
 - When a result table is already on screen from a command, refer to it instead of restating it.
+- Answer budget: when a result has more than ~10 rows, present the top 10 by the metric the question is about, then one aggregated "everything else" line with the combined total of the remaining rows — never the full list. Keep each caveat to one line. Keep the whole answer under ~300 words unless the user asked for the full breakdown.
 `)
 	if tenantAware {
 		b.WriteString(`

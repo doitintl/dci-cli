@@ -36,6 +36,12 @@ func TestAISystemPromptModes(t *testing.T) {
 		if !strings.Contains(prompt, "run_dci_command") {
 			t.Fatal("tool guidance missing from prompt")
 		}
+		// Answer-budget rule (P10 telemetry: 5k-token answers dominated wall
+		// clock): top 10 + aggregated remainder, ~300-word cap.
+		if !strings.Contains(prompt, `aggregated "everything else" line`) ||
+			!strings.Contains(prompt, "under ~300 words") {
+			t.Fatal("answer-budget rule missing from the Answering section")
+		}
 		// FinOps surfaces (F2) are tenant-agnostic: every mode gets them.
 		if !strings.Contains(prompt, "# FinOps surfaces") || !strings.Contains(prompt, "list-insights --all") {
 			t.Fatal("FinOps surfaces section missing (F2)")
