@@ -219,6 +219,24 @@ func TestApplyListSearchNoOps(t *testing.T) {
 	}
 }
 
+func TestApplyListSearchRunsBeforeInsightPresentation(t *testing.T) {
+	// The " (easy win)" title suffix and other derived fields are injected by
+	// the insights presentation step; --search must match raw API fields only,
+	// or the match set would change with the output format.
+	resetInsightConfig(t)
+	viper.Set("list-search", "easy win")
+	t.Cleanup(func() { viper.Set("list-search", nil) })
+
+	body := insightsBody(
+		insightRow(map[string]interface{}{"easyWinDescription": "Quick fix"}),
+		insightRow(nil),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	if rows := root["results"].([]interface{}); len(rows) != 0 {
+		t.Fatalf("search matched presentation-derived text: %v", rows)
+	}
+}
+
 func TestTransformInsightsDropsDismissedByDefault(t *testing.T) {
 	resetInsightConfig(t)
 	body := insightsBody(
