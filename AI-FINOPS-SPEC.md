@@ -22,7 +22,14 @@ Ten prompts, each mapped to a FinOps Framework capability, run through one-shot
 [eval/finops-prompts.txt](eval/finops-prompts.txt) with a runner
 ([eval/run-finops.sh](eval/run-finops.sh)); it is a dogfood/regression harness, not a
 shipped feature — run it after any prompt, playbook, or loop change and compare
-wall-clock, tool-call count, and answer sanity against the table below.
+wall-clock, tool-call count, and answer sanity against the table below. Single-run
+deltas on exploration-heavy prompts are not meaningful — P06 measured 69s/9 tools and
+90s/11 tools on back-to-back runs of the same binary — so for regression calls use the
+repeat mode (`RUNS=3 eval/run-finops.sh …`), which reruns each prompt sequentially and
+prints median and min–max for wall clock, tool calls, and output tokens from the
+`[ai-stats]` telemetry. `JUDGE=1` additionally emits `judge.md`, a bundle of each
+prompt plus its final ANSI-stripped answer for scoring answer substance by a human or
+an external LLM (the CLI never judges its own runs).
 
 | # | Capability | Prompt | Baseline | Tool calls | Verdict |
 |---|---|---|---|---|---|
