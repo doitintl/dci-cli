@@ -109,6 +109,12 @@ type aiModel struct {
 	keyEntry        bool
 	keyBuf          string
 	pendingQuestion string
+
+	// Name selection for resolvable commands (ai_picker.go): the session-side
+	// F1/F2 picker.
+	picker       *aiNameSelection
+	pickerFilter string
+	pickerIndex  int
 }
 
 // runAISession is the entry point behind `dci ai` (ai_command.go).
@@ -244,7 +250,15 @@ func (m *aiModel) refreshTranscript() {
 func (m *aiModel) layout() {
 	m.input.SetWidth(m.width - 2)
 	m.view.Width = m.width
-	chrome := 1 /*header*/ + len(m.completions) + 1 /*input*/ + 1 /*status*/
+	bottom := len(m.completions) + 1 /*input*/
+	if m.picker != nil {
+		rows := len(m.picker.filtered(m.pickerFilter))
+		if rows > aiPickerVisibleRows {
+			rows = aiPickerVisibleRows
+		}
+		bottom = rows + 2 // selection header + filter line
+	}
+	chrome := 1 /*header*/ + bottom + 1 /*status*/
 	height := m.height - chrome
 	if height < 3 {
 		height = 3
@@ -379,6 +393,11 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The guided key setup owns the keyboard while active (P3).
 	if m.keyEntry {
 		return m.handleKeyEntryKey(msg)
+	}
+
+	// A pending name selection owns it next (ai_picker.go).
+	if m.picker != nil {
+		return m.handlePickerKey(msg)
 	}
 
 	// Viewport scrolling works in every other state.
@@ -572,14 +591,26 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 		return m.runVerb(route)
 
 	case aiRouteDispatch:
-		ctx, cancel := context.WithCancel(context.Background())
-		m.running = &aiRunState{
-			argv: route.argv, cancel: cancel, started: time.Now(),
-			customer: readCustomerContext(m.configDir),
+		if selection := aiNameSelectionFor(route.argv, m.configDir); selection != nil {
+			m.picker = selection
+			m.pickerFilter = ""
+			m.pickerIndex = 0
+			m.layout()
+			return m, nil
 		}
-		return m, tea.Batch(m.spin.Tick, aiDispatchCommand(ctx, m.running))
+		return m, m.startDispatch(route.argv)
 	}
 	return m, nil
+}
+
+// startDispatch spawns one slash command subprocess and arms the spinner.
+func (m *aiModel) startDispatch(argv []string) tea.Cmd {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.running = &aiRunState{
+		argv: argv, cancel: cancel, started: time.Now(),
+		customer: readCustomerContext(m.configDir),
+	}
+	return tea.Batch(m.spin.Tick, aiDispatchCommand(ctx, m.running))
 }
 
 func (m aiModel) submitChat(text string) (tea.Model, tea.Cmd) {
@@ -653,6 +684,63 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyBuf += string(msg.Runes)
 	}
 	return m, nil
+}
+
+// handlePickerKey drives the name selection: type to filter with the CLI's
+// own matcher, ↑/↓ to move, enter dispatches with the chosen ID, esc cancels.
+func (m aiModel) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	rows := m.picker.filtered(m.pickerFilter)
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.closePicker()
+		m.append(aiEchoStyle.Render("selection canceled"))
+		return m, nil
+	case "enter":
+		if m.pickerIndex >= len(rows) {
+			return m, nil
+		}
+		entry := rows[m.pickerIndex]
+		argv := m.picker.apply(entry)
+		m.closePicker()
+		m.append(aiEchoStyle.Render("picked " + entry.Name + " (" + entry.ID + ")"))
+		return m, m.startDispatch(argv)
+	case "up":
+		if len(rows) > 0 {
+			m.pickerIndex = (m.pickerIndex + len(rows) - 1) % len(rows)
+		}
+		return m, nil
+	case "down", "tab":
+		if len(rows) > 0 {
+			m.pickerIndex = (m.pickerIndex + 1) % len(rows)
+		}
+		return m, nil
+	case "backspace":
+		if runes := []rune(m.pickerFilter); len(runes) > 0 {
+			m.pickerFilter = string(runes[:len(runes)-1])
+		}
+		m.clampPickerIndex()
+		m.layout()
+		return m, nil
+	}
+	if msg.Type == tea.KeyRunes {
+		m.pickerFilter += string(msg.Runes)
+		m.clampPickerIndex()
+		m.layout()
+	}
+	return m, nil
+}
+
+func (m *aiModel) closePicker() {
+	m.picker = nil
+	m.pickerFilter = ""
+	m.pickerIndex = 0
+	m.layout()
+}
+
+func (m *aiModel) clampPickerIndex() {
+	if rows := m.picker.filtered(m.pickerFilter); m.pickerIndex >= len(rows) {
+		m.pickerIndex = 0
+	}
 }
 
 func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
@@ -974,6 +1062,12 @@ func (m aiModel) View() string {
 		b.WriteString(aiEchoStyle.Render("paste your key · enter save · esc cancel"))
 		return b.String()
 	}
+	if m.picker != nil {
+		b.WriteString(m.pickerView())
+		b.WriteString("\n")
+		b.WriteString(m.statusLine())
+		return b.String()
+	}
 	for index, completion := range m.completions {
 		line := fmt.Sprintf(" /%s  %s", completion.Value, aiEchoStyle.Render(completion.Summary))
 		if index == m.completionIndex {
@@ -991,6 +1085,41 @@ func (m aiModel) View() string {
 	return b.String()
 }
 
+const aiPickerVisibleRows = 8
+
+// pickerView renders the name selection: a header with the count, a window
+// of candidates around the highlighted row, and the live filter line.
+func (m aiModel) pickerView() string {
+	rows := m.picker.filtered(m.pickerFilter)
+	var b strings.Builder
+	b.WriteString(aiCardHeadStyle.Render(fmt.Sprintf("Select a %s", m.picker.resource)) +
+		aiEchoStyle.Render(fmt.Sprintf("  %d match(es) — type to filter", len(rows))))
+	b.WriteString("\n")
+	start := 0
+	if m.pickerIndex >= aiPickerVisibleRows {
+		start = m.pickerIndex - aiPickerVisibleRows + 1
+	}
+	end := start + aiPickerVisibleRows
+	if end > len(rows) {
+		end = len(rows)
+	}
+	for index := start; index < end; index++ {
+		entry := rows[index]
+		line := " " + entry.Name + "  " + aiEchoStyle.Render("("+entry.ID+")")
+		if index == m.pickerIndex {
+			line = aiSelectedStyle.Render(" "+entry.Name+" ") + " " + aiEchoStyle.Render("("+entry.ID+")")
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	if len(rows) == 0 {
+		b.WriteString(aiEchoStyle.Render(" (no matches — backspace to widen)"))
+		b.WriteString("\n")
+	}
+	b.WriteString("filter: " + m.pickerFilter)
+	return b.String()
+}
+
 // headerLine is the fixed top of the frame; a scroll hint appears when the
 // viewport is not following the bottom.
 func (m aiModel) headerLine() string {
@@ -1002,6 +1131,9 @@ func (m aiModel) headerLine() string {
 }
 
 func (m aiModel) statusLine() string {
+	if m.picker != nil {
+		return aiEchoStyle.Render("↑/↓ select · enter run · esc cancel")
+	}
 	if m.approval != nil {
 		return aiApproveStyle.Render("destructive command pending — y run · n decline")
 	}
