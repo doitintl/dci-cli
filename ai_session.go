@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -484,26 +485,8 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 		// Every tool_use in the assistant message must gain a tool_result in
 		// the next user message — including on cancel, or the dangling
 		// tool_use makes the API reject every later question with a 400.
-		toolResults := make([]anthropic.ContentBlockParamUnion, 0, 2)
-		canceled := false
-		for _, block := range message.Content {
-			toolUse, ok := block.AsAny().(anthropic.ToolUseBlock)
-			if !ok {
-				continue
-			}
-			if canceled {
-				toolResults = append(toolResults, aiCanceledToolResult(toolUse.ID))
-				continue
-			}
-			usage.ToolCalls++
-			result, aborted := s.executeToolCall(ctx, turnID, toolUse)
-			if aborted {
-				canceled = true
-				toolResults = append(toolResults, aiCanceledToolResult(toolUse.ID))
-				continue
-			}
-			toolResults = append(toolResults, result)
-		}
+		toolResults, executed, canceled := s.executeToolCalls(ctx, turnID, message.Content)
+		usage.ToolCalls += executed
 		if len(toolResults) > 0 {
 			s.mu.Lock()
 			s.history = append(s.history, anthropic.NewUserMessage(toolResults...))
@@ -524,21 +507,202 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 	finish()
 }
 
-// executeToolCall runs one tool_use block, emitting the protocol events and
-// pausing on the approval round-trip for destructive commands. aborted=true
-// means the context was canceled while waiting or running.
-func (s *localAISession) executeToolCall(ctx context.Context, turnID string, toolUse anthropic.ToolUseBlock) (anthropic.ContentBlockParamUnion, bool) {
-	rawInput := []byte(toolUse.JSON.Input.Raw())
-	customer := s.executor.EffectiveCustomer()
+// aiToolConcurrency bounds how many run_dci_command children run at once.
+// The model batches independent lookups in one assistant message (it is
+// prompted to); running them serially made the batch's wall clock the sum of
+// its slowest members.
+const aiToolConcurrency = 4
 
+// executeToolCalls answers every tool_use block in one assistant message.
+// Consecutive run_dci_command calls execute concurrently (bounded by
+// aiToolConcurrency); set_customer_context is a barrier — it mutates the
+// override every later child inherits as environment, so it applies in
+// message order and never alongside a running command. canceled=true means
+// the user canceled mid-message; every remaining tool_use still gains a
+// canceled result, or the dangling tool_use makes the API reject every later
+// question with a 400. executed counts the calls that actually started, for
+// the turn's telemetry.
+func (s *localAISession) executeToolCalls(ctx context.Context, turnID string, blocks []anthropic.ContentBlockUnion) (results []anthropic.ContentBlockParamUnion, executed int, canceled bool) {
+	toolUses := make([]anthropic.ToolUseBlock, 0, len(blocks))
+	for _, block := range blocks {
+		if toolUse, ok := block.AsAny().(anthropic.ToolUseBlock); ok {
+			toolUses = append(toolUses, toolUse)
+		}
+	}
+	results = make([]anthropic.ContentBlockParamUnion, len(toolUses))
+	for start := 0; start < len(toolUses); {
+		if !canceled && ctx.Err() != nil {
+			canceled = true
+		}
+		if canceled {
+			results[start] = aiCanceledToolResult(toolUses[start].ID)
+			start++
+			continue
+		}
+		if toolUses[start].Name != aiToolRunCommand {
+			results[start] = s.executeSerialToolCall(turnID, toolUses[start])
+			executed++
+			start++
+			continue
+		}
+		end := start + 1
+		for end < len(toolUses) && toolUses[end].Name == aiToolRunCommand {
+			end++
+		}
+		batchExecuted, batchCanceled := s.executeCommandBatch(ctx, turnID, toolUses[start:end], results[start:end])
+		executed += batchExecuted
+		canceled = batchCanceled
+		start = end
+	}
+	return results, executed, canceled
+}
+
+// aiFirstPass is one run_dci_command call's state after its concurrent first
+// execution: either settled with a final result, waiting on the destructive
+// approval round-trip, or aborted by cancel.
+type aiFirstPass struct {
+	result        anthropic.ContentBlockParamUnion
+	settled       bool
+	needsApproval bool
+	aborted       bool
+	input         aiRunCommandInput
+	summary       string
+	started       time.Time
+}
+
+// executeCommandBatch runs one message's consecutive run_dci_command calls
+// concurrently up to their first outcome, then resolves any destructive
+// approvals one at a time — the renderers can only present one approval
+// question at a time (awaitApproval). Results land in the callers' slice at
+// the calls' original positions; on cancel every unanswered call is
+// backfilled with a canceled result. executed counts the calls that actually
+// started (a worker still queued when the user canceled never ran).
+func (s *localAISession) executeCommandBatch(ctx context.Context, turnID string, calls []anthropic.ToolUseBlock, results []anthropic.ContentBlockParamUnion) (executed int, canceled bool) {
+	passes := make([]aiFirstPass, len(calls))
+	semaphore := make(chan struct{}, aiToolConcurrency)
+	var started atomic.Int64
+	var wg sync.WaitGroup
+	for i := range calls {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			if ctx.Err() != nil {
+				passes[i] = aiFirstPass{aborted: true}
+				return
+			}
+			started.Add(1)
+			passes[i] = s.runCommandFirstPass(ctx, turnID, calls[i])
+		}(i)
+	}
+	wg.Wait()
+	executed = int(started.Load())
+
+	answered := make([]bool, len(calls))
+	pending := make([]int, 0, len(calls))
+	for i, pass := range passes {
+		switch {
+		case pass.aborted:
+			canceled = true
+		case pass.settled:
+			results[i] = pass.result
+			answered[i] = true
+		case pass.needsApproval:
+			pending = append(pending, i)
+		}
+	}
+	for _, i := range pending {
+		if canceled {
+			break
+		}
+		result, aborted := s.resolveApproval(ctx, turnID, calls[i], passes[i])
+		if aborted {
+			canceled = true
+			break
+		}
+		results[i] = result
+		answered[i] = true
+	}
+	if canceled {
+		for i := range results {
+			if !answered[i] {
+				results[i] = aiCanceledToolResult(calls[i].ID)
+			}
+		}
+	}
+	return executed, canceled
+}
+
+// runCommandFirstPass executes one run_dci_command call up to its first
+// outcome. Safe to run concurrently with its batch siblings: the executor's
+// override is read-locked, and the approval round-trip (which must serialize)
+// is deferred to resolveApproval.
+func (s *localAISession) runCommandFirstPass(ctx context.Context, turnID string, toolUse anthropic.ToolUseBlock) aiFirstPass {
+	var input aiRunCommandInput
+	if err := json.Unmarshal([]byte(toolUse.JSON.Input.Raw()), &input); err != nil {
+		return aiFirstPass{settled: true, result: anthropic.NewToolResultBlock(toolUse.ID, aiToolError("BAD_TOOL_INPUT", err.Error(), ""), true)}
+	}
+	customer := s.executor.EffectiveCustomer()
+	s.emit(aiEvent{ToolCallStarted: &aiToolCallStarted{
+		TurnID: turnID, CallID: toolUse.ID, Tool: aiToolRunCommand, Argv: input.Argv, Customer: customer, By: "agent",
+	}})
+	started := time.Now()
+	outcome := s.executor.RunCommand(ctx, input, false)
+	if outcome.NeedsApproval {
+		return aiFirstPass{needsApproval: true, input: input, summary: outcome.Summary, started: started}
+	}
+	if ctx.Err() != nil {
+		return aiFirstPass{aborted: true}
+	}
+	s.emit(aiEvent{ToolResult: &aiToolResult{
+		TurnID: turnID, CallID: toolUse.ID, OK: !outcome.IsError,
+		Data: outcome.Data, Customer: customer, Truncated: outcome.Truncated, Elapsed: time.Since(started),
+	}})
+	return aiFirstPass{settled: true, result: anthropic.NewToolResultBlock(toolUse.ID, outcome.Data, outcome.IsError)}
+}
+
+// resolveApproval finishes one destructive call the concurrent first pass
+// parked: ask the human, then re-run with --yes or shape the decline.
+// aborted=true means the context was canceled while waiting or running.
+func (s *localAISession) resolveApproval(ctx context.Context, turnID string, toolUse anthropic.ToolUseBlock, pass aiFirstPass) (anthropic.ContentBlockParamUnion, bool) {
+	s.emit(aiEvent{ApprovalRequest: &aiApprovalRequest{
+		TurnID: turnID, CallID: toolUse.ID, Kind: "destructive", Summary: pass.summary, Argv: pass.input.Argv,
+	}})
+	approved, aborted := s.awaitApproval(ctx, toolUse.ID)
+	if aborted {
+		return anthropic.ContentBlockParamUnion{}, true
+	}
+	var outcome aiToolOutcome
+	if approved {
+		outcome = s.executor.RunCommand(ctx, pass.input, true)
+	} else {
+		outcome = aiToolOutcome{
+			Data:    aiToolError("DESTRUCTIVE_DECLINED", "the user declined this destructive command — do not retry it", ""),
+			IsError: true,
+		}
+	}
+	if ctx.Err() != nil {
+		return anthropic.ContentBlockParamUnion{}, true
+	}
+	s.emit(aiEvent{ToolResult: &aiToolResult{
+		TurnID: turnID, CallID: toolUse.ID, OK: !outcome.IsError,
+		Data: outcome.Data, Customer: s.executor.EffectiveCustomer(), Truncated: outcome.Truncated, Elapsed: time.Since(pass.started),
+	}})
+	return anthropic.NewToolResultBlock(toolUse.ID, outcome.Data, outcome.IsError), false
+}
+
+// executeSerialToolCall runs one non-batchable tool_use block —
+// set_customer_context (a barrier: see executeToolCalls) or an unknown tool.
+func (s *localAISession) executeSerialToolCall(turnID string, toolUse anthropic.ToolUseBlock) anthropic.ContentBlockParamUnion {
 	switch toolUse.Name {
 	case aiToolSetCustomer:
 		var input aiSetCustomerInput
-		if err := json.Unmarshal(rawInput, &input); err != nil {
-			return anthropic.NewToolResultBlock(toolUse.ID, aiToolError("BAD_TOOL_INPUT", err.Error(), ""), true), false
+		if err := json.Unmarshal([]byte(toolUse.JSON.Input.Raw()), &input); err != nil {
+			return anthropic.NewToolResultBlock(toolUse.ID, aiToolError("BAD_TOOL_INPUT", err.Error(), ""), true)
 		}
 		s.emit(aiEvent{ToolCallStarted: &aiToolCallStarted{
-			TurnID: turnID, CallID: toolUse.ID, Tool: aiToolSetCustomer, Customer: customer, By: "agent",
+			TurnID: turnID, CallID: toolUse.ID, Tool: aiToolSetCustomer, Customer: s.executor.EffectiveCustomer(), By: "agent",
 		}})
 		started := time.Now()
 		from, to, outcome := s.executor.SetCustomer(input)
@@ -549,46 +713,10 @@ func (s *localAISession) executeToolCall(ctx context.Context, turnID string, too
 			TurnID: turnID, CallID: toolUse.ID, OK: !outcome.IsError,
 			Data: outcome.Data, Customer: to, Elapsed: time.Since(started),
 		}})
-		return anthropic.NewToolResultBlock(toolUse.ID, outcome.Data, outcome.IsError), false
-
-	case aiToolRunCommand:
-		var input aiRunCommandInput
-		if err := json.Unmarshal(rawInput, &input); err != nil {
-			return anthropic.NewToolResultBlock(toolUse.ID, aiToolError("BAD_TOOL_INPUT", err.Error(), ""), true), false
-		}
-		s.emit(aiEvent{ToolCallStarted: &aiToolCallStarted{
-			TurnID: turnID, CallID: toolUse.ID, Tool: aiToolRunCommand, Argv: input.Argv, Customer: customer, By: "agent",
-		}})
-		started := time.Now()
-		outcome := s.executor.RunCommand(ctx, input, false)
-		if outcome.NeedsApproval {
-			s.emit(aiEvent{ApprovalRequest: &aiApprovalRequest{
-				TurnID: turnID, CallID: toolUse.ID, Kind: "destructive", Summary: outcome.Summary, Argv: input.Argv,
-			}})
-			approved, aborted := s.awaitApproval(ctx, toolUse.ID)
-			if aborted {
-				return anthropic.ContentBlockParamUnion{}, true
-			}
-			if approved {
-				outcome = s.executor.RunCommand(ctx, input, true)
-			} else {
-				outcome = aiToolOutcome{
-					Data:    aiToolError("DESTRUCTIVE_DECLINED", "the user declined this destructive command — do not retry it", ""),
-					IsError: true,
-				}
-			}
-		}
-		if ctx.Err() != nil {
-			return anthropic.ContentBlockParamUnion{}, true
-		}
-		s.emit(aiEvent{ToolResult: &aiToolResult{
-			TurnID: turnID, CallID: toolUse.ID, OK: !outcome.IsError,
-			Data: outcome.Data, Customer: customer, Truncated: outcome.Truncated, Elapsed: time.Since(started),
-		}})
-		return anthropic.NewToolResultBlock(toolUse.ID, outcome.Data, outcome.IsError), false
+		return anthropic.NewToolResultBlock(toolUse.ID, outcome.Data, outcome.IsError)
 
 	default:
-		return anthropic.NewToolResultBlock(toolUse.ID, aiToolError("UNKNOWN_TOOL", toolUse.Name, ""), true), false
+		return anthropic.NewToolResultBlock(toolUse.ID, aiToolError("UNKNOWN_TOOL", toolUse.Name, ""), true)
 	}
 }
 

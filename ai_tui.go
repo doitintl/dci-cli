@@ -126,13 +126,17 @@ type aiModel struct {
 	// and writing to a copied non-empty Builder panics ("illegal use of
 	// non-zero Builder copied by value") as soon as a copy lands at a new
 	// address (stack growth, reallocation) — a mid-turn crash.
-	stream        string
-	turnActivity  string    // status line: what the turn is doing right now
-	turnStarted   time.Time // when the active turn began, for the elapsed display
-	thinking      string    // tail of the model's thinking stream (status snippet only)
-	turnCommands  int       // agent tool calls completed this turn
-	toolLabel     string    // label of the tool call in flight, for its result line
-	markdownStyle string    // glamour style, resolved once before the program runs
+	stream       string
+	turnActivity string    // status line: what the turn is doing right now
+	turnStarted  time.Time // when the active turn began, for the elapsed display
+	thinking     string    // tail of the model's thinking stream (status snippet only)
+	turnCommands int       // agent tool calls completed this turn
+	// toolLabels holds the label of every tool call in flight, keyed by call
+	// ID: the session runs batched calls concurrently, so starts and results
+	// interleave and a single "latest label" field would caption results with
+	// the wrong command.
+	toolLabels    map[string]string
+	markdownStyle string // glamour style, resolved once before the program runs
 	approval      *aiApprovalRequest
 	lastUsage     *aiTurnDone
 
@@ -530,6 +534,7 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		m.turnStarted = time.Now()
 		m.thinking = ""
 		m.turnCommands = 0
+		m.toolLabels = map[string]string{}
 		m.lastUsage = nil
 		commands = append(commands, m.spin.Tick)
 
@@ -560,17 +565,28 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		// Text so far was working narration, not the answer: it becomes the
 		// activity snippet and never reaches the transcript.
 		m.stream = ""
-		m.toolLabel = aiToolCallLabel(*event.ToolCallStarted)
-		m.turnActivity = "running " + m.toolLabel
+		if m.toolLabels == nil {
+			m.toolLabels = map[string]string{}
+		}
+		m.toolLabels[event.ToolCallStarted.CallID] = aiToolCallLabel(*event.ToolCallStarted)
+		m.turnActivity = "running " + m.inFlightLabel()
 
 	case event.ToolResult != nil:
 		m.turnCommands++
+		label := m.toolLabels[event.ToolResult.CallID]
+		delete(m.toolLabels, event.ToolResult.CallID)
+		if label == "" {
+			label = "command"
+		}
 		mark := "✓"
 		if !event.ToolResult.OK {
 			mark = "✗"
 		}
-		m.turnActivity = fmt.Sprintf("%s %s · %s", mark, m.toolLabel,
+		m.turnActivity = fmt.Sprintf("%s %s · %s", mark, label,
 			event.ToolResult.Elapsed.Round(100*time.Millisecond))
+		if len(m.toolLabels) > 0 {
+			m.turnActivity += " · running " + m.inFlightLabel()
+		}
 
 	case event.ApprovalRequest != nil:
 		request := *event.ApprovalRequest
@@ -648,6 +664,17 @@ func aiActivitySnippet(stream string) string {
 		return line
 	}
 	return ""
+}
+
+// inFlightLabel names what the agent is running right now: the single call's
+// label, or a count when a concurrent batch has several in flight.
+func (m *aiModel) inFlightLabel() string {
+	if len(m.toolLabels) == 1 {
+		for _, label := range m.toolLabels {
+			return label
+		}
+	}
+	return fmt.Sprintf("%d commands", len(m.toolLabels))
 }
 
 // aiToolCallLabel names one agent tool call for the status line.

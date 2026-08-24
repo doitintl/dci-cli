@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,12 +26,26 @@ func aiTestMessage(t *testing.T, body string) anthropic.Message {
 const aiTestTextTurn = `{"role":"assistant","content":[{"type":"text","text":"All good."}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":50}}`
 
 func aiTestToolTurn(argv ...string) string {
+	return aiTestToolUseTurn(aiTestRunBlock("call-1", argv...))
+}
+
+// aiTestToolUseTurn assembles an assistant message from tool_use block JSON —
+// the shape the model produces when it batches several calls in one turn.
+func aiTestToolUseTurn(blocks ...string) string {
+	return `{"role":"assistant","content":[` + strings.Join(blocks, ",") +
+		`],"stop_reason":"tool_use","usage":{"input_tokens":20,"output_tokens":5}}`
+}
+
+func aiTestRunBlock(id string, argv ...string) string {
 	quoted := make([]string, len(argv))
 	for i, arg := range argv {
 		quoted[i] = `"` + arg + `"`
 	}
-	return `{"role":"assistant","content":[{"type":"tool_use","id":"call-1","name":"run_dci_command","input":{"argv":[` +
-		strings.Join(quoted, ",") + `]}}],"stop_reason":"tool_use","usage":{"input_tokens":20,"output_tokens":5}}`
+	return `{"type":"tool_use","id":"` + id + `","name":"run_dci_command","input":{"argv":[` + strings.Join(quoted, ",") + `]}}`
+}
+
+func aiTestSwitchBlock(id, customer string) string {
+	return `{"type":"tool_use","id":"` + id + `","name":"set_customer_context","input":{"customer":"` + customer + `"}}`
 }
 
 // newTestSession wires a localAISession with a scripted streamer and runner.
@@ -262,6 +277,166 @@ func TestAISessionCancelKeepsHistoryValid(t *testing.T) {
 	last := session.history[2]
 	if len(last.Content) != 1 || last.Content[0].OfToolResult == nil {
 		t.Fatalf("canceled turn did not backfill the tool_result: %+v", last.Content)
+	}
+}
+
+// aiHistoryToolResultIDs lists the tool_use ids answered by one history
+// message, in reply order.
+func aiHistoryToolResultIDs(message anthropic.MessageParam) []string {
+	var ids []string
+	for _, block := range message.Content {
+		if block.OfToolResult != nil {
+			ids = append(ids, block.OfToolResult.ToolUseID)
+		}
+	}
+	return ids
+}
+
+func TestAISessionRunsBatchedCallsConcurrently(t *testing.T) {
+	// Two independent calls in one assistant message must overlap: each
+	// scripted command blocks until the other has started, so serial
+	// execution would trip the timeout arm instead.
+	turn := aiTestToolUseTurn(aiTestRunBlock("call-1", "list-aws-savings-plans"), aiTestRunBlock("call-2", "list-aws-recommendations"))
+	session := newTestSession(t, []string{turn, aiTestTextTurn}, &scriptedRunner{})
+	bothStarted := make(chan struct{})
+	var arrivals int32
+	session.executor.runner = func(ctx context.Context, argv, _ []string) ([]byte, int, error) {
+		if atomic.AddInt32(&arrivals, 1) == 2 {
+			close(bothStarted)
+		}
+		select {
+		case <-bothStarted:
+			return []byte("ok"), 0, nil
+		case <-time.After(2 * time.Second):
+			return []byte("the sibling call never started"), 1, nil
+		}
+	}
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "rate optimization?"}); err != nil {
+		t.Fatal(err)
+	}
+	events := collectTurnEvents(t, session)
+	for _, event := range events {
+		if event.ToolResult != nil && !event.ToolResult.OK {
+			t.Fatalf("call %s ran serially: %s", event.ToolResult.CallID, event.ToolResult.Data)
+		}
+	}
+	// The reply message answers both tool_use ids, in block order.
+	if got := aiHistoryToolResultIDs(session.history[2]); strings.Join(got, " ") != "call-1 call-2" {
+		t.Fatalf("tool_result ids = %v", got)
+	}
+}
+
+func TestAISessionContextSwitchIsABarrier(t *testing.T) {
+	// [run, switch, run]: the switch applies in message order — the first
+	// command runs against the old context, the second against the new one,
+	// never concurrently with either.
+	turn := aiTestToolUseTurn(
+		aiTestRunBlock("call-1", "list-budgets"),
+		aiTestSwitchBlock("call-2", "acme.com"),
+		aiTestRunBlock("call-3", "list-budgets"),
+	)
+	runner := &scriptedRunner{outputs: []string{"before", "after"}, exits: []int{0, 0}}
+	session := newTestSession(t, []string{turn, aiTestTextTurn}, runner)
+	session.tenantAware = true
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "budgets for acme?"}); err != nil {
+		t.Fatal(err)
+	}
+	events := collectTurnEvents(t, session)
+	sawSwitch := false
+	for _, event := range events {
+		if event.ContextSwitched != nil {
+			sawSwitch = true
+		}
+	}
+	if !sawSwitch {
+		t.Fatal("no ContextSwitched event")
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("runner calls = %v", runner.calls)
+	}
+	if len(runner.envs[0]) != 0 {
+		t.Fatalf("pre-switch call carried an override: %v", runner.envs[0])
+	}
+	if len(runner.envs[1]) != 1 || runner.envs[1][0] != "DCI_CUSTOMER_CONTEXT=acme.com" {
+		t.Fatalf("post-switch call env = %v", runner.envs[1])
+	}
+	if got := aiHistoryToolResultIDs(session.history[2]); strings.Join(got, " ") != "call-1 call-2 call-3" {
+		t.Fatalf("tool_result ids = %v", got)
+	}
+}
+
+func TestAISessionSerializesApprovals(t *testing.T) {
+	// Two destructive calls in one message: the renderers can only show one
+	// approval at a time, so the second request must not arrive until the
+	// first is answered and its result emitted.
+	envelope := `{"error":{"code":"DESTRUCTIVE_REQUIRES_CONFIRMATION","message":"requires confirmation","retryable":false}}`
+	turn := aiTestToolUseTurn(aiTestRunBlock("call-1", "delete-budget", "prod"), aiTestRunBlock("call-2", "delete-budget", "dev"))
+	session := newTestSession(t, []string{turn, aiTestTextTurn}, &scriptedRunner{})
+	session.executor.runner = func(ctx context.Context, argv, _ []string) ([]byte, int, error) {
+		if argv[len(argv)-1] == "--yes" {
+			return []byte("deleted"), 0, nil
+		}
+		return []byte(envelope), aiDestructiveExitCode, nil
+	}
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "delete both"}); err != nil {
+		t.Fatal(err)
+	}
+
+	timeout := time.After(5 * time.Second)
+	outstanding := ""
+	approvals := 0
+	for {
+		select {
+		case event := <-session.Events():
+			if event.ApprovalRequest != nil {
+				if outstanding != "" {
+					t.Fatalf("approval for %s requested while %s is outstanding", event.ApprovalRequest.CallID, outstanding)
+				}
+				outstanding = event.ApprovalRequest.CallID
+				approvals++
+				_ = session.Send(aiUserInput{Kind: aiInputApproval, CallID: event.ApprovalRequest.CallID, Approved: true})
+			}
+			if event.ToolResult != nil && event.ToolResult.CallID == outstanding {
+				outstanding = ""
+			}
+			if event.TurnDone != nil {
+				if approvals != 2 {
+					t.Fatalf("approvals = %d, want 2", approvals)
+				}
+				if got := aiHistoryToolResultIDs(session.history[2]); strings.Join(got, " ") != "call-1 call-2" {
+					t.Fatalf("tool_result ids = %v", got)
+				}
+				return
+			}
+		case <-timeout:
+			t.Fatal("timed out")
+		}
+	}
+}
+
+func TestAISessionCancelMidBatchAnswersEveryCall(t *testing.T) {
+	// Esc while a batch runs: every tool_use in the message must still gain a
+	// tool_result, or the dangling id 400s every later question.
+	turn := aiTestToolUseTurn(
+		aiTestRunBlock("call-1", "list-a"),
+		aiTestRunBlock("call-2", "list-b"),
+		aiTestRunBlock("call-3", "list-c"),
+	)
+	session := newTestSession(t, []string{turn}, &scriptedRunner{})
+	session.executor.runner = func(ctx context.Context, argv, _ []string) ([]byte, int, error) {
+		session.Cancel() // the user pressed esc while the batch ran
+		return []byte("partial"), 0, nil
+	}
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "everything?"}); err != nil {
+		t.Fatal(err)
+	}
+	events := collectTurnEvents(t, session)
+	if events[len(events)-2].Error == nil {
+		t.Fatalf("expected a canceled error before TurnDone, got %s", eventKinds(events))
+	}
+	ids := aiHistoryToolResultIDs(session.history[2])
+	if strings.Join(ids, " ") != "call-1 call-2 call-3" {
+		t.Fatalf("tool_result ids = %v", ids)
 	}
 }
 

@@ -3,22 +3,29 @@ package main
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // scriptedRunner returns canned (output, exit) pairs in order and records the
-// argv of every call.
+// argv and extra env of every call. Mutex-guarded: the session runs batched
+// tool calls concurrently.
 type scriptedRunner struct {
+	mu      sync.Mutex
 	calls   [][]string
+	envs    [][]string
 	outputs []string
 	exits   []int
 	errs    []error
 }
 
-func (r *scriptedRunner) run(_ context.Context, argv, _ []string) ([]byte, int, error) {
+func (r *scriptedRunner) run(_ context.Context, argv, extraEnv []string) ([]byte, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	index := len(r.calls)
 	r.calls = append(r.calls, append([]string{}, argv...))
+	r.envs = append(r.envs, append([]string{}, extraEnv...))
 	if index >= len(r.outputs) {
 		return nil, 0, nil
 	}
