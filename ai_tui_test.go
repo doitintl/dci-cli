@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"os"
 	"strings"
 	"testing"
@@ -614,7 +615,7 @@ func TestAIInputLineHasNoBackgroundBand(t *testing.T) {
 func TestAIBannerAndFrame(t *testing.T) {
 	m := aiTestModel(t)
 	banner := aiTranscriptText(m)
-	for _, want := range []string{"Cloud Intelligence™ CLI", "v" + version, "AI off", "commands"} {
+	for _, want := range []string{"Cloud Intelligence™ CLI", "dev build", "AI off", "commands"} {
 		if !strings.Contains(banner, want) {
 			t.Fatalf("banner missing %q: %s", want, banner)
 		}
@@ -626,4 +627,156 @@ func TestAIBannerAndFrame(t *testing.T) {
 	if strings.Contains(m.input.View(), "Ask about") {
 		t.Fatal("placeholder text still renders — the input should show a bare cursor")
 	}
+}
+
+func TestParseTokenClaims(t *testing.T) {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"DoitEmployee":true,"email":"vadim@doit.com"}`))
+	claims, ok := parseTokenClaims("h." + payload + ".s")
+	if !ok || !claims.DoitEmployee || claims.Email != "vadim@doit.com" {
+		t.Fatalf("claims = %+v ok=%v", claims, ok)
+	}
+	if _, ok := parseTokenClaims("not-a-jwt"); ok {
+		t.Fatal("malformed token parsed")
+	}
+	if _, ok := parseTokenClaims(""); ok {
+		t.Fatal("empty token parsed")
+	}
+}
+
+func TestAIContextLabelWithResolvedName(t *testing.T) {
+	m := aiTestModel(t)
+	if err := os.WriteFile(customerContextPath(m.configDir), []byte("RSTDkHhaoGWwOEvlYlHyBUhm\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.contextLabel(); got != "RSTDkHhaoGWwOEvlYlHyBUhm" {
+		t.Fatalf("label before lookup = %q", got)
+	}
+	updated, _ := m.Update(aiCustomerNameMsg{context: "RSTDkHhaoGWwOEvlYlHyBUhm", name: "Acme Corp"})
+	m = updated.(aiModel)
+	if got := m.identity; got != "Acme Corp (RSTDkHhaoGWwOEvlYlHyBUhm)" {
+		t.Fatalf("label after lookup = %q", got)
+	}
+	if !strings.Contains(m.transcript[0], "Acme Corp") {
+		t.Fatal("banner not refreshed with the resolved name")
+	}
+	// A stale lookup for a different context is dropped.
+	updated, _ = m.Update(aiCustomerNameMsg{context: "other", name: "Wrong"})
+	m = updated.(aiModel)
+	if strings.Contains(m.identity, "Wrong") {
+		t.Fatal("stale lookup applied")
+	}
+}
+
+func TestAICustomerNameFromJSON(t *testing.T) {
+	if got := aiCustomerNameFromJSON([]byte(`{"name":"Acme Corp","id":"x"}`)); got != "Acme Corp" {
+		t.Fatalf("name = %q", got)
+	}
+	if got := aiCustomerNameFromJSON([]byte(`{"primaryDomain":"acme.com"}`)); got != "acme.com" {
+		t.Fatalf("domain fallback = %q", got)
+	}
+	if got := aiCustomerNameFromJSON([]byte(`not json`)); got != "" {
+		t.Fatalf("garbage = %q", got)
+	}
+}
+
+func TestAIMouseToggle(t *testing.T) {
+	m := aiTestModel(t)
+	if !m.mouseOn {
+		t.Fatal("mouse capture must default on")
+	}
+	m = aiType(m, "/mouse")
+	updated, cmd := aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.mouseOn || cmd == nil {
+		t.Fatalf("first /mouse: on=%v cmd=%v", m.mouseOn, cmd)
+	}
+	m = aiType(m, "/mouse")
+	updated, cmd = aiPress(m, tea.KeyEnter)
+	m = updated
+	if !m.mouseOn || cmd == nil {
+		t.Fatalf("second /mouse: on=%v cmd=%v", m.mouseOn, cmd)
+	}
+}
+
+func TestAIPickerFetchesWhenCacheEmpty(t *testing.T) {
+	m := aiTestModel(t)
+	oldIndex := resolutionIndex
+	resolutionIndex = map[string]resolutionListTarget{
+		"get-report": {resource: "reports", listPath: "/reports", listOperation: "list-reports"},
+	}
+	oldFetch := resolverListFetch
+	fetched := false
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		fetched = true
+		return resolverListResult{entries: []nameCacheEntry{
+			{ID: "AAAAAAAAAAAAAAAAAAA1", Name: "BigQuery Storage costs"},
+			{ID: "AAAAAAAAAAAAAAAAAAA2", Name: "BigQuery Storage type"},
+		}}, nil
+	}
+	t.Cleanup(func() { resolutionIndex = oldIndex; resolverListFetch = oldFetch })
+	m.catalog = append(m.catalog, aiCatalogEntry{Path: "get-report", Summary: "Get a report"})
+
+	// No cache: submitting arms the fetch instead of dispatching.
+	m = aiType(m, "/get-report")
+	updated, cmd := aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.fetchIntent == nil || m.running != nil || cmd == nil {
+		t.Fatalf("fetch not armed (intent=%v running=%v)", m.fetchIntent != nil, m.running != nil)
+	}
+	if !strings.Contains(m.statusLine(), "fetching report names") {
+		t.Fatalf("status = %q", m.statusLine())
+	}
+
+	// Deliver the fetch result: the picker opens over the fetched names.
+	intent := m.fetchIntent
+	result, err := resolverListFetch("", "", 0)
+	if err != nil || !fetched {
+		t.Fatal("stub fetch broken")
+	}
+	updated2, _ := m.Update(aiNamesFetchedMsg{intent: intent, entries: result.entries})
+	m = updated2.(aiModel)
+	if m.picker == nil || len(m.picker.candidates) != 2 {
+		t.Fatalf("picker not opened from fetched names: %+v", m.picker)
+	}
+
+	// Esc during a fetch abandons it and the late result is dropped.
+	m.closePicker()
+	m = aiType(m, "/get-report")
+	m, _ = aiPress(m, tea.KeyEnter)
+	stale := m.fetchIntent
+	m, _ = aiPress(m, tea.KeyEsc)
+	if m.fetchIntent != nil {
+		t.Fatal("esc did not abandon the fetch")
+	}
+	updated3, _ := m.Update(aiNamesFetchedMsg{intent: stale, entries: result.entries})
+	m = updated3.(aiModel)
+	if m.picker != nil {
+		t.Fatal("late fetch result opened a picker after cancel")
+	}
+}
+
+func TestAIPickerFetchErrorDispatchesOriginal(t *testing.T) {
+	m := aiTestModel(t)
+	oldIndex := resolutionIndex
+	resolutionIndex = map[string]resolutionListTarget{
+		"get-report": {resource: "reports", listPath: "/reports", listOperation: "list-reports"},
+	}
+	t.Cleanup(func() { resolutionIndex = oldIndex })
+	m.catalog = append(m.catalog, aiCatalogEntry{Path: "get-report", Summary: "Get a report"})
+
+	m = aiType(m, "/get-report bigquery")
+	m, _ = aiPress(m, tea.KeyEnter)
+	intent := m.fetchIntent
+	if intent == nil {
+		t.Fatal("fetch not armed")
+	}
+	updated, _ := m.Update(aiNamesFetchedMsg{intent: intent, err: os.ErrDeadlineExceeded})
+	m = updated.(aiModel)
+	if m.running == nil {
+		t.Fatal("fetch error did not dispatch the original command")
+	}
+	if got := strings.Join(m.running.argv, " "); got != "get-report bigquery" {
+		t.Fatalf("dispatched argv = %q", got)
+	}
+	m.running.cancel()
 }

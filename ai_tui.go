@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -91,9 +92,16 @@ type aiModel struct {
 	historyPos int
 	draft      string
 
-	running    *aiRunState
-	ctrlCArmed bool
-	identity   string
+	running      *aiRunState
+	ctrlCArmed   bool
+	identity     string // the tenant line, cached (rebuilt on switches/lookups)
+	userLine     string // "email · role", from the cached token
+	customerName string // resolved display name for an ID-shaped context
+	mouseOn      bool
+
+	// Async name fetch backing the picker when the cache is empty.
+	fetchedNames map[string][]nameCacheEntry
+	fetchIntent  *aiPickerIntent
 
 	// Conversation state. session is nil when no API key is configured;
 	// sessionNote then explains what is missing.
@@ -171,9 +179,12 @@ func newAIModel(configDir string) aiModel {
 		follow:       true,
 		history:      history,
 		historyPos:   len(history),
-		identity:     aiIdentitySegment(configDir),
+		userLine:     aiUserLine(),
 		modelName:    modelName,
+		mouseOn:      true,
+		fetchedNames: map[string][]nameCacheEntry{},
 	}
+	m.identity = m.contextLabel()
 	if key := resolveAIKey(settings); key != "" {
 		m.session = newAIConversationSession(configDir, key, modelName, catalog)
 	} else {
@@ -203,6 +214,11 @@ var aiLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FC3165"))
 func aiBannerBlock(m *aiModel) string {
 	logo := aiLogoStyle.Render(strings.Join(aiDoitLogo, "\n"))
 
+	versionLabel := "v" + version
+	if version == "dev" {
+		versionLabel = "dev build"
+	}
+
 	modelLine := m.modelName
 	switch {
 	case m.session == nil:
@@ -214,8 +230,11 @@ func aiBannerBlock(m *aiModel) string {
 	}
 
 	info := []string{
-		aiCardHeadStyle.Render("Cloud Intelligence™ CLI") + aiEchoStyle.Render(" v"+version),
+		aiCardHeadStyle.Render("Cloud Intelligence™ CLI") + aiEchoStyle.Render(" "+versionLabel),
 		aiEchoStyle.Render(modelLine),
+	}
+	if m.userLine != "" {
+		info = append(info, aiEchoStyle.Render(m.userLine))
 	}
 	if m.identity != "" {
 		info = append(info, aiEchoStyle.Render(m.identity))
@@ -225,16 +244,86 @@ func aiBannerBlock(m *aiModel) string {
 	return lipgloss.JoinHorizontal(lipgloss.Center, logo, "  ", strings.Join(info, "\n")) + "\n"
 }
 
-// aiIdentitySegment is the tenant half of the status line: doers always see
-// their mode and context, non-doers see the context only when one is set —
-// a single-tenant customer sees no tenant vocabulary at all (AI-SPEC §6.1).
-func aiIdentitySegment(configDir string) string {
-	context := readCustomerContext(configDir)
-	if cachedTokenIsDoer() {
-		if context == "" {
-			return "doer · no customer context (/customer <name>)"
+// refreshBanner re-renders the opening block in place after an identity
+// change (a resolved customer name, a tenant switch).
+func (m *aiModel) refreshBanner() {
+	if len(m.transcript) > 0 && strings.Contains(m.transcript[0], "Cloud Intelligence™ CLI") {
+		m.transcript[0] = aiBannerBlock(m)
+		m.refreshTranscript()
+	}
+}
+
+// aiCustomerNameMsg reports the opportunistic display-name lookup.
+type aiCustomerNameMsg struct {
+	context string
+	name    string
+}
+
+// aiLookupCustomerName resolves an ID-shaped customer context to its display
+// name — but only when the API actually exposes a get-customer operation;
+// otherwise the raw context stands. Runs as a subprocess in agent mode so a
+// hung lookup can never wedge the session.
+func aiLookupCustomerName(customerContext string) tea.Cmd {
+	if customerContext == "" || strings.Contains(customerContext, ".") || aiOperationFlagSet("get-customer") == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		output, exitCode, err := aiAgentModeRunner(ctx, []string{"get-customer", customerContext, "--output", "json"})
+		if err != nil || exitCode != 0 {
+			return aiCustomerNameMsg{context: customerContext}
 		}
-		return "doer · " + context
+		return aiCustomerNameMsg{context: customerContext, name: aiCustomerNameFromJSON(output)}
+	}
+}
+
+// aiCustomerNameFromJSON pulls a display name out of the customer payload,
+// using the same field priority the name resolver trusts.
+func aiCustomerNameFromJSON(data []byte) string {
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	for _, field := range append(resourceNameFieldPriority, "primaryDomain", "domain") {
+		if value, ok := payload[field].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+// aiUserLine is the signed-in identity: email and role from the cached
+// token. Partner detection needs a claim the token does not carry yet, so
+// non-doers read as Customer.
+func aiUserLine() string {
+	claims, ok := cachedTokenClaims()
+	if !ok {
+		return ""
+	}
+	role := "Customer"
+	if claims.DoitEmployee {
+		role = "Doer"
+	}
+	if claims.Email == "" {
+		return role
+	}
+	return claims.Email + " · " + role
+}
+
+// contextLabel is the tenant line: the customer display name when resolved,
+// with the raw context in parentheses; doers with no context get the fix
+// spelled out; single-tenant customers see no tenant vocabulary (§6.1).
+func (m *aiModel) contextLabel() string {
+	context := readCustomerContext(m.configDir)
+	if context == "" {
+		if cachedTokenIsDoer() {
+			return "no customer context (/customer <name>)"
+		}
+		return ""
+	}
+	if m.customerName != "" {
+		return m.customerName + " (" + context + ")"
 	}
 	return context
 }
@@ -246,10 +335,14 @@ var newAIConversationSession = func(configDir, apiKey, model string, catalog []a
 }
 
 func (m aiModel) Init() tea.Cmd {
+	commands := []tea.Cmd{textarea.Blink}
 	if m.session != nil {
-		return tea.Batch(textarea.Blink, aiListen(m.session))
+		commands = append(commands, aiListen(m.session))
 	}
-	return textarea.Blink
+	if lookup := aiLookupCustomerName(readCustomerContext(m.configDir)); lookup != nil {
+		commands = append(commands, lookup)
+	}
+	return tea.Batch(commands...)
 }
 
 // aiListen delivers the next protocol event as a tea.Msg; the handler re-arms
@@ -329,7 +422,7 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case spinner.TickMsg:
-		if m.running == nil && !m.turnActive {
+		if m.running == nil && !m.turnActive && m.fetchIntent == nil {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -357,6 +450,17 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case aiSessionEventMsg:
 		return m.handleSessionEvent(msg.event)
+
+	case aiCustomerNameMsg:
+		if msg.name != "" && msg.context == readCustomerContext(m.configDir) {
+			m.customerName = msg.name
+			m.identity = m.contextLabel()
+			m.refreshBanner()
+		}
+		return m, nil
+
+	case aiNamesFetchedMsg:
+		return m.handleNamesFetched(msg)
 
 	case aiSessionClosedMsg:
 		return m, nil
@@ -394,10 +498,15 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		m.append(renderAIApprovalRequest(request))
 
 	case event.ContextSwitched != nil:
-		m.identity = aiIdentitySegment(m.configDir)
+		m.customerName = ""
+		m.identity = m.contextLabel()
+		m.refreshBanner()
 		m.append(aiNoticeStyle.Render(fmt.Sprintf(
 			"customer context switched: %s → %s (by %s)",
 			aiDisplayContext(event.ContextSwitched.From), event.ContextSwitched.To, event.ContextSwitched.By)))
+		if lookup := aiLookupCustomerName(event.ContextSwitched.To); lookup != nil {
+			commands = append(commands, lookup)
+		}
 
 	case event.LimitReached != nil:
 		m.append(aiErrorStyle.Render(
@@ -452,6 +561,16 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// A pending name selection owns it next (ai_picker.go).
 	if m.picker != nil {
 		return m.handlePickerKey(msg)
+	}
+
+	// While the picker's name fetch runs, only esc acts (it abandons the
+	// fetch; the result is dropped when it lands).
+	if m.fetchIntent != nil {
+		if key == "esc" || key == "ctrl+c" {
+			m.fetchIntent = nil
+			m.append(aiEchoStyle.Render("selection canceled"))
+		}
+		return m, nil
 	}
 
 	// A user command blocked by the destructive contract waits for y/N (F3).
@@ -669,16 +788,70 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 				aiEchoStyle.Render("In here: ask the AI to build and run the query for you, or pass shorthand body arguments to /query."))
 			return m, nil
 		}
-		if selection := aiNameSelectionFor(route.argv, m.configDir); selection != nil {
-			m.picker = selection
-			m.pickerFilter = ""
-			m.pickerIndex = 0
-			m.layout()
-			return m, nil
+		if intent := aiPickerIntentFor(route.argv); intent != nil {
+			entries := intent.cachedEntries(m.configDir)
+			if len(entries) == 0 {
+				entries = m.fetchedNames[intent.target.resource]
+			}
+			if len(entries) == 0 {
+				// No names on hand: fetch them (what the child's own F1/F2
+				// would do) instead of degrading to a usage error.
+				m.fetchIntent = intent
+				return m, tea.Batch(m.spin.Tick, aiFetchNames(intent, readCustomerContext(m.configDir)))
+			}
+			if selection := intent.selection(entries); selection != nil {
+				m.openPicker(selection)
+				return m, nil
+			}
 		}
 		return m, m.startDispatch(route.argv)
 	}
 	return m, nil
+}
+
+func (m *aiModel) openPicker(selection *aiNameSelection) {
+	m.picker = selection
+	m.pickerFilter = ""
+	m.pickerIndex = 0
+	m.layout()
+}
+
+// aiNamesFetchedMsg reports the async name fetch backing the picker.
+type aiNamesFetchedMsg struct {
+	intent  *aiPickerIntent
+	entries []nameCacheEntry
+	err     error
+}
+
+// aiFetchNames pages the collection like the CLI's own picker does
+// (resolverListFetch), off the UI goroutine.
+func aiFetchNames(intent *aiPickerIntent, customerContext string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := resolverListFetch(intent.target.listPath, customerContext, resolverMaxPages)
+		return aiNamesFetchedMsg{intent: intent, entries: result.entries, err: err}
+	}
+}
+
+func (m aiModel) handleNamesFetched(msg aiNamesFetchedMsg) (tea.Model, tea.Cmd) {
+	if m.fetchIntent == nil || m.fetchIntent != msg.intent {
+		return m, nil // canceled or superseded — drop the result
+	}
+	m.fetchIntent = nil
+	if msg.err != nil {
+		// The child will surface the real error (auth, network) on dispatch.
+		m.append(aiEchoStyle.Render("could not fetch " + msg.intent.resource + " names — running the command as typed"))
+		return m, m.startDispatch(msg.intent.argv)
+	}
+	m.fetchedNames[msg.intent.target.resource] = msg.entries
+	if len(msg.entries) == 0 {
+		m.append(aiNoticeStyle.Render("no " + msg.intent.resource + "s available in this customer context"))
+		return m, nil
+	}
+	if selection := msg.intent.selection(msg.entries); selection != nil {
+		m.openPicker(selection)
+		return m, nil
+	}
+	return m, m.startDispatch(msg.intent.argv)
 }
 
 // startDispatch spawns one slash command subprocess and arms the spinner.
@@ -849,9 +1022,22 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 			m.append(aiErrorStyle.Render(err.Error()))
 			return m, nil
 		}
-		m.identity = aiIdentitySegment(m.configDir)
+		m.customerName = ""
+		m.identity = m.contextLabel()
+		m.refreshBanner()
 		m.append(tuiSuccessStyle.Render(result))
+		if lookup := aiLookupCustomerName(readCustomerContext(m.configDir)); lookup != nil {
+			return m, lookup
+		}
 		return m, nil
+	case "mouse":
+		m.mouseOn = !m.mouseOn
+		if m.mouseOn {
+			m.append(aiEchoStyle.Render("mouse capture on — wheel scrolls the transcript; /mouse to select text"))
+			return m, tea.EnableMouseCellMotion
+		}
+		m.append(aiEchoStyle.Render("mouse capture off — select and copy text normally; /mouse to re-enable wheel scrolling"))
+		return m, tea.DisableMouse
 	case "model":
 		return m.runModelVerb(route.args)
 	case "export":
@@ -1154,8 +1340,9 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 	lines = append(lines, "",
 		aiEchoStyle.Render("Saved commands: define your own in "+aiUserCommandsFileName+" — {\"top5\": {\"command\": \"list-reports --limit 5\"}, \"review\": {\"prompt\": \"Review last month's spend\"}}"),
 		aiEchoStyle.Render("Privacy: AI questions and dci command results are sent to Anthropic's API under your key."),
+		aiEchoStyle.Render("Copying text: /mouse turns capture off for normal selection (or hold Shift/Option while selecting); /export saves the whole transcript."),
 		"",
-		"  tab completes · ↑/↓ history or popup · wheel/PgUp/PgDn scroll · esc clears or cancels · /export saves the transcript")
+		"  tab completes · ↑/↓ history or popup · wheel/PgUp/PgDn scroll · esc clears or cancels")
 	return strings.Join(lines, "\n")
 }
 
@@ -1259,6 +1446,9 @@ func (m aiModel) statusLine() string {
 	}
 	if m.approval != nil || m.dispatchApproval != nil {
 		return aiApproveStyle.Render("destructive command pending — y run · n decline")
+	}
+	if m.fetchIntent != nil {
+		return m.spin.View() + aiEchoStyle.Render(" fetching "+m.fetchIntent.resource+" names… · esc to cancel")
 	}
 	if m.running != nil {
 		return m.spin.View() + aiEchoStyle.Render(fmt.Sprintf(" running /%s · %s · esc to cancel",

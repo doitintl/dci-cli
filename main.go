@@ -1410,29 +1410,42 @@ func applyDoerContext(configDir string) bool {
 // it is an explicit claim set by the DoiT auth server and is domain-independent.
 // Returns false if the cache is empty, the token is absent, or the JWT is malformed.
 func cachedTokenIsDoer() bool {
+	claims, ok := cachedTokenClaims()
+	return ok && claims.DoitEmployee
+}
+
+// dciTokenClaims are the JWT payload fields dci reads: the doer marker and
+// the signed-in identity (shown in the ai session's banner).
+type dciTokenClaims struct {
+	DoitEmployee bool   `json:"DoitEmployee"`
+	Email        string `json:"email"`
+}
+
+func cachedTokenClaims() (dciTokenClaims, bool) {
 	if cli.Cache == nil {
-		return false
+		return dciTokenClaims{}, false
 	}
-	token := cli.Cache.GetString("dci:default.token")
+	return parseTokenClaims(cli.Cache.GetString("dci:default.token"))
+}
+
+func parseTokenClaims(token string) (dciTokenClaims, bool) {
 	if token == "" {
-		return false
+		return dciTokenClaims{}, false
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return false
+		return dciTokenClaims{}, false
 	}
 	// JWT payload is base64url-encoded without padding.
 	b, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return false
+		return dciTokenClaims{}, false
 	}
-	var claims struct {
-		DoitEmployee bool `json:"DoitEmployee"`
-	}
+	var claims dciTokenClaims
 	if err := json.Unmarshal(b, &claims); err != nil {
-		return false
+		return dciTokenClaims{}, false
 	}
-	return claims.DoitEmployee
+	return claims, true
 }
 
 func registerAuthCommands(configDir string) {
