@@ -91,6 +91,11 @@ func aiRouteLine(line string, catalog []aiCatalogEntry, userCommands map[string]
 		return aiRoute{kind: aiRouteEmpty}
 	}
 	if !strings.HasPrefix(line, "/") {
+		// A bare "exit"/"quit" is someone leaving, not a question for the
+		// model — honor the shell instinct.
+		if lower := strings.ToLower(line); lower == "exit" || lower == "quit" {
+			return aiRoute{kind: aiRouteVerb, verb: "quit"}
+		}
 		return aiRoute{kind: aiRouteChat, text: line}
 	}
 	argv, err := splitCommandLine(strings.TrimPrefix(line, "/"))
