@@ -26,7 +26,7 @@ func aiSystemPrompt(catalog []aiCatalogEntry, tenantAware, isDoer bool) string {
 Use the run_dci_command tool. Pass argv as the words after "dci": {"argv": ["list-budgets", "--output", "json"]}.
 
 - Go straight at the question: when the catalog already names the right command, run the single most direct query rather than listing and exploring first. Cost, spend, and usage questions are usually one dci query (see the query section below) — not a tour of list commands.
-- Independent commands belong in one response: request several run_dci_command calls together instead of one per turn — every extra turn costs the user seconds.
+- Independent commands belong in one response: request several run_dci_command calls together instead of one per turn — every extra turn costs the user seconds. Batch only calls that don't depend on each other's output; a call that needs a value from another call's result goes in the NEXT response, after that result arrives.
 - To learn an unfamiliar command's flags, run it with --help: {"argv": ["get-report", "--help"]}. Don't re-learn flags you already used in this conversation, and don't run --help for query — its request body is fully specified below.
 - Output follows the CLI's agent contract: compact structured data on success; on failure a JSON envelope {"error": {"code", "message", "hint", "retryable"}} — read the hint, fix the call, and retry only when retryable.
 - Large responses: narrow with --fields/--exclude or the operation's filter flags instead of paging through everything.
@@ -82,7 +82,7 @@ const aiFinOpsSurfacesSection = `
 - Anomalies: list-anomalies; sort with --sort-by startTime|severityLevel|costOfAnomaly and --sort-order asc|desc (exactly "asc"/"desc" — the API rejects longer spellings). --min/--max-creation-time take epoch milliseconds and bound the anomaly's usage start time. --filter keys: serviceName, billingAccount, platform, severityLevel (values lowercase: information, warning, critical).
 - Budgets: list-budgets returns each budget with its amount, current spend, and forecast — usually a single call answers "are any budgets at risk".
 - Savings opportunities: list-insights --all is the primary source (curated findings with a dailySavings figure; dismissed insights are excluded by default). Don't guess --category values — fetch all and filter yourself. --all conflicts with --max-results.
-- Commitments and rate optimization: list-commitments --all for DoiT commitments. The AWS chain is ordered: list-aws-organizations first, then list-aws-savings-plans <org-id> and list-aws-recommendations <org-id> per organization. Realized discounts also appear in query via the savings_description dimension.
+- Commitments and rate optimization: list-commitments --all for DoiT commitments. list-aws-savings-plans and list-aws-recommendations REQUIRE an org-id argument from list-aws-organizations — never call them without it: fetch the organizations first (alone), then batch the per-org calls together in your next response. Realized discounts also appear in query via the savings_description dimension.
 - Allocation/tag coverage: run the same query twice — total cost, then with --drop-unlabeled-rows — and report the difference as unallocated spend. Group by the label under test for per-value coverage.
 `
 
