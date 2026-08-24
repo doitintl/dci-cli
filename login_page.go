@@ -294,6 +294,16 @@ func (ac *authorizationCodeTokenSource) getRedirectURL() string {
 
 // Token generates a new token using an authorization code.
 func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
+	// Headless guard: everything below needs a human to complete the browser
+	// round-trip, and the select on the callback has no timeout. Reaching here
+	// in agent mode or without a stdin TTY — an AI-session child, CI, or an
+	// API command's --help loading the description with no cached token —
+	// would hang forever. Same predicate as the invocation preflight, so
+	// interactive humans keep the exact flow below.
+	if !invocationInteractive() {
+		return nil, errors.New("no credentials available and this session cannot open a browser to log in: set DCI_API_KEY, or run dci login from an interactive terminal")
+	}
+
 	// Generate a random code verifier string
 	verifierBytes := make([]byte, 32)
 	if _, err := rand.Read(verifierBytes); err != nil {

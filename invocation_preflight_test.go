@@ -84,9 +84,29 @@ func TestPreflightAPIInvocationFailsBeforeLoadingWithoutCredentialsOrCache(t *te
 	}
 }
 
-func TestPreflightAPIInvocationAllowsHelpWithoutCredentialsOrCache(t *testing.T) {
+func TestPreflightAPIInvocationRejectsColdCacheHeadlessHelp(t *testing.T) {
+	// Help on an API command needs the description; loading it with no
+	// credentials, no cached spec, and no interactive terminal used to
+	// dead-end in the browser-login wait. It must fail fast instead.
 	api := cli.API{Operations: []cli.Operation{{Name: "delete-report"}}}
 	loadCount := configureInvocationPreflightTest(t, api, false, false, false)
+
+	err := preflightAPIInvocation([]string{"dci", "dci", "delete-report", "--help"})
+	if err == nil {
+		t.Fatal("cold-cache headless help accepted")
+	}
+	detail := err.(invocationPreflightError).StructuredError()
+	if detail.Code != "AUTHENTICATION_REQUIRED" || err.(invocationPreflightError).ExitCode() != exitAuthentication {
+		t.Fatalf("error = %#v", err)
+	}
+	if *loadCount != 0 {
+		t.Fatalf("help loaded operation metadata %d times", *loadCount)
+	}
+}
+
+func TestPreflightAPIInvocationAllowsWarmCacheHelpWithoutCredentials(t *testing.T) {
+	api := cli.API{Operations: []cli.Operation{{Name: "delete-report"}}}
+	loadCount := configureInvocationPreflightTest(t, api, false, true, false)
 
 	if err := preflightAPIInvocation([]string{"dci", "dci", "delete-report", "--help"}); err != nil {
 		t.Fatalf("help rejected: %v", err)

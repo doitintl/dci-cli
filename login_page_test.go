@@ -349,6 +349,29 @@ func TestAuthorizationCodeTokenSourceRedirectURL(t *testing.T) {
 	}
 }
 
+func TestAuthorizationCodeTokenSourceFailsFastHeadless(t *testing.T) {
+	// The interactive flow blocks on the browser callback with no timeout;
+	// reached headless (agent-mode child, CI, or a --help description fetch)
+	// it must return an error immediately instead of hanging the process.
+	previousInteractive := invocationInteractive
+	invocationInteractive = func() bool { return false }
+	t.Cleanup(func() { invocationInteractive = previousInteractive })
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := (&authorizationCodeTokenSource{}).Token()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "DCI_API_KEY") {
+			t.Fatalf("error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Token() did not return headless")
+	}
+}
+
 func TestRequestOAuthToken(t *testing.T) {
 	cases := []struct {
 		name      string
