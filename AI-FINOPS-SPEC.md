@@ -226,6 +226,18 @@ Post-decision validation note: the book-of-business filter shape
 cold CSP query returns in seconds (the filter narrows the scan), so filtered queries are
 now the recommended CSP pattern in both the prompt and the skill.
 
+Two follow-ups from the same observations, also implemented and validated live:
+
+- **`--rollup <cols>`** — client-side aggregation (group by result columns, sum metric
+  columns, drop the rest; `rolledUpFrom` marker, self-correcting `rollupError`). Period
+  totals previously landed on the model as row-level arithmetic inside hidden reasoning
+  — the dominant latency and the one measured accuracy risk. The model adopts it
+  unprompted: a 3-month top-services totals question now resolves in one call, ~20s.
+- **Session-scoped `set_customer_context`** — the agent's switch no longer writes the
+  persisted context file; children get `DCI_CUSTOMER_CONTEXT`, the prompt/status line
+  and user dispatches follow the override, and `/customer` persists as before while
+  clearing it. Validated: two one-shot CSP runs left the saved context byte-identical.
+
 ## 5. Validation log
 
 | Assumption | Method | Result |
