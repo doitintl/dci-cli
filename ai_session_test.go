@@ -460,20 +460,30 @@ func TestAISettingsRoundTripAndResolution(t *testing.T) {
 func TestResolveAIEffortAndModelOverrides(t *testing.T) {
 	t.Setenv("DCI_AI_EFFORT", "")
 	t.Setenv("DCI_AI_MODEL", "")
-	if got := resolveAIEffort(aiSettings{}); got != "" {
-		t.Fatalf("no effort configured, got %q", got)
+	// Unconfigured sessions get the measured default cap (AI-FINOPS-SPEC §1).
+	if got := resolveAIEffort(aiSettings{}); got != aiDefaultEffort {
+		t.Fatalf("no effort configured, got %q, want %q", got, aiDefaultEffort)
 	}
 	if got := resolveAIEffort(aiSettings{Effort: " Medium "}); got != "medium" {
 		t.Fatalf("settings effort = %q", got)
 	}
-	// A config typo must degrade to the API default, not break the session.
-	if got := resolveAIEffort(aiSettings{Effort: "max"}); got != "" {
-		t.Fatalf("invalid effort must resolve empty, got %q", got)
+	// A config typo must degrade to the default cap, not break the session.
+	if got := resolveAIEffort(aiSettings{Effort: "max"}); got != aiDefaultEffort {
+		t.Fatalf("invalid effort must resolve to the default, got %q", got)
+	}
+	// "default" is the explicit opt-out: no cap, the API's own default.
+	if got := resolveAIEffort(aiSettings{Effort: "default"}); got != "" {
+		t.Fatalf("effort=default must remove the cap, got %q", got)
 	}
 	t.Setenv("DCI_AI_EFFORT", "low")
 	if got := resolveAIEffort(aiSettings{Effort: "high"}); got != "low" {
 		t.Fatalf("env must win, got %q", got)
 	}
+	t.Setenv("DCI_AI_EFFORT", "default")
+	if got := resolveAIEffort(aiSettings{Effort: "high"}); got != "" {
+		t.Fatalf("env default must win over settings, got %q", got)
+	}
+	t.Setenv("DCI_AI_EFFORT", "")
 	t.Setenv("DCI_AI_MODEL", "claude-sonnet-5")
 	if got := resolveAIModel(aiSettings{Model: "claude-opus-5"}); got != "claude-sonnet-5" {
 		t.Fatalf("model env must win, got %q", got)

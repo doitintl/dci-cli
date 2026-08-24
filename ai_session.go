@@ -36,6 +36,11 @@ const (
 	// been measured thinking past 16k on their own, which killed the turn
 	// with an output-token ceiling error before any answer text.
 	aiMaxOutputTokens = 32000
+	// aiDefaultEffort caps reasoning effort when nothing is configured.
+	// Measured on the FinOps-12 suite (AI-FINOPS-SPEC §1), medium matched
+	// unbounded reasoning answer-for-answer while cutting wall clock ~25%;
+	// "default" opts back into the API default (no cap).
+	aiDefaultEffort = "medium"
 )
 
 // aiKnownModels is the selectable set shown by /model. Other claude-* ids are
@@ -99,9 +104,11 @@ func resolveAIModel(settings aiSettings) string {
 }
 
 // resolveAIEffort returns the reasoning-effort cap: DCI_AI_EFFORT wins over
-// the settings file (same precedence as the API key); anything but the three
-// valid levels resolves to "" — the API default — rather than failing a
-// session over a config typo.
+// the settings file (same precedence as the API key). "low"/"medium"/"high"
+// cap the effort; "default" removes the cap (the API's unbounded adaptive
+// thinking — note "high" is still a cap, not the API default). An invalid
+// value falls through to the next source rather than failing a session over
+// a config typo; with nothing valid configured the cap is aiDefaultEffort.
 func resolveAIEffort(settings aiSettings) string {
 	for _, effort := range []string{os.Getenv("DCI_AI_EFFORT"), settings.Effort} {
 		switch strings.ToLower(strings.TrimSpace(effort)) {
@@ -111,9 +118,11 @@ func resolveAIEffort(settings aiSettings) string {
 			return "medium"
 		case "high":
 			return "high"
+		case "default":
+			return "" // no cap: the API default
 		}
 	}
-	return ""
+	return aiDefaultEffort
 }
 
 // aiValidateAPIKey applies shape checks before persisting a key: a wrong

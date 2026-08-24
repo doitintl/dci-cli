@@ -40,6 +40,36 @@ wall-clock, tool-call count, and answer sanity against the table below.
 Scorecard: **9/10 correct and sane; 1 hard failure caused by a CLI bug (§2.1); 3 runs
 spent most of their time exploring surface the playbook doesn't cover (§2.2).**
 
+### 1.1 `effort=medium` run (2026-08-24) — default effort flipped to medium
+
+Full suite (P01–P12, doer account) re-run on post-#103 main under
+`DCI_AI_EFFORT=medium`. Caveat on reading the speed column: the binary also carries the
+F2 playbook section, `--rollup`, and the exit-30 fix, so the wall-clock deltas fold in
+those improvements too — the gate for the default flip was answer substance, not speed.
+
+| # | Baseline | Medium | Tool calls (base → med) | Verdict at medium |
+|---|---|---|---|---|
+| P01 | 32s | 26s | 1 → 1 | sane; same insight quality |
+| P02 | 25s | 22s | 1 → 1 | sane; notes top-10 ≠ full bill |
+| P03 | 17s (**failed**) | 33s | 2 → 3 | **correct** — 132 anomalies, biggest one root-caused to SKU level |
+| P04 | 53s | 41s | 2 → 2 | sane; excludes partial-day and placeholder rows from the run rate |
+| P05 | 15s | 13s | 1 → 1 | sane |
+| P06 | 151s | 69s | 14 → 9 | sane; keeps both reconciliation caveats |
+| P07 | 63s | 28s | 9 → 4 | sane; discloses dismissed-insights and page-cap blind spots |
+| P08 | 35s | 36s | 1 → 1 | sane; $ and % both correct |
+| P09 | 90s | 62s | 5 → 4 | sane; refuses to sum overlapping tag sources |
+| P10 | 91s | 61s | 1 → 1 | **verified by hand**: 3 family sums reconcile against raw rows (incl. the `claude-4.6-opus-*` naming trap); Cursor billing-classification caveat stated |
+| P11 | — | 49s | — → 7 | correct: no book-of-business tags exist for this account; says so and offers alternatives instead of fabricating |
+| P12 | — | 18s | — → 2 | correct: switches to CSP, right provider growth ranking |
+
+12/12 substantively correct; none of the `effort=low` failure modes (mis-merged model
+families) appeared, no turn hit the output-token ceiling. **Decision: the default
+reasoning effort is now `medium`** (`aiDefaultEffort`, `resolveAIEffort`). Precedence is
+unchanged (`DCI_AI_EFFORT` > `"effort"` in settings > default); the new value `default`
+opts back into the API's uncapped adaptive thinking — `high` is *not* that opt-out, it
+is a cap above medium. P11/P12 have no baseline column: this run is their first
+recorded measurement.
+
 ## 2. Findings
 
 ### 2.1 Exit-30 collision: validation errors masquerade as destructive commands — FIXED
@@ -83,7 +113,7 @@ calls to 2–4.
 
 Five of ten prompts resolved in a single tool call (the #100/#101 work paying off), and
 the reasoning-dominated latency profile matches the #101 analysis (server-side thinking
-is the floor; `effort=medium` remains the documented speed lever).
+is the floor; `effort=medium` proved out as the speed lever and is now the default, §1.1).
 
 ---
 
