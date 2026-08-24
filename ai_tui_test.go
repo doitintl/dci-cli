@@ -315,6 +315,33 @@ func TestAITurnLifecycleEvents(t *testing.T) {
 	}
 }
 
+func TestAIUnescapeMarkdown(t *testing.T) {
+	// The pinned glamour v0.6.0 prints CommonMark backslash escapes
+	// literally, so they are resolved before rendering.
+	got := aiUnescapeMarkdown(`\*August is partial\.`)
+	if got != "*August is partial." {
+		t.Fatalf("unescape = %q", got)
+	}
+	fenced := "```\nkeep \\* verbatim\n```\nbut \\_this\\_ unescapes"
+	got = aiUnescapeMarkdown(fenced)
+	if !strings.Contains(got, `keep \* verbatim`) || !strings.Contains(got, "but _this_ unescapes") {
+		t.Fatalf("fence handling wrong: %q", got)
+	}
+	if got := aiUnescapeMarkdown(`C:\path stays`); got != `C:\path stays` {
+		t.Fatalf("non-punctuation escape mangled: %q", got)
+	}
+}
+
+func TestAIRenderMarkdownFixedStyleAndEscapes(t *testing.T) {
+	rendered := stripANSI(renderAIMarkdown(`\*August is partial (through today).`, 80, "dark"))
+	if strings.Contains(rendered, `\*`) {
+		t.Fatalf("backslash escape reached the screen: %q", rendered)
+	}
+	if !strings.Contains(rendered, "*August is partial") {
+		t.Fatalf("literal asterisk lost: %q", rendered)
+	}
+}
+
 func TestAIQuietTurnToolActivity(t *testing.T) {
 	m := aiTestModel(t)
 	m.session = newFakeAISession()
