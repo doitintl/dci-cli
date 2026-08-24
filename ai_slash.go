@@ -33,7 +33,8 @@ type aiSessionVerb struct {
 var aiSessionVerbs = []aiSessionVerb{
 	{name: "customer", usage: "/customer [name|id]", summary: "Show or set the customer context"},
 	{name: "model", usage: "/model [id]", summary: "Show or set the AI model"},
-	{name: "clear", usage: "/clear", summary: "Clear the screen and start a new conversation"},
+	{name: "export", usage: "/export [file]", summary: "Save the transcript to a file"},
+	{name: "clear", usage: "/clear", summary: "Clear the transcript and start a new conversation"},
 	{name: "help", usage: "/help", summary: "Show how the session works"},
 	{name: "quit", usage: "/quit", summary: "Leave the session"},
 }

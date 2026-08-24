@@ -1,16 +1,16 @@
 package main
 
-// P2 of AI-SPEC: the `dci ai` inline session program. Runs Bubble Tea in its
-// default inline mode — no alternate screen — so completed output lands in
-// the terminal's native scrollback via tea.Println while only the bottom
-// region (streamed narration, completion popup, input, status line) is
-// managed. Slash commands dispatch to the CLI itself as a subprocess
-// (AI-SPEC §7.4) and their results join the conversation (§4.4); plain text
-// goes to the conversation session (ai_session.go), whose protocol events
-// this program renders: streamed narration committed through glamour, tool
-// cards, destructive approvals, tenant switches. Routing, completion, and
-// history logic live in ai_slash.go. Kept in a sibling file per the
-// AGENTS.md chapter-split guidance.
+// The `dci ai` session program (AI-SPEC §3, D9): a stable frame in the
+// alternate screen — one-line header, the transcript in a scrolling
+// viewport, input and status pinned at the bottom. The frame never moves;
+// content scrolls inside the viewport (mouse wheel, PgUp/PgDn), following
+// the bottom until the user scrolls up. Slash commands dispatch to the CLI
+// itself as a subprocess (§7.4) and their results join the conversation
+// (§4.4); plain text goes to the conversation session (ai_session.go),
+// whose protocol events this program renders: streamed narration committed
+// through glamour, tool cards, destructive approvals, tenant switches.
+// Routing, completion, and history logic live in ai_slash.go. Kept in a
+// sibling file per the AGENTS.md chapter-split guidance.
 
 import (
 	"context"
@@ -23,6 +23,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -36,9 +37,13 @@ var (
 	aiNoticeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	aiAgentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	aiApproveStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	aiHeaderStyle   = lipgloss.NewStyle().Bold(true)
 )
 
-const aiCompletionLimit = 6
+const (
+	aiCompletionLimit  = 6
+	aiTranscriptBlocks = 500 // frame memory cap; /export preserves everything typed before it
+)
 
 // aiRunState tracks the one in-flight user slash dispatch; the session runs
 // at most one command at a time, matching the one-conversation mental model.
@@ -71,9 +76,13 @@ type aiModel struct {
 	catalog      []aiCatalogEntry
 	userCommands map[string]aiUserCommand
 
-	input textarea.Model
-	spin  spinner.Model
-	width int
+	input      textarea.Model
+	view       viewport.Model
+	spin       spinner.Model
+	width      int
+	height     int
+	follow     bool // stick the viewport to the bottom on new content
+	transcript []string
 
 	completions     []aiCompletion
 	completionIndex int
@@ -86,7 +95,7 @@ type aiModel struct {
 	ctrlCArmed bool
 	identity   string
 
-	// Conversation state (P2). session is nil when no API key is configured;
+	// Conversation state. session is nil when no API key is configured;
 	// sessionNote then explains what is missing.
 	session     conversationSession
 	sessionNote string
@@ -104,7 +113,7 @@ type aiModel struct {
 
 // runAISession is the entry point behind `dci ai` (ai_command.go).
 func runAISession(configDir string) error {
-	program := tea.NewProgram(newAIModel(configDir))
+	program := tea.NewProgram(newAIModel(configDir), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model, err := program.Run()
 	if m, ok := model.(aiModel); ok && m.session != nil {
 		_ = m.session.Close()
@@ -118,7 +127,6 @@ func newAIModel(configDir string) aiModel {
 	input.ShowLineNumbers = false
 	input.CharLimit = 0
 	input.SetHeight(1)
-	input.SetWidth(78)
 	input.KeyMap.InsertNewline.SetEnabled(false)
 	input.Focus()
 
@@ -132,8 +140,11 @@ func newAIModel(configDir string) aiModel {
 		catalog:      catalog,
 		userCommands: loadAIUserCommands(configDir),
 		input:        input,
+		view:         viewport.New(80, 20),
 		spin:         spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		width:        80,
+		height:       24,
+		follow:       true,
 		history:      history,
 		historyPos:   len(history),
 		identity:     aiIdentitySegment(configDir),
@@ -146,6 +157,9 @@ func newAIModel(configDir string) aiModel {
 		m.sessionNote = "AI needs an Anthropic API key — ask a question to set one up, or export ANTHROPIC_API_KEY"
 		m.input.Placeholder = "Ask a question to set up AI, or type / for commands"
 	}
+	m.append(aiNoticeStyle.Render("Cloud Intelligence™ interactive session") +
+		aiEchoStyle.Render("  —  /help for commands, /quit to leave"))
+	m.layout()
 	return m
 }
 
@@ -163,22 +177,17 @@ func aiIdentitySegment(configDir string) string {
 	return context
 }
 
-func (m aiModel) Init() tea.Cmd {
-	commands := []tea.Cmd{
-		textarea.Blink,
-		tea.Println(aiNoticeStyle.Render("Cloud Intelligence™ interactive session (preview)") +
-			aiEchoStyle.Render("  —  /help for commands, /quit to leave")),
-	}
-	if m.session != nil {
-		commands = append(commands, aiListen(m.session))
-	}
-	return tea.Batch(commands...)
-}
-
 // newAIConversationSession builds the session behind a var so tests can
 // substitute a fake without touching the Claude API.
 var newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
 	return newLocalAISession(configDir, apiKey, model, catalog)
+}
+
+func (m aiModel) Init() tea.Cmd {
+	if m.session != nil {
+		return tea.Batch(textarea.Blink, aiListen(m.session))
+	}
+	return textarea.Blink
 }
 
 // aiListen delivers the next protocol event as a tea.Msg; the handler re-arms
@@ -193,12 +202,61 @@ func aiListen(session conversationSession) tea.Cmd {
 	}
 }
 
+// --- Transcript ---------------------------------------------------------------
+
+// append adds one block to the transcript and refreshes the viewport,
+// following the bottom unless the user has scrolled away.
+func (m *aiModel) append(block string) {
+	m.transcript = append(m.transcript, block)
+	if len(m.transcript) > aiTranscriptBlocks {
+		m.transcript = m.transcript[len(m.transcript)-aiTranscriptBlocks:]
+	}
+	m.refreshTranscript()
+}
+
+// refreshTranscript rebuilds the viewport content: committed blocks plus the
+// live streaming tail.
+func (m *aiModel) refreshTranscript() {
+	content := strings.Join(m.transcript, "\n")
+	if streaming := strings.TrimRight(m.streamBuf.String(), "\n"); streaming != "" {
+		if content != "" {
+			content += "\n"
+		}
+		content += aiAgentStyle.Render(streaming)
+	}
+	m.view.SetContent(content)
+	if m.follow {
+		m.view.GotoBottom()
+	}
+}
+
+// layout recomputes the frame: the viewport takes everything the fixed
+// chrome (header, completion popup, input, status) does not.
+func (m *aiModel) layout() {
+	m.input.SetWidth(m.width - 2)
+	m.view.Width = m.width
+	chrome := 1 /*header*/ + len(m.completions) + 1 /*input*/ + 1 /*status*/
+	height := m.height - chrome
+	if height < 3 {
+		height = 3
+	}
+	m.view.Height = height
+	m.refreshTranscript()
+}
+
 func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.input.SetWidth(msg.Width - 2)
+		m.height = msg.Height
+		m.layout()
 		return m, nil
+
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.view, cmd = m.view.Update(msg)
+		m.follow = m.view.AtBottom()
+		return m, cmd
 
 	case spinner.TickMsg:
 		if m.running == nil && !m.turnActive {
@@ -210,7 +268,7 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case aiCmdDoneMsg:
 		m.running = nil
-		commands := []tea.Cmd{tea.Println(renderAIRunCard(msg))}
+		m.append(renderAIRunCard(msg))
 		// A finished user command joins the conversation so follow-up
 		// questions can reference what is on screen (§4.4).
 		if m.session != nil && !msg.canceled && msg.runErr == "" {
@@ -218,7 +276,7 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Kind: aiInputCommandResult, Argv: msg.argv, Output: msg.output, Customer: msg.customer,
 			})
 		}
-		return m, tea.Batch(commands...)
+		return m, nil
 
 	case aiSessionEventMsg:
 		return m.handleSessionEvent(msg.event)
@@ -244,46 +302,41 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 
 	case event.TextDelta != nil:
 		m.streamBuf.WriteString(event.TextDelta.Text)
+		m.refreshTranscript()
 
 	case event.ToolCallStarted != nil:
-		if committed := m.commitStream(); committed != nil {
-			commands = append(commands, committed)
-		}
-		commands = append(commands, tea.Println(renderAIToolStart(*event.ToolCallStarted)))
+		m.commitStream()
+		m.append(renderAIToolStart(*event.ToolCallStarted))
 
 	case event.ToolResult != nil:
-		commands = append(commands, tea.Println(renderAIToolResult(*event.ToolResult)))
+		m.append(renderAIToolResult(*event.ToolResult))
 
 	case event.ApprovalRequest != nil:
 		request := *event.ApprovalRequest
 		m.approval = &request
-		commands = append(commands, tea.Println(renderAIApprovalRequest(request)))
+		m.append(renderAIApprovalRequest(request))
 
 	case event.ContextSwitched != nil:
 		m.identity = aiIdentitySegment(m.configDir)
-		commands = append(commands, tea.Println(aiNoticeStyle.Render(fmt.Sprintf(
+		m.append(aiNoticeStyle.Render(fmt.Sprintf(
 			"customer context switched: %s → %s (by %s)",
-			aiDisplayContext(event.ContextSwitched.From), event.ContextSwitched.To, event.ContextSwitched.By))))
+			aiDisplayContext(event.ContextSwitched.From), event.ContextSwitched.To, event.ContextSwitched.By)))
 
 	case event.LimitReached != nil:
-		commands = append(commands, tea.Println(aiErrorStyle.Render(
-			"stopped: the turn hit the "+event.LimitReached.Kind+" ceiling — ask a narrower question to continue")))
+		m.append(aiErrorStyle.Render(
+			"stopped: the turn hit the " + event.LimitReached.Kind + " ceiling — ask a narrower question to continue"))
 
 	case event.Error != nil:
-		if committed := m.commitStream(); committed != nil {
-			commands = append(commands, committed)
-		}
+		m.commitStream()
 		message := event.Error.Message
 		if message == "turn canceled" {
-			commands = append(commands, tea.Println(aiEchoStyle.Render("canceled")))
+			m.append(aiEchoStyle.Render("canceled"))
 		} else {
-			commands = append(commands, tea.Println(aiErrorStyle.Render("AI error: "+aiFriendlyAPIError(m.configDir, message))))
+			m.append(aiErrorStyle.Render("AI error: " + aiFriendlyAPIError(m.configDir, message)))
 		}
 
 	case event.TurnDone != nil:
-		if committed := m.commitStream(); committed != nil {
-			commands = append(commands, committed)
-		}
+		m.commitStream()
 		usage := *event.TurnDone
 		m.lastUsage = &usage
 		m.turnActive = false
@@ -292,15 +345,16 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(commands...)
 }
 
-// commitStream moves accumulated narration from the managed region into
-// scrollback, rendered as markdown.
-func (m *aiModel) commitStream() tea.Cmd {
+// commitStream moves accumulated narration from the live tail into the
+// transcript, rendered as markdown.
+func (m *aiModel) commitStream() {
 	text := strings.TrimSpace(m.streamBuf.String())
 	m.streamBuf.Reset()
 	if text == "" {
-		return nil
+		m.refreshTranscript()
+		return
 	}
-	return tea.Println(renderAIMarkdown(text, m.width))
+	m.append(renderAIMarkdown(text, m.view.Width))
 }
 
 func aiDisplayContext(context string) string {
@@ -316,6 +370,21 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The guided key setup owns the keyboard while active (P3).
 	if m.keyEntry {
 		return m.handleKeyEntryKey(msg)
+	}
+
+	// Viewport scrolling works in every other state.
+	switch key {
+	case "pgup", "ctrl+u":
+		m.view.HalfViewUp()
+		m.follow = m.view.AtBottom()
+		return m, nil
+	case "pgdown", "ctrl+d":
+		if key == "ctrl+d" && strings.TrimSpace(m.input.Value()) == "" && m.running == nil && m.approval == nil {
+			return m, tea.Quit
+		}
+		m.view.HalfViewDown()
+		m.follow = m.view.AtBottom()
+		return m, nil
 	}
 
 	// A pending destructive approval owns the keyboard: y runs it, n or esc
@@ -349,7 +418,7 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		if strings.TrimSpace(m.input.Value()) != "" {
 			m.input.Reset()
-			m.completions = nil
+			m.setCompletions(nil)
 			m.ctrlCArmed = false
 			return m, nil
 		}
@@ -357,12 +426,6 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		m.ctrlCArmed = true
-		return m, nil
-
-	case "ctrl+d":
-		if strings.TrimSpace(m.input.Value()) == "" {
-			return m, tea.Quit
-		}
 		return m, nil
 
 	case "enter":
@@ -373,8 +436,7 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			selected := m.completions[m.completionIndex]
 			m.input.Reset()
 			m.input.SetValue("/" + selected.Value + " ")
-			m.completions = nil
-			m.completionIndex = 0
+			m.setCompletions(nil)
 		}
 		return m, nil
 
@@ -413,19 +475,29 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
-		m.completions = nil
-		m.completionIndex = 0
+		m.setCompletions(nil)
 		m.historyPos = len(m.history)
 		return m, nil
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	m.completions = aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionLimit)
+	m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionLimit))
+	return m, cmd
+}
+
+// setCompletions swaps the popup and relayouts, since the popup borrows rows
+// from the viewport.
+func (m *aiModel) setCompletions(completions []aiCompletion) {
+	if len(completions) != len(m.completions) {
+		m.completions = completions
+		m.layout()
+	} else {
+		m.completions = completions
+	}
 	if m.completionIndex >= len(m.completions) {
 		m.completionIndex = 0
 	}
-	return m, cmd
 }
 
 func (m aiModel) answerApproval(approved bool) (tea.Model, tea.Cmd) {
@@ -439,7 +511,8 @@ func (m aiModel) answerApproval(approved bool) (tea.Model, tea.Cmd) {
 	if approved {
 		answer = "approved"
 	}
-	return m, tea.Println(aiEchoStyle.Render("↳ " + answer))
+	m.append(aiEchoStyle.Render("↳ " + answer))
+	return m, nil
 }
 
 // setInput replaces the input content (history navigation), leaving the
@@ -447,8 +520,7 @@ func (m aiModel) answerApproval(approved bool) (tea.Model, tea.Cmd) {
 func (m *aiModel) setInput(value string) {
 	m.input.Reset()
 	m.input.SetValue(value)
-	m.completions = nil
-	m.completionIndex = 0
+	m.setCompletions(nil)
 }
 
 func (m aiModel) submit() (tea.Model, tea.Cmd) {
@@ -456,7 +528,7 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 	route := aiRouteLine(line, m.catalog, m.userCommands)
 	if route.kind == aiRouteEmpty {
 		m.input.Reset()
-		m.completions = nil
+		m.setCompletions(nil)
 		return m, nil
 	}
 
@@ -464,17 +536,18 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 	m.historyPos = len(m.history)
 	m.draft = ""
 	m.input.Reset()
-	m.completions = nil
-	m.completionIndex = 0
+	m.setCompletions(nil)
+	m.follow = true
 
-	echo := tea.Println(aiEchoStyle.Render("› " + line))
+	m.append(aiEchoStyle.Render("› " + line))
 
 	switch route.kind {
 	case aiRouteChat:
-		return m.submitChat(route.text, echo)
+		return m.submitChat(route.text)
 
 	case aiRouteInvalid:
-		return m, tea.Sequence(echo, tea.Println(aiErrorStyle.Render("could not parse: "+route.text)))
+		m.append(aiErrorStyle.Render("could not parse: " + route.text))
+		return m, nil
 
 	case aiRouteUnknown:
 		lines := []string{aiErrorStyle.Render("unknown command: /" + route.text)}
@@ -483,10 +556,11 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 		} else {
 			lines = append(lines, aiEchoStyle.Render("type / to browse available commands"))
 		}
-		return m, tea.Sequence(echo, tea.Println(strings.Join(lines, "\n")))
+		m.append(strings.Join(lines, "\n"))
+		return m, nil
 
 	case aiRouteVerb:
-		return m.runVerb(route, echo)
+		return m.runVerb(route)
 
 	case aiRouteDispatch:
 		ctx, cancel := context.WithCancel(context.Background())
@@ -494,12 +568,12 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 			argv: route.argv, cancel: cancel, started: time.Now(),
 			customer: readCustomerContext(m.configDir),
 		}
-		return m, tea.Batch(echo, m.spin.Tick, aiDispatchCommand(ctx, m.running))
+		return m, tea.Batch(m.spin.Tick, aiDispatchCommand(ctx, m.running))
 	}
 	return m, nil
 }
 
-func (m aiModel) submitChat(text string, echo tea.Cmd) (tea.Model, tea.Cmd) {
+func (m aiModel) submitChat(text string) (tea.Model, tea.Cmd) {
 	if m.session == nil {
 		// Guided setup (P3): capture a key inline, then answer the question
 		// that triggered it. The data-flow disclosure (D3) renders before the
@@ -507,12 +581,13 @@ func (m aiModel) submitChat(text string, echo tea.Cmd) (tea.Model, tea.Cmd) {
 		m.keyEntry = true
 		m.keyBuf = ""
 		m.pendingQuestion = text
-		return m, tea.Sequence(echo, tea.Println(renderAIKeyOnboarding()))
+		m.append(renderAIKeyOnboarding())
+		return m, nil
 	}
 	if err := m.session.Send(aiUserInput{Kind: aiInputChat, Text: text}); err != nil {
-		return m, tea.Sequence(echo, tea.Println(aiEchoStyle.Render(err.Error())))
+		m.append(aiEchoStyle.Render(err.Error()))
 	}
-	return m, echo
+	return m, nil
 }
 
 func renderAIKeyOnboarding() string {
@@ -531,30 +606,31 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyEntry = false
 		m.keyBuf = ""
 		m.pendingQuestion = ""
-		return m, tea.Println(aiEchoStyle.Render("key setup canceled — export ANTHROPIC_API_KEY works too"))
+		m.append(aiEchoStyle.Render("key setup canceled — export ANTHROPIC_API_KEY works too"))
+		return m, nil
 	case "enter":
 		key := strings.TrimSpace(m.keyBuf)
 		if err := aiValidateAPIKey(key); err != nil {
-			return m, tea.Println(aiErrorStyle.Render(err.Error()))
+			m.append(aiErrorStyle.Render(err.Error()))
+			return m, nil
 		}
 		settings := loadAISettings(m.configDir)
 		settings.APIKey = key
 		if err := saveAISettings(m.configDir, settings); err != nil {
-			return m, tea.Println(aiErrorStyle.Render("could not save: " + err.Error()))
+			m.append(aiErrorStyle.Render("could not save: " + err.Error()))
+			return m, nil
 		}
 		m.keyEntry = false
 		m.keyBuf = ""
 		m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
 		m.sessionNote = ""
 		m.input.Placeholder = "Ask about your cloud costs, or type / for commands"
-		commands := []tea.Cmd{
-			tea.Println(tuiSuccessStyle.Render("Key saved — AI is ready.")),
-			aiListen(m.session),
-		}
+		m.append(tuiSuccessStyle.Render("Key saved — AI is ready."))
+		commands := []tea.Cmd{aiListen(m.session)}
 		if question := m.pendingQuestion; question != "" {
 			m.pendingQuestion = ""
 			if err := m.session.Send(aiUserInput{Kind: aiInputChat, Text: question}); err == nil {
-				commands = append(commands, tea.Println(aiEchoStyle.Render("› "+question)))
+				m.append(aiEchoStyle.Render("› " + question))
 			}
 		}
 		return m, tea.Batch(commands...)
@@ -570,53 +646,91 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m aiModel) runVerb(route aiRoute, echo tea.Cmd) (tea.Model, tea.Cmd) {
+func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 	switch route.verb {
 	case "help":
-		return m, tea.Sequence(echo, tea.Println(aiHelpText(len(m.catalog), m.session != nil)))
+		m.append(aiHelpText(len(m.catalog), m.session != nil))
+		return m, nil
 	case "clear":
 		// A new screen is a new conversation: drop the session history too,
 		// so stale tenant data can't leak into the next question (§6.2).
+		m.transcript = nil
+		m.streamBuf.Reset()
+		m.refreshTranscript()
 		if m.session != nil {
 			_ = m.session.Close()
 			settings := loadAISettings(m.configDir)
 			if key := resolveAIKey(settings); key != "" {
 				m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
-				return m, tea.Batch(tea.ClearScreen, aiListen(m.session))
+				return m, aiListen(m.session)
 			}
 			m.session = nil
 		}
-		return m, tea.ClearScreen
+		return m, nil
 	case "quit":
 		return m, tea.Quit
 	case "customer":
 		result, err := aiHandleCustomer(m.configDir, route.args)
 		if err != nil {
-			return m, tea.Sequence(echo, tea.Println(aiErrorStyle.Render(err.Error())))
+			m.append(aiErrorStyle.Render(err.Error()))
+			return m, nil
 		}
 		m.identity = aiIdentitySegment(m.configDir)
-		return m, tea.Sequence(echo, tea.Println(tuiSuccessStyle.Render(result)))
+		m.append(tuiSuccessStyle.Render(result))
+		return m, nil
 	case "model":
-		return m.runModelVerb(route.args, echo)
+		return m.runModelVerb(route.args)
+	case "export":
+		path, err := aiExportTranscript(m.transcript, route.args, time.Now())
+		if err != nil {
+			m.append(aiErrorStyle.Render(err.Error()))
+			return m, nil
+		}
+		m.append(tuiSuccessStyle.Render("Transcript saved to " + path))
+		return m, nil
 	}
-	return m, echo
+	return m, nil
+}
+
+// aiExportTranscript writes the transcript, ANSI styling stripped, to the
+// given path (or a timestamped default in the working directory). With the
+// stable frame there is no terminal scrollback to fall back on, so this is
+// the transcript's way out of the session (D4/D9).
+func aiExportTranscript(transcript []string, args []string, now time.Time) (string, error) {
+	if len(args) > 1 {
+		return "", fmt.Errorf("usage: /export [file]")
+	}
+	path := "dci-ai-" + now.Format("20060102-150405") + ".txt"
+	if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
+		path = args[0]
+	}
+	// stripANSI is the error contract chapter's helper; the transcript export
+	// wants the same plain text.
+	content := stripANSI(strings.Join(transcript, "\n")) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // runModelVerb implements /model (D2): no argument shows the current model
 // and session info; one argument validates, persists, and applies it live.
-func (m aiModel) runModelVerb(args []string, echo tea.Cmd) (tea.Model, tea.Cmd) {
+func (m aiModel) runModelVerb(args []string) (tea.Model, tea.Cmd) {
 	switch len(args) {
 	case 0:
-		return m, tea.Sequence(echo, tea.Println(m.modelInfoText()))
+		m.append(m.modelInfoText())
+		return m, nil
 	case 1:
 		model := strings.TrimSpace(args[0])
 		if err := aiValidateModel(model); err != nil {
-			return m, tea.Sequence(echo, tea.Println(aiErrorStyle.Render(err.Error())))
+			m.append(aiErrorStyle.Render(err.Error()))
+			return m, nil
 		}
 		settings := loadAISettings(m.configDir)
 		settings.Model = model
 		if err := saveAISettings(m.configDir, settings); err != nil {
-			return m, tea.Sequence(echo, tea.Println(aiErrorStyle.Render("could not save: "+err.Error())))
+			m.append(aiErrorStyle.Render("could not save: " + err.Error()))
+			return m, nil
 		}
 		m.modelName = model
 		if local, ok := m.session.(*localAISession); ok && local != nil {
@@ -626,9 +740,11 @@ func (m aiModel) runModelVerb(args []string, echo tea.Cmd) (tea.Model, tea.Cmd) 
 		if !aiModelIsKnown(model) {
 			note += aiEchoStyle.Render("  (not in the known list — the API validates it on the next question)")
 		}
-		return m, tea.Sequence(echo, tea.Println(tuiSuccessStyle.Render(note)))
+		m.append(tuiSuccessStyle.Render(note))
+		return m, nil
 	default:
-		return m, tea.Sequence(echo, tea.Println(aiErrorStyle.Render("usage: /model [id]")))
+		m.append(aiErrorStyle.Render("usage: /model [id]"))
+		return m, nil
 	}
 }
 
@@ -735,7 +851,7 @@ func renderAIMarkdown(text string, width int) string {
 	return strings.Trim(rendered, "\n")
 }
 
-// renderAIRunCard renders one finished user dispatch for the scrollback:
+// renderAIRunCard renders one finished user dispatch for the transcript:
 // header, verbatim output, one-line footer. Pure so tests can cover every
 // outcome.
 func renderAIRunCard(msg aiCmdDoneMsg) string {
@@ -817,7 +933,7 @@ func renderAIApprovalRequest(request aiApprovalRequest) string {
 func aiHelpText(catalogSize int, sessionReady bool) string {
 	aiLine := "  plain text   ask the AI about your cloud costs — it runs dci commands for you"
 	if !sessionReady {
-		aiLine = "  plain text   ask the AI (needs an API key: export ANTHROPIC_API_KEY or see /model)"
+		aiLine = "  plain text   ask the AI (needs an API key: export ANTHROPIC_API_KEY or ask a question to set one up)"
 	}
 	lines := []string{
 		aiCardHeadStyle.Render("How this session works"),
@@ -833,23 +949,21 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 		aiEchoStyle.Render("Saved commands: define your own in "+aiUserCommandsFileName+" — {\"top5\": {\"command\": \"list-reports --limit 5\"}, \"review\": {\"prompt\": \"Review last month's spend\"}}"),
 		aiEchoStyle.Render("Privacy: AI questions and dci command results are sent to Anthropic's API under your key."),
 		"",
-		"  tab completes · ↑/↓ history or popup · esc clears input or cancels a running command/turn")
+		"  tab completes · ↑/↓ history or popup · wheel/PgUp/PgDn scroll · esc clears or cancels · /export saves the transcript")
 	return strings.Join(lines, "\n")
 }
 
 func (m aiModel) View() string {
 	var b strings.Builder
+	b.WriteString(m.headerLine())
+	b.WriteString("\n")
+	b.WriteString(m.view.View())
+	b.WriteString("\n")
 	if m.keyEntry {
 		masked := strings.Repeat("•", len([]rune(m.keyBuf)))
 		b.WriteString("API key: " + masked + "\n")
 		b.WriteString(aiEchoStyle.Render("paste your key · enter save · esc cancel"))
 		return b.String()
-	}
-	if m.turnActive {
-		if tail := aiStreamTail(m.streamBuf.String(), 6); tail != "" {
-			b.WriteString(aiAgentStyle.Render(tail))
-			b.WriteString("\n")
-		}
 	}
 	for index, completion := range m.completions {
 		line := fmt.Sprintf(" /%s  %s", completion.Value, aiEchoStyle.Render(completion.Summary))
@@ -868,18 +982,14 @@ func (m aiModel) View() string {
 	return b.String()
 }
 
-// aiStreamTail keeps the last few streamed lines visible in the managed
-// region while a turn runs; the full text commits to scrollback when done.
-func aiStreamTail(text string, maxLines int) string {
-	text = strings.TrimRight(text, "\n")
-	if text == "" {
-		return ""
+// headerLine is the fixed top of the frame; a scroll hint appears when the
+// viewport is not following the bottom.
+func (m aiModel) headerLine() string {
+	title := aiHeaderStyle.Render("dci ai") + aiEchoStyle.Render(" · Cloud Intelligence™")
+	if !m.follow {
+		title += aiNoticeStyle.Render("  ↓ scrolled up — PgDn for latest")
 	}
-	lines := strings.Split(text, "\n")
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
-	}
-	return strings.Join(lines, "\n")
+	return title
 }
 
 func (m aiModel) statusLine() string {
