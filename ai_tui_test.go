@@ -286,24 +286,68 @@ func TestAITurnLifecycleEvents(t *testing.T) {
 	}
 	m, _ = aiEventUpdate(m, aiEvent{TextDelta: &aiTextDelta{TurnID: "t1", Text: "Spend rose because "}})
 	m, _ = aiEventUpdate(m, aiEvent{TextDelta: &aiTextDelta{TurnID: "t1", Text: "of GKE."}})
-	if got := m.streamBuf.String(); got != "Spend rose because of GKE." {
-		t.Fatalf("stream buffer = %q", got)
+	if m.stream != "Spend rose because of GKE." {
+		t.Fatalf("stream buffer = %q", m.stream)
 	}
-	if view := m.View(); !strings.Contains(view, "Spend rose because of GKE.") {
-		t.Fatal("streamed text not visible in the managed region")
+	// The quiet turn: in-flight text drives the status line, not the
+	// transcript (Claude Code UX) — only the final answer is committed.
+	if !strings.Contains(m.statusLine(), "Spend rose because of GKE.") {
+		t.Fatalf("status line missing the activity snippet: %q", m.statusLine())
+	}
+	if strings.Contains(aiTranscriptText(m), "Spend rose") {
+		t.Fatal("in-flight narration leaked into the transcript")
 	}
 	m, cmd := aiEventUpdate(m, aiEvent{TurnDone: &aiTurnDone{TurnID: "t1", InputTokens: 10}})
 	if m.turnActive {
 		t.Fatal("TurnDone left the turn active")
 	}
 	if cmd == nil {
-		t.Fatal("TurnDone did not commit the narration")
+		t.Fatal("TurnDone did not re-arm the listener")
 	}
-	if m.streamBuf.Len() != 0 {
+	if !strings.Contains(stripANSI(aiTranscriptText(m)), "Spend rose because of GKE.") {
+		t.Fatal("final answer not committed to the transcript")
+	}
+	if m.stream != "" {
 		t.Fatal("stream buffer not reset after commit")
 	}
 	if m.lastUsage == nil || m.lastUsage.InputTokens != 10 {
 		t.Fatalf("usage not recorded: %+v", m.lastUsage)
+	}
+}
+
+func TestAIQuietTurnToolActivity(t *testing.T) {
+	m := aiTestModel(t)
+	m.session = newFakeAISession()
+
+	m, _ = aiEventUpdate(m, aiEvent{TurnStarted: &aiTurnStarted{TurnID: "t1"}})
+	m, _ = aiEventUpdate(m, aiEvent{TextDelta: &aiTextDelta{TurnID: "t1", Text: "Let me check the reports."}})
+	m, _ = aiEventUpdate(m, aiEvent{ToolCallStarted: &aiToolCallStarted{
+		TurnID: "t1", CallID: "c1", Tool: aiToolRunCommand, Argv: []string{"list-reports"}, By: "agent",
+	}})
+	if m.stream != "" {
+		t.Fatal("interim narration not discarded on a tool call")
+	}
+	if status := m.statusLine(); !strings.Contains(status, "running dci list-reports") {
+		t.Fatalf("status line = %q", status)
+	}
+	m, _ = aiEventUpdate(m, aiEvent{ToolResult: &aiToolResult{
+		TurnID: "t1", CallID: "c1", OK: true, Data: "big table", Elapsed: 1200 * time.Millisecond,
+	}})
+	if status := m.statusLine(); !strings.Contains(status, "✓ dci list-reports") || !strings.Contains(status, "1 command") {
+		t.Fatalf("status line = %q", status)
+	}
+	transcript := aiTranscriptText(m)
+	if strings.Contains(transcript, "Let me check") || strings.Contains(transcript, "big table") {
+		t.Fatal("tool traffic leaked into the transcript")
+	}
+	m, _ = aiEventUpdate(m, aiEvent{TextDelta: &aiTextDelta{TurnID: "t1", Text: "GKE grew 40%."}})
+	m, _ = aiEventUpdate(m, aiEvent{TurnDone: &aiTurnDone{TurnID: "t1"}})
+	transcript = stripANSI(aiTranscriptText(m))
+	if !strings.Contains(transcript, "GKE grew 40%.") || strings.Contains(transcript, "Let me check") {
+		t.Fatalf("final answer commit wrong: %q", transcript)
+	}
+	if m.turnActivity != "" {
+		t.Fatalf("activity not cleared: %q", m.turnActivity)
 	}
 }
 

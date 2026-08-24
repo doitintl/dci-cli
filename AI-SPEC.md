@@ -61,7 +61,7 @@ The existing full-screen viewer (`tui_viewer.go`, F5 in TUI-SPEC.md) remains a s
 ```
   dci ai · Cloud Intelligence™                                   header (fixed)
   ┌──────────────────────────────────────────────────────────┐
-  │ ... transcript: chat, tool cards, tables, charts ...     │  viewport (scrolls inside;
+  │ ... transcript: chat, answers, tables, charts ...        │  viewport (scrolls inside;
   │                                                          │  wheel / PgUp / PgDn)
   └──────────────────────────────────────────────────────────┘
   › _                                                            input (fixed)
@@ -69,8 +69,8 @@ The existing full-screen viewer (`tui_viewer.go`, F5 in TUI-SPEC.md) remains a s
 ```
 
 - **Input**: `bubbles/textarea`, Enter submits, Shift+Enter (where the terminal reports it) or trailing `\` continues the line. History on ↑/↓ (persisted per user under the config dir, chmod 0600).
-- **Status line**: identity mode + active customer context (§6), a spinner + elapsed time while a turn is running, and Esc-to-interrupt. For a plain single-tenant customer the tenant segment is omitted entirely (§6.1).
-- **Streaming**: agent text streams into the viewport tail as it arrives and is committed as a rendered transcript block when it completes; the viewport auto-follows the bottom unless the user has scrolled up.
+- **Status line**: identity mode + active customer context (§6) when idle; while a turn runs, a spinner + the live activity snippet + Esc-to-interrupt. For a plain single-tenant customer the tenant segment is omitted entirely (§6.1).
+- **Quiet turn** (dogfood, supersedes the first draft's inline streaming): a turn runs like Claude Code — interim narration and tool traffic never enter the transcript; they drive the **status line** (the latest narration line, then `running dci …`, then `✓ dci … · 1.2s · N commands`). Only the *final* answer is committed to the transcript, rendered as markdown, when the turn ends. Mid-turn blocks that demand the user's attention still append immediately: approval requests, context switches, errors, and ceiling notices (each committing any buffered text first, since it may be the only answer the turn produces). The full event stream is unchanged (§8) — this is renderer policy, and one-shot mode still prints tool traffic to stderr for a watching human.
 - **Interrupt**: Esc cancels the in-flight turn (context cancellation ends the API stream and any running command subprocess). Ctrl+C on an idle prompt behaves like Claude Code: first press clears input, second exits.
 
 ### 3.3 Gate
@@ -210,7 +210,7 @@ Rules: **no ANSI or terminal formatting anywhere in the protocol** — the momen
 
 The invariant: **numbers on screen never come from model prose.** Commands return structured JSON; renderers draw it; the model narrates and proposes views.
 
-- **Tool cards**: one per call — command line, tenant badge, status, elapsed — collapsed to a summary line once complete, expandable. The result table renders with the existing table renderer; charts with the existing charts chapter (charts.go — ntcharts/asciigraph are already direct dependencies, go.mod).
+- **Tool activity**: in the session, tool calls surface as status-line activity only (§3.2 quiet turn); one-shot mode prints per-call lines to stderr when stderr is a TTY. The tool-cards-in-transcript form of the first draft is superseded. Result tables/charts the *user* asked for (slash dispatches) render with the existing table renderer and charts chapter (charts.go — ntcharts/asciigraph are already direct dependencies, go.mod).
 - **View specs** (`render_view` and `tool_result.view`): declarative — `{type: table, columns, sort}` or `{type: bar|line, x, series}` — referencing result data by `call_id`. The terminal draws them with the stack above; the web client draws the identical spec with a real charting library (where a cost product will genuinely look better).
 - **Narration**: model text renders as markdown via glamour (in the tree at v0.6.0 via restish; the F8 version-skew caveat in TUI-SPEC.md §2.3 applies unchanged).
 - **`open in viewer`**: a card affordance to open that result in the F5 interactive table (tui_viewer.go) and return to the session.
@@ -268,3 +268,4 @@ The seven open questions from the first draft were decided by the maintainer on 
 | D7 | **One-shot ships in P2** alongside the interactive loop, same key requirement. | §12 P2 scope; under D1 there is no separate customer-CI story — the key requirement *is* the permanent model. |
 | D8 | **Workload Identity Federation: recorded, not implemented** (researched 2026-08-24 at the maintainer's request). Anthropic WIF (GA) exchanges short-lived OIDC JWTs for API tokens via federation rules — viable in two tiers: **(a)** cheap — relax the key gate so ambient SDK credentials (the `ANTHROPIC_FEDERATION_RULE_ID`/`ANTHROPIC_ORGANIZATION_ID`/`ANTHROPIC_SERVICE_ACCOUNT_ID`/`ANTHROPIC_IDENTITY_TOKEN[_FILE]` env vars) work in CI without a static key; **(b)** a doer identity bridge — register DoiT's IdP as an issuer on DoiT's Anthropic org so `dci ai` could exchange the DoiT OAuth token doers already hold: key-less doers with **no proxy service**, but it makes DoiT's org the billed party for doer usage (a deliberate partial reopen of D1) and needs Console admin setup (rule, workspace spend limits) plus an issuer/claims check with whoever owns DoiT's IdP. Not viable for the general customer-laptop case — no ambient OIDC issuer there; BYO key stands. | No code change yet. Tier (a) is a one-conditional change in `ai_session.go` when wanted; tier (b) is an org/IdP decision outside this repo. |
 | D9 | **Stable frame TUI** (2026-08-24, from dogfood): the session runs in the alternate screen with fixed chrome — header, input, status — and the transcript scrolling *inside* a viewport (mouse wheel / PgUp / PgDn), superseding the first draft's inline-scrollback mode (§3). | Trade-off accepted knowingly: native terminal scrollback/selection is exchanged for a stable frame; `/export` covers transcript retention. §3 updated. |
+| D10 | **Quiet turn** (2026-08-24, from dogfood): interim narration and agent tool traffic stay out of the transcript — they drive the status line; only the final answer is committed (§3.2). Superseded: inline streaming into the viewport tail, tool cards in the transcript (§9). | Renderer-only policy: the §8 event stream is unchanged, one-shot stderr output is unchanged, and a web client can choose its own presentation of the same events. |

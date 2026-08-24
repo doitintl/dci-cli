@@ -110,9 +110,18 @@ type aiModel struct {
 	sessionNote string
 	modelName   string
 	turnActive  bool
-	streamBuf   strings.Builder
-	approval    *aiApprovalRequest
-	lastUsage   *aiTurnDone
+	// stream is the assistant text accumulated since the last commit or
+	// discard. A plain string on purpose: a strings.Builder must never live
+	// in a Bubble Tea model — the model is copied by value on every Update,
+	// and writing to a copied non-empty Builder panics ("illegal use of
+	// non-zero Builder copied by value") as soon as a copy lands at a new
+	// address (stack growth, reallocation) — a mid-turn crash.
+	stream       string
+	turnActivity string // status line: what the turn is doing right now
+	turnCommands int    // agent tool calls completed this turn
+	toolLabel    string // label of the tool call in flight, for its result line
+	approval     *aiApprovalRequest
+	lastUsage    *aiTurnDone
 
 	// Guided key setup (P3): entering a key inline instead of editing files.
 	keyEntry        bool
@@ -374,17 +383,11 @@ func (m *aiModel) append(block string) {
 	m.refreshTranscript()
 }
 
-// refreshTranscript rebuilds the viewport content: committed blocks plus the
-// live streaming tail.
+// refreshTranscript rebuilds the viewport content from the committed blocks.
+// In-flight turn activity (narration, tool traffic) lives in the status line,
+// not here — the transcript only ever gains finished blocks.
 func (m *aiModel) refreshTranscript() {
-	content := strings.Join(m.transcript, "\n")
-	if streaming := strings.TrimRight(m.streamBuf.String(), "\n"); streaming != "" {
-		if content != "" {
-			content += "\n"
-		}
-		content += aiAgentStyle.Render(streaming)
-	}
-	m.view.SetContent(content)
+	m.view.SetContent(strings.Join(m.transcript, "\n"))
 	if m.follow {
 		m.view.GotoBottom()
 	}
@@ -477,25 +480,39 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // handleSessionEvent renders one protocol event and re-arms the listener.
+// The turn runs quietly (Claude Code UX): interim narration and tool traffic
+// only drive the status line; the transcript gains the final answer, plus
+// anything the user must see mid-turn — approvals, context switches, errors.
 func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 	commands := []tea.Cmd{aiListen(m.session)}
 	switch {
 	case event.TurnStarted != nil:
 		m.turnActive = true
-		m.streamBuf.Reset()
+		m.stream = ""
+		m.turnActivity = ""
+		m.turnCommands = 0
 		m.lastUsage = nil
 		commands = append(commands, m.spin.Tick)
 
 	case event.TextDelta != nil:
-		m.streamBuf.WriteString(event.TextDelta.Text)
-		m.refreshTranscript()
+		m.stream += event.TextDelta.Text
+		m.turnActivity = aiActivitySnippet(m.stream)
 
 	case event.ToolCallStarted != nil:
-		m.commitStream()
-		m.append(renderAIToolStart(*event.ToolCallStarted))
+		// Text so far was working narration, not the answer: it becomes the
+		// activity snippet and never reaches the transcript.
+		m.stream = ""
+		m.toolLabel = aiToolCallLabel(*event.ToolCallStarted)
+		m.turnActivity = "running " + m.toolLabel
 
 	case event.ToolResult != nil:
-		m.append(renderAIToolResult(*event.ToolResult))
+		m.turnCommands++
+		mark := "✓"
+		if !event.ToolResult.OK {
+			mark = "✗"
+		}
+		m.turnActivity = fmt.Sprintf("%s %s · %s", mark, m.toolLabel,
+			event.ToolResult.Elapsed.Round(100*time.Millisecond))
 
 	case event.ApprovalRequest != nil:
 		request := *event.ApprovalRequest
@@ -514,6 +531,7 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		}
 
 	case event.LimitReached != nil:
+		m.commitStream()
 		m.append(aiErrorStyle.Render(
 			"stopped: the turn hit the " + event.LimitReached.Kind + " ceiling — ask a narrower question to continue"))
 
@@ -531,21 +549,55 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		usage := *event.TurnDone
 		m.lastUsage = &usage
 		m.turnActive = false
+		m.turnActivity = ""
 		m.approval = nil
 	}
 	return m, tea.Batch(commands...)
 }
 
-// commitStream moves accumulated narration from the live tail into the
-// transcript, rendered as markdown.
+// commitStream moves the accumulated assistant text into the transcript,
+// rendered as markdown. During a turn this only happens when the text is
+// final: the turn ended, errored, or hit a ceiling.
 func (m *aiModel) commitStream() {
-	text := strings.TrimSpace(m.streamBuf.String())
-	m.streamBuf.Reset()
+	text := strings.TrimSpace(m.stream)
+	m.stream = ""
 	if text == "" {
-		m.refreshTranscript()
 		return
 	}
 	m.append(renderAIMarkdown(text, m.view.Width))
+}
+
+// aiActivitySnippet condenses in-flight narration to one status-line phrase:
+// the last non-empty line, whitespace collapsed, capped for the frame.
+func aiActivitySnippet(stream string) string {
+	lines := strings.Split(strings.TrimSpace(stream), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.Join(strings.Fields(lines[i]), " ")
+		if line == "" {
+			continue
+		}
+		if runes := []rune(line); len(runes) > 72 {
+			line = string(runes[:71]) + "…"
+		}
+		return line
+	}
+	return ""
+}
+
+// aiToolCallLabel names one agent tool call for the status line.
+func aiToolCallLabel(call aiToolCallStarted) string {
+	switch call.Tool {
+	case aiToolRunCommand:
+		label := "dci " + strings.Join(call.Argv, " ")
+		if runes := []rune(label); len(runes) > 60 {
+			label = string(runes[:59]) + "…"
+		}
+		return label
+	case aiToolSetCustomer:
+		return "customer switch"
+	default:
+		return call.Tool
+	}
 }
 
 func aiDisplayContext(context string) string {
@@ -1008,7 +1060,7 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		// A new screen is a new conversation: drop the session history too,
 		// so stale tenant data can't leak into the next question (§6.2).
 		m.transcript = nil
-		m.streamBuf.Reset()
+		m.stream = ""
 		m.append(aiBannerBlock(&m))
 		if m.session != nil {
 			_ = m.session.Close()
@@ -1262,8 +1314,9 @@ func renderAIRunCard(msg aiCmdDoneMsg) string {
 	return b.String()
 }
 
-// renderAIToolStart is the agent-initiated tool call header (§9 tool cards):
-// provenance-badged so agent calls read differently from the user's own.
+// renderAIToolStart is the agent-initiated tool call header. The session's
+// quiet turn keeps this off the transcript; one-shot mode still prints it to
+// stderr when a human is watching.
 func renderAIToolStart(call aiToolCallStarted) string {
 	header := "⚙ "
 	switch call.Tool {
@@ -1281,7 +1334,8 @@ func renderAIToolStart(call aiToolCallStarted) string {
 }
 
 // renderAIToolResult renders one agent tool result: the same output the
-// model sees, tenant-badged, with an error/duration footer.
+// model sees, with an error/duration footer. One-shot stderr only — the
+// session's quiet turn summarizes results in the status line instead.
 func renderAIToolResult(result aiToolResult) string {
 	var b strings.Builder
 	if output := strings.TrimRight(result.Data, "\n"); output != "" {
@@ -1467,7 +1521,18 @@ func (m aiModel) statusLine() string {
 			time.Since(m.running.started).Round(time.Second)))
 	}
 	if m.turnActive {
-		return m.spin.View() + aiEchoStyle.Render(" thinking ("+m.modelName+") · esc to cancel")
+		activity := m.turnActivity
+		if activity == "" {
+			activity = "thinking (" + m.modelName + ")"
+		}
+		line := " " + activity
+		if m.turnCommands > 0 {
+			line += fmt.Sprintf(" · %d command", m.turnCommands)
+			if m.turnCommands > 1 {
+				line += "s"
+			}
+		}
+		return m.spin.View() + aiEchoStyle.Render(line+" · esc to cancel")
 	}
 	if m.keyEntry {
 		return aiEchoStyle.Render("paste your key · enter save · esc cancel")
