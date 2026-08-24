@@ -56,9 +56,9 @@ type aiSettings struct {
 	APIKey string `json:"api_key,omitempty"`
 	Model  string `json:"model,omitempty"`
 	// Effort caps the model's reasoning depth ("low", "medium", "high";
-	// empty = the API default). Analytical questions can reason server-side
-	// for a minute-plus before the first answer token — lower effort trades
-	// some of that depth for latency.
+	// "default" = uncapped API default; empty = aiDefaultEffort). Analytical
+	// questions can reason server-side for a minute-plus before the first
+	// answer token — lower effort trades some of that depth for latency.
 	Effort string `json:"effort,omitempty"`
 }
 
