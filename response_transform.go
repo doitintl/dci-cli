@@ -30,6 +30,9 @@ func transformSuccessBody(body interface{}) interface{} {
 	body = normalizeIntegralNumbers(body)
 	body = nullListsToEmpty(body)
 	body = transformInsightsList(body)
+	// Before applyListView: search matches raw item fields, not the curated
+	// view's renamed/derived columns.
+	body = applyListSearch(body)
 	// Before applyListView: the view's title rewrite consults the UTC-label
 	// registry to keep anomaly window columns labeled and rendered in UTC.
 	markAnomalyWindowColumns()
@@ -154,6 +157,67 @@ func transformInsightsList(body interface{}) interface{} {
 		applyInsightPresentation(results)
 	}
 	return body
+}
+
+// applyListSearch implements --search: a client-side, case-insensitive
+// substring filter over list items, matched against every string leaf (and
+// map key) of each item. It exists for discovery flows the API cannot serve —
+// list-dimensions holds ~1,000 entries across ~20 pages and its --filter only
+// does exact field:value matches — and it implies --all, so the whole
+// collection is searched rather than one page. Non-matching items are dropped
+// with an explicit searchDropped marker so a small result is distinguishable
+// from a small collection; rowCount is corrected when present.
+func applyListSearch(body interface{}) interface{} {
+	needle := strings.ToLower(strings.TrimSpace(viper.GetString("list-search")))
+	if needle == "" {
+		return body
+	}
+	root, ok := body.(map[string]interface{})
+	if !ok {
+		return body
+	}
+	key, rows, isList := listWrapperRows(root)
+	if !isList {
+		return body
+	}
+	kept := make([]interface{}, 0, len(rows))
+	for _, item := range rows {
+		if valueContainsFold(item, needle) {
+			kept = append(kept, item)
+		}
+	}
+	if len(kept) == len(rows) {
+		return body
+	}
+	root[key] = kept
+	root["searchDropped"] = int64(len(rows) - len(kept))
+	if _, present := root["rowCount"]; present {
+		root["rowCount"] = int64(len(kept))
+	}
+	return body
+}
+
+// valueContainsFold reports whether any string leaf under value contains
+// needle (already lowercased). Map keys are matched too: label maps like
+// {"team": "core"} should hit on either side.
+func valueContainsFold(value interface{}, needle string) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.Contains(strings.ToLower(typed), needle)
+	case map[string]interface{}:
+		for mapKey, nested := range typed {
+			if strings.Contains(strings.ToLower(mapKey), needle) || valueContainsFold(nested, needle) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, nested := range typed {
+			if valueContainsFold(nested, needle) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // markAnomalyWindowColumns flags the anomaly usage-window boundaries as UTC

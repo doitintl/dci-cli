@@ -1167,7 +1167,7 @@ func augmentVerifiedFlagHelp(cmd *cobra.Command) {
 	}
 	switch cmd.Name() {
 	case "list-dimensions":
-		augment("filter", "Syntax: a single field:value term matched exactly (e.g. type:system_label, label:team). Globs, substrings, and multi-term expressions are not supported; unrecognized expressions are silently ignored and return the unfiltered listing.")
+		augment("filter", "Syntax: a single field:value term matched exactly (e.g. type:system_label, label:team). Globs, substrings, and multi-term expressions are not supported; unrecognized expressions are silently ignored and return the unfiltered listing. For substring search across the whole collection use --search instead.")
 	}
 }
 
@@ -1648,6 +1648,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("id", false, "Treat positional resource arguments as literal IDs and skip name resolution")
 	dciCmd.PersistentFlags().Bool("name", false, "Force name resolution even when an argument matches the resource ID format")
 	dciCmd.PersistentFlags().Bool("all", false, "Fetch every page of a paged list response before rendering (follows the server's page tokens; GET list commands only). Cannot be combined with --page-token or --max-results")
+	dciCmd.PersistentFlags().String("search", "", "Client-side case-insensitive substring filter over list items, matched against every text field (list commands only; e.g. list-dimensions --search genai). Implies --all so the whole collection is searched. Cannot be combined with --page-token or --max-results")
 	registerStaticFlagCompletions(dciCmd)
 
 	// Bind table flags into viper so the renderer can pick them up.
@@ -1705,6 +1706,16 @@ func addOutputFlag() {
 		allPages := false
 		if flag := cmd.Flags().Lookup("all"); flag != nil && flag.Changed {
 			allPages = flag.Value.String() == "true"
+		}
+		searchTerm := ""
+		if flag := cmd.Flags().Lookup("search"); flag != nil && flag.Changed {
+			searchTerm = strings.TrimSpace(flag.Value.String())
+		}
+		viper.Set("list-search", searchTerm)
+		if searchTerm != "" {
+			// Searching one page would silently miss the rest of the
+			// collection, so --search always fetches all pages.
+			allPages = true
 		}
 		viper.Set("all-pages", allPages)
 		viper.Set("all-pages-boost", pagingCaps[cmd.Name()].limit)
