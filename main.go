@@ -350,6 +350,7 @@ func run() (exitCode int) {
 	registerNameRefreshCommand(configDir)
 	registerSkillCommands()
 	registerCommandCatalog()
+	registerAICommand(configDir)
 	if cachedTokenIsDoer() {
 		for _, command := range cli.Root.Commands() {
 			if command.Use == "customer-context" {
