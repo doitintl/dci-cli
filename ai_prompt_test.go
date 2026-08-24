@@ -41,6 +41,9 @@ func TestAISystemPromptEmbedsQueryPatterns(t *testing.T) {
 		"metricFilter",
 		"--search",
 		"--drop-unlabeled-rows",
+		// The reference's ids are known-good: the model must go straight to
+		// the query instead of burning a round-trip re-verifying them.
+		"known-good",
 	} {
 		if !strings.Contains(prompt, needle) {
 			t.Fatalf("prompt missing %q", needle)

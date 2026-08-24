@@ -20,6 +20,7 @@ type aiEvent struct {
 	V               int                `json:"v"`
 	TurnStarted     *aiTurnStarted     `json:"turn_started,omitempty"`
 	TextDelta       *aiTextDelta       `json:"text_delta,omitempty"`
+	ThinkingDelta   *aiThinkingDelta   `json:"thinking_delta,omitempty"`
 	ToolCallStarted *aiToolCallStarted `json:"tool_call_started,omitempty"`
 	ToolResult      *aiToolResult      `json:"tool_result,omitempty"`
 	ApprovalRequest *aiApprovalRequest `json:"approval_request,omitempty"`
@@ -36,6 +37,16 @@ type aiTurnStarted struct {
 // aiTextDelta streams assistant narration as it generates. Deltas between a
 // turn's start and its done event concatenate into the full markdown text.
 type aiTextDelta struct {
+	TurnID string `json:"turn_id"`
+	Text   string `json:"text"`
+}
+
+// aiThinkingDelta streams the model's internal reasoning as it generates
+// (models with adaptive thinking emit it before answering — often for tens of
+// seconds on analytical questions). It never joins the transcript or the
+// model-visible history shape; renderers use it to show live progress instead
+// of a silent gap.
+type aiThinkingDelta struct {
 	TurnID string `json:"turn_id"`
 	Text   string `json:"text"`
 }

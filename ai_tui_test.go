@@ -284,6 +284,16 @@ func TestAITurnLifecycleEvents(t *testing.T) {
 	if !m.turnActive {
 		t.Fatal("TurnStarted did not activate the turn")
 	}
+	// Thinking deltas drive the status line (with a marker) but never join
+	// the answer stream or the transcript — an analytical pause must show
+	// live progress instead of a frozen spinner.
+	m, _ = aiEventUpdate(m, aiEvent{ThinkingDelta: &aiThinkingDelta{TurnID: "t1", Text: "comparing months"}})
+	if !strings.Contains(m.statusLine(), "thinking · comparing months") {
+		t.Fatalf("status line missing the thinking snippet: %q", m.statusLine())
+	}
+	if m.stream != "" {
+		t.Fatalf("thinking leaked into the answer stream: %q", m.stream)
+	}
 	m, _ = aiEventUpdate(m, aiEvent{TextDelta: &aiTextDelta{TurnID: "t1", Text: "Spend rose because "}})
 	m, _ = aiEventUpdate(m, aiEvent{TextDelta: &aiTextDelta{TurnID: "t1", Text: "of GKE."}})
 	if m.stream != "Spend rose because of GKE." {

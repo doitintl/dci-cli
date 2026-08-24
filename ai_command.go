@@ -62,13 +62,30 @@ func runAIOneShot(configDir, question string, approveDestructive bool) error {
 
 	var failure error
 	printedText := false
+	thinkingOpen := false // a thinking stream is mid-line on stderr
+	closeThinking := func() {
+		if thinkingOpen {
+			fmt.Fprint(os.Stderr, "\n")
+			thinkingOpen = false
+		}
+	}
 	for event := range session.Events() {
 		switch {
 		case event.TextDelta != nil:
+			closeThinking()
 			fmt.Print(event.TextDelta.Text)
 			printedText = true
 
+		case event.ThinkingDelta != nil && verbose:
+			// The model's reasoning, dimmed on stderr: analytical questions
+			// can think for a minute before the first answer token, and a
+			// silent terminal reads as a hang. Piped/agent callers (verbose
+			// off) keep clean streams.
+			fmt.Fprint(os.Stderr, "\x1b[2m"+event.ThinkingDelta.Text+"\x1b[0m")
+			thinkingOpen = true
+
 		case event.ToolCallStarted != nil && verbose:
+			closeThinking()
 			fmt.Fprintln(os.Stderr, renderAIToolStart(*event.ToolCallStarted))
 
 		case event.ToolResult != nil && verbose:

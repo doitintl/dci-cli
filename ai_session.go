@@ -31,7 +31,11 @@ const (
 	aiSettingsFileName = "ai_settings.json"
 	aiDefaultModel     = "claude-opus-5"
 	aiMaxToolRounds    = 16
-	aiMaxOutputTokens  = 16000
+	// aiMaxOutputTokens bounds one API turn. Adaptive thinking counts against
+	// max_tokens: analytical questions (aggregating a 200-row result) have
+	// been measured thinking past 16k on their own, which killed the turn
+	// with an output-token ceiling error before any answer text.
+	aiMaxOutputTokens = 32000
 )
 
 // aiKnownModels is the selectable set shown by /model. Other claude-* ids are
@@ -46,6 +50,11 @@ var aiKnownModels = []string{
 type aiSettings struct {
 	APIKey string `json:"api_key,omitempty"`
 	Model  string `json:"model,omitempty"`
+	// Effort caps the model's reasoning depth ("low", "medium", "high";
+	// empty = the API default). Analytical questions can reason server-side
+	// for a minute-plus before the first answer token — lower effort trades
+	// some of that depth for latency.
+	Effort string `json:"effort,omitempty"`
 }
 
 func aiSettingsPath(configDir string) string {
@@ -80,10 +89,31 @@ func resolveAIKey(settings aiSettings) string {
 }
 
 func resolveAIModel(settings aiSettings) string {
+	if model := strings.TrimSpace(os.Getenv("DCI_AI_MODEL")); model != "" {
+		return model
+	}
 	if model := strings.TrimSpace(settings.Model); model != "" {
 		return model
 	}
 	return aiDefaultModel
+}
+
+// resolveAIEffort returns the reasoning-effort cap: DCI_AI_EFFORT wins over
+// the settings file (same precedence as the API key); anything but the three
+// valid levels resolves to "" — the API default — rather than failing a
+// session over a config typo.
+func resolveAIEffort(settings aiSettings) string {
+	for _, effort := range []string{os.Getenv("DCI_AI_EFFORT"), settings.Effort} {
+		switch strings.ToLower(strings.TrimSpace(effort)) {
+		case "low":
+			return "low"
+		case "medium":
+			return "medium"
+		case "high":
+			return "high"
+		}
+	}
+	return ""
 }
 
 // aiValidateAPIKey applies shape checks before persisting a key: a wrong
@@ -130,13 +160,16 @@ type conversationSession interface {
 	Close() error
 }
 
-// aiModelStreamer is one streamed model turn: emit text deltas via onDelta,
+// aiModelStreamer is one streamed model turn: emit text deltas via onDelta
+// and thinking deltas via onThinking (models with adaptive thinking reason
+// before answering; dropping those deltas leaves renderers a silent gap),
 // return the accumulated message. A function value so tests script turns.
-type aiModelStreamer func(ctx context.Context, params anthropic.MessageNewParams, onDelta func(string)) (anthropic.Message, error)
+type aiModelStreamer func(ctx context.Context, params anthropic.MessageNewParams, onDelta, onThinking func(string)) (anthropic.Message, error)
 
 type localAISession struct {
 	configDir    string
 	model        string
+	effort       string // reasoning-effort cap; "" = API default
 	tenantAware  bool
 	stablePrompt string
 	streamer     aiModelStreamer
@@ -166,6 +199,7 @@ func newLocalAISession(configDir, apiKey, model string, catalog []aiCatalogEntry
 	return &localAISession{
 		configDir:    configDir,
 		model:        model,
+		effort:       resolveAIEffort(loadAISettings(configDir)),
 		tenantAware:  tenantAware,
 		stablePrompt: aiSystemPrompt(catalog, tenantAware),
 		streamer:     newAnthropicStreamer(client),
@@ -177,17 +211,33 @@ func newLocalAISession(configDir, apiKey, model string, catalog []aiCatalogEntry
 }
 
 func newAnthropicStreamer(client anthropic.Client) aiModelStreamer {
-	return func(ctx context.Context, params anthropic.MessageNewParams, onDelta func(string)) (anthropic.Message, error) {
+	debugStream := os.Getenv("DCI_AI_DEBUG_STREAM") == "1"
+	return func(ctx context.Context, params anthropic.MessageNewParams, onDelta, onThinking func(string)) (anthropic.Message, error) {
 		stream := client.Messages.NewStreaming(ctx, params)
 		var message anthropic.Message
+		started := time.Now()
 		for stream.Next() {
 			event := stream.Current()
+			if debugStream {
+				kind := event.Type
+				if deltaEvent, ok := event.AsAny().(anthropic.ContentBlockDeltaEvent); ok {
+					kind += "/" + deltaEvent.Delta.Type
+				}
+				fmt.Fprintf(os.Stderr, "[ai-stream %7.2fs] %s\n", time.Since(started).Seconds(), kind)
+			}
 			if err := message.Accumulate(event); err != nil {
 				return message, err
 			}
 			if deltaEvent, ok := event.AsAny().(anthropic.ContentBlockDeltaEvent); ok {
-				if textDelta, ok := deltaEvent.Delta.AsAny().(anthropic.TextDelta); ok && textDelta.Text != "" {
-					onDelta(textDelta.Text)
+				switch delta := deltaEvent.Delta.AsAny().(type) {
+				case anthropic.TextDelta:
+					if delta.Text != "" {
+						onDelta(delta.Text)
+					}
+				case anthropic.ThinkingDelta:
+					if delta.Thinking != "" {
+						onThinking(delta.Thinking)
+					}
 				}
 			}
 		}
@@ -345,13 +395,17 @@ func (s *localAISession) params() anthropic.MessageNewParams {
 	s.mu.Unlock()
 	stable := anthropic.TextBlockParam{Text: s.stablePrompt, CacheControl: anthropic.NewCacheControlEphemeralParam()}
 	volatile := anthropic.TextBlockParam{Text: aiVolatileSystem(s.configDir, time.Now())}
-	return anthropic.MessageNewParams{
+	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(model),
 		MaxTokens: aiMaxOutputTokens,
 		System:    []anthropic.TextBlockParam{stable, volatile},
 		Messages:  history,
 		Tools:     s.tools(),
 	}
+	if s.effort != "" {
+		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(s.effort)}
+	}
+	return params
 }
 
 func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc, turnID string) {
@@ -369,6 +423,8 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 	for round := 0; round < aiMaxToolRounds; round++ {
 		message, err := s.streamer(ctx, s.params(), func(text string) {
 			s.emit(aiEvent{TextDelta: &aiTextDelta{TurnID: turnID, Text: text}})
+		}, func(text string) {
+			s.emit(aiEvent{ThinkingDelta: &aiThinkingDelta{TurnID: turnID, Text: text}})
 		})
 		if err != nil {
 			if ctx.Err() != nil {

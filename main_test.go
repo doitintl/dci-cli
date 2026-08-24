@@ -2181,6 +2181,81 @@ func TestToonMarshalGetReportRowsFoldTabular(t *testing.T) {
 	}
 }
 
+func liftTestReportInput(rowCount int) map[string]interface{} {
+	rows := make([]interface{}, 0, rowCount)
+	for i := 0; i < rowCount; i++ {
+		rows = append(rows, []interface{}{fmt.Sprintf("service-%d", i), float64(i) + 0.5, "2026-07-01T00:00:00Z"})
+	}
+	return map[string]interface{}{
+		"result": map[string]interface{}{
+			"schema": []interface{}{
+				map[string]interface{}{"name": "service", "type": "string"},
+				map[string]interface{}{"name": "cost", "type": "float"},
+				map[string]interface{}{"name": "timestamp", "type": "timestamp"},
+			},
+			"rows": rows,
+		},
+	}
+}
+
+func TestToonMarshalLiftsConstantReportColumns(t *testing.T) {
+	// A single-period grouped query repeats the same timestamp in every row —
+	// hundreds of copies of one value is pure token cost for the consuming
+	// agent. Constant string columns lift into result.constantColumns.
+	ct := dciToonContentType{}
+	out, err := ct.Marshal(liftTestReportInput(12))
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "constantColumns") {
+		t.Fatalf("expected constantColumns marker, got:\n%s", s)
+	}
+	if got := strings.Count(s, "2026-07-01T00:00:00Z"); got != 1 {
+		t.Fatalf("expected the constant timestamp exactly once, got %d occurrences:\n%s", got, s)
+	}
+	if !strings.Contains(s, "rows[12]{cost,service}") {
+		t.Fatalf("expected rows folded without the lifted column, got:\n%s", s)
+	}
+}
+
+func TestToonMarshalKeepsConstantColumnsInSmallResults(t *testing.T) {
+	// Below the lift threshold there is nothing worth saving; rows keep the
+	// column so small results stay maximally explicit.
+	ct := dciToonContentType{}
+	out, err := ct.Marshal(liftTestReportInput(3))
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if strings.Contains(s, "constantColumns") {
+		t.Fatalf("expected no lift below %d rows, got:\n%s", liftConstantMinRows, s)
+	}
+	if got := strings.Count(s, "2026-07-01T00:00:00Z"); got != 3 {
+		t.Fatalf("expected the timestamp in every row, got %d occurrences:\n%s", got, s)
+	}
+}
+
+func TestToonMarshalColumnSelectionDisablesConstantLift(t *testing.T) {
+	// -C is an explicit field request: requested columns are never dropped,
+	// so lifting is skipped entirely.
+	viper.Set("table-columns", "service,timestamp")
+	t.Cleanup(viper.Reset)
+
+	ct := dciToonContentType{}
+	out, err := ct.Marshal(liftTestReportInput(12))
+	if err != nil {
+		t.Fatalf("expected TOON output, got error: %v", err)
+	}
+	s := string(out)
+	if strings.Contains(s, "constantColumns") {
+		t.Fatalf("expected no lift under -C selection, got:\n%s", s)
+	}
+	if got := strings.Count(s, "2026-07-01T00:00:00Z"); got != 12 {
+		t.Fatalf("expected the selected timestamp in every row, got %d occurrences:\n%s", got, s)
+	}
+}
+
 func TestToonMarshalDropsObjectColumnsLikeTable(t *testing.T) {
 	// A row field holding objects (directly or inside an array) blocks the
 	// tabular fold for the whole list, so drop the column from every row —
