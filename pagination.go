@@ -124,6 +124,29 @@ func validateAllPagesFlags(args []string) error {
 	return nil
 }
 
+// validateSearchFlags rejects --search combined with manual paging flags:
+// --search implies --all (searching one page would silently miss the rest of
+// the collection), so --all's conflicts apply to it too.
+func validateSearchFlags(args []string) error {
+	if !invocationHasFlag(args, "--search") {
+		return nil
+	}
+	for _, conflicting := range []string{"--page-token", "--max-results"} {
+		if invocationHasFlag(args, conflicting) {
+			return invocationPreflightError{
+				detail: structuredError{
+					Code:      "USAGE_ERROR",
+					Message:   fmt.Sprintf("--search scans the full collection (implying --all) and cannot be combined with %s", conflicting),
+					Hint:      fmt.Sprintf("Drop %s to search the whole collection, or drop --search to page manually", conflicting),
+					Retryable: false,
+				},
+				exitCode: exitUsage,
+			}
+		}
+	}
+	return nil
+}
+
 // allPagesMaxPages bounds the --all fetch loop. At the default page size this
 // is ~2,000 rows and at the common 500 cap ~20,000 — far beyond any known
 // collection, while still guaranteeing termination against a server that

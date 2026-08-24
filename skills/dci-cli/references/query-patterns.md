@@ -72,11 +72,10 @@ Practical rules:
 
 Label-scoped analysis (team/env/product tags, `system_label` taxonomies like `genai/*`) has three sharp edges:
 
-1. **Discovery.** `list-dimensions` can hold ~1,000 dimensions across ~20 pages, and its `--filter` only does exact `field:value` matches — it cannot search. To find dimensions for a topic, dump the collection once and grep locally:
+1. **Discovery.** `list-dimensions` can hold ~1,000 dimensions across ~20 pages, and its `--filter` only does exact `field:value` matches — it cannot search. To find dimensions for a topic, use the client-side substring search (implies `--all`; a `searchDropped` marker records how many items were filtered out):
 
    ```bash
-   # fetch all pages (see SKILL.md "Collections & Pagination"), then:
-   grep -i '<topic>' dims.csv
+   dci list-dimensions --search '<topic>'
    ```
 
 2. **The null-group bucket.** Grouping all billing data by a sparse label yields one giant row where the label is null — every unlabeled cost aggregated together, often dwarfing the labeled rows. There is no server-side "label exists" filter (`regexp` filters do not exclude the bucket). Pass `--drop-unlabeled-rows` to remove it (and `[Value N/A]` rows) in the CLI; leave it off when unlabeled spend is what you're measuring.

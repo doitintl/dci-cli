@@ -321,6 +321,21 @@ func TestValidateAllPagesFlags(t *testing.T) {
 	}
 }
 
+func TestValidateSearchFlags(t *testing.T) {
+	if err := validateSearchFlags([]string{"list-dimensions", "--search", "genai"}); err != nil {
+		t.Errorf("--search alone rejected: %v", err)
+	}
+	if err := validateSearchFlags([]string{"list-dimensions", "--search", "genai", "--all"}); err != nil {
+		t.Errorf("--search with --all rejected: %v", err)
+	}
+	for _, conflicting := range []string{"--page-token", "--max-results"} {
+		err := validateSearchFlags([]string{"list-dimensions", "--search", "genai", conflicting, "x"})
+		if err == nil || !strings.Contains(err.Error(), conflicting) {
+			t.Errorf("err = %v, want %s conflict", err, conflicting)
+		}
+	}
+}
+
 func TestTableAndCSVMarshalNoteDroppedPageToken(t *testing.T) {
 	viper.Set("table-columns", "")
 	t.Cleanup(func() { viper.Set("table-columns", nil) })

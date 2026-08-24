@@ -173,6 +173,52 @@ func insightsBody(rows ...map[string]interface{}) map[string]interface{} {
 	}
 }
 
+func TestApplyListSearchFiltersItems(t *testing.T) {
+	viper.Set("list-search", "GenAI")
+	t.Cleanup(func() { viper.Set("list-search", nil) })
+
+	body := map[string]interface{}{
+		"rowCount": int64(3),
+		"items": []interface{}{
+			map[string]interface{}{"id": "genai/model", "label": "Model", "type": "system_label"},
+			map[string]interface{}{"id": "service_description", "label": "Service", "type": "fixed"},
+			map[string]interface{}{"id": "team", "label": "Team tag", "labels": map[string]interface{}{"topic": "genai"}},
+		},
+	}
+	result := applyListSearch(body).(map[string]interface{})
+	items := result["items"].([]interface{})
+	if len(items) != 2 {
+		t.Fatalf("items = %v", items)
+	}
+	if result["searchDropped"] != int64(1) || result["rowCount"] != int64(2) {
+		t.Fatalf("markers = %v / %v", result["searchDropped"], result["rowCount"])
+	}
+}
+
+func TestApplyListSearchNoOps(t *testing.T) {
+	t.Cleanup(func() { viper.Set("list-search", nil) })
+
+	// No search term set: untouched.
+	viper.Set("list-search", "")
+	body := map[string]interface{}{"items": []interface{}{map[string]interface{}{"id": "a"}}}
+	if result := applyListSearch(body).(map[string]interface{}); len(result["items"].([]interface{})) != 1 {
+		t.Fatal("empty search term filtered items")
+	}
+
+	// Everything matches: no markers added.
+	viper.Set("list-search", "a")
+	result := applyListSearch(body).(map[string]interface{})
+	if _, present := result["searchDropped"]; present {
+		t.Fatal("all-match search added a searchDropped marker")
+	}
+
+	// Not a list wrapper (a report result): untouched.
+	report := map[string]interface{}{"result": map[string]interface{}{"rows": []interface{}{}}}
+	if applyListSearch(report).(map[string]interface{})["searchDropped"] != nil {
+		t.Fatal("non-list body grew a searchDropped marker")
+	}
+}
+
 func TestTransformInsightsDropsDismissedByDefault(t *testing.T) {
 	resetInsightConfig(t)
 	body := insightsBody(
