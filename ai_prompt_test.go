@@ -10,13 +10,24 @@ import (
 func TestAISystemPromptModes(t *testing.T) {
 	catalog := aiTestCatalog()
 
-	doer := aiSystemPrompt(catalog, true)
+	doer := aiSystemPrompt(catalog, true, true)
 	if !strings.Contains(doer, "# Customer context") || !strings.Contains(doer, "set_customer_context") {
 		t.Fatal("tenant-aware prompt missing the customer context section")
 	}
-	customer := aiSystemPrompt(catalog, false)
+	if !strings.Contains(doer, "csp.doit.com") || !strings.Contains(doer, "csp_strategic_account_manager") {
+		t.Fatal("doer prompt missing the CSP section (F3)")
+	}
+	customer := aiSystemPrompt(catalog, false, false)
 	if strings.Contains(customer, "Customer context") || strings.Contains(customer, "tenant") {
 		t.Fatal("customer-mode prompt leaks tenant vocabulary (AI-SPEC §6.2)")
+	}
+	if strings.Contains(customer, "csp") || strings.Contains(customer, "CSP") {
+		t.Fatal("customer-mode prompt leaks CSP vocabulary (F3 gate)")
+	}
+	// Tenant-aware but not a doer (partner with a context set): still no CSP.
+	partner := aiSystemPrompt(catalog, true, false)
+	if strings.Contains(partner, "csp") || strings.Contains(partner, "CSP") {
+		t.Fatal("non-doer tenant-aware prompt leaks CSP vocabulary (F3 gate)")
 	}
 	for _, prompt := range []string{doer, customer} {
 		if !strings.Contains(prompt, "list-budgets — List budgets") {
@@ -25,11 +36,18 @@ func TestAISystemPromptModes(t *testing.T) {
 		if !strings.Contains(prompt, "run_dci_command") {
 			t.Fatal("tool guidance missing from prompt")
 		}
+		// FinOps surfaces (F2) are tenant-agnostic: every mode gets them.
+		if !strings.Contains(prompt, "# FinOps surfaces") || !strings.Contains(prompt, "list-insights --all") {
+			t.Fatal("FinOps surfaces section missing (F2)")
+		}
+		if !strings.Contains(prompt, `--sort-order asc|desc`) {
+			t.Fatal("anomaly sort enums missing (F2; the API help text misleads with ascending/descending)")
+		}
 	}
 }
 
 func TestAISystemPromptEmbedsQueryPatterns(t *testing.T) {
-	prompt := aiSystemPrompt(aiTestCatalog(), false)
+	prompt := aiSystemPrompt(aiTestCatalog(), false, false)
 
 	// The embedded skill reference: query config shape, dimension discovery,
 	// and the GenAI worked example must reach the model without a --help or
@@ -61,7 +79,7 @@ func TestAISystemPromptEmbedsQueryPatterns(t *testing.T) {
 }
 
 func TestAISystemPromptEmptyCatalog(t *testing.T) {
-	prompt := aiSystemPrompt(nil, false)
+	prompt := aiSystemPrompt(nil, false, false)
 	if !strings.Contains(prompt, "dci login") {
 		t.Fatal("empty-catalog prompt must point at login")
 	}

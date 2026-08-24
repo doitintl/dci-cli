@@ -2527,6 +2527,7 @@ var expectedSkillFiles = []string{
 	"skills/dci-cli/agents/openai.yaml",
 	"skills/dci-cli/references/capabilities.md",
 	"skills/dci-cli/references/cost-optimization.md",
+	"skills/dci-cli/references/csp-patterns.md",
 	"skills/dci-cli/references/evals.md",
 	"skills/dci-cli/references/examples.md",
 	"skills/dci-cli/references/finops-baseline.md",

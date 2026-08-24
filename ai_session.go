@@ -195,13 +195,14 @@ var errAITurnRunning = errors.New("a turn is already running — wait for it or 
 // resolved and non-empty; renderers gate on aiSessionAvailable first.
 func newLocalAISession(configDir, apiKey, model string, catalog []aiCatalogEntry) *localAISession {
 	client := anthropic.NewClient(option.WithAPIKey(apiKey))
-	tenantAware := cachedTokenIsDoer() || readCustomerContext(configDir) != ""
+	isDoer := cachedTokenIsDoer()
+	tenantAware := isDoer || readCustomerContext(configDir) != ""
 	return &localAISession{
 		configDir:    configDir,
 		model:        model,
 		effort:       resolveAIEffort(loadAISettings(configDir)),
 		tenantAware:  tenantAware,
-		stablePrompt: aiSystemPrompt(catalog, tenantAware),
+		stablePrompt: aiSystemPrompt(catalog, tenantAware, isDoer),
 		streamer:     newAnthropicStreamer(client),
 		executor:     newAIToolExecutor(configDir),
 		events:       make(chan aiEvent, 64),

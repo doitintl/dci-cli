@@ -1206,7 +1206,8 @@ func (m aiModel) modelInfoText() string {
 	if m.session == nil {
 		lines = append(lines, aiNoticeStyle.Render(m.sessionNote))
 	}
-	stable := aiSystemPrompt(m.catalog, cachedTokenIsDoer() || readCustomerContext(m.configDir) != "")
+	isDoer := cachedTokenIsDoer()
+	stable := aiSystemPrompt(m.catalog, isDoer || readCustomerContext(m.configDir) != "", isDoer)
 	lines = append(lines, aiEchoStyle.Render(fmt.Sprintf("System prompt (cached prefix): ~%d tokens, %d commands in catalog", aiEstimateTokens(stable), len(m.catalog))))
 	if m.lastUsage != nil {
 		lines = append(lines, aiEchoStyle.Render(fmt.Sprintf("Last turn: %d in / %d out / %d cache-read tokens",

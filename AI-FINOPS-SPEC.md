@@ -210,16 +210,21 @@ so the suite covers the doer path.
 
 ---
 
-## 4. Decisions (maintainer)
+## 4. Decisions (maintainer — decided 2026-08-24, all implemented on this branch)
 
-| # | Decision | Recommendation |
+| # | Decision | Decided |
 |---|---|---|
-| F1 | Identity in the volatile prompt | Yes — email + role, both already parsed locally |
-| F2 | FinOps-surfaces playbook section | Yes — ≤600 cached tokens for the three slowest runs |
-| F3 | Doer-gated CSP prompt section | Yes — fixes both baseline failures, incl. the silently-wrong one |
-| F4 | Timeout for CSP queries | Option (b): 5 min for `query` children only |
-| F5 | Skill parity via `references/csp-patterns.md` | Yes, with the doer-only caveat in the reference |
-| F6 | Eval harness location | `eval/` in-repo (this branch) |
+| F1 | Identity in the volatile prompt | **Yes** — email + role for every session (volatile tail; `aiVolatileSystem`) |
+| F2 | FinOps-surfaces playbook section | **Yes, full section** (`aiFinOpsSurfacesSection`, cached prefix; mirrored to SKILL.md) |
+| F3 | Doer-gated CSP prompt section | **Yes** — gated on `cachedTokenIsDoer()`; customers/partners byte-identical (tested) |
+| F4 | Timeout for CSP queries | **5 min for `query` children only** (`aiToolQueryTimeout`); others keep 2 min |
+| F5 | Skill parity | **Yes** — `references/csp-patterns.md` (doer-only caveat up top) + FinOps surfaces in SKILL.md |
+| F6 | Eval harness | **In-repo `eval/`** + P11/P12 doer/CSP prompts added to the suite |
+
+Post-decision validation note: the book-of-business filter shape
+(`filters: [{id, type: "fixed", values: [email]}]`) was validated live — and a filtered
+cold CSP query returns in seconds (the filter narrows the scan), so filtered queries are
+now the recommended CSP pattern in both the prompt and the skill.
 
 ## 5. Validation log
 
