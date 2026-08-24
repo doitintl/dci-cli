@@ -601,3 +601,12 @@ func TestAIScrollKeysAndFollow(t *testing.T) {
 		t.Fatal("PgDn to the bottom did not restore follow mode")
 	}
 }
+
+func TestAIInputLineHasNoBackgroundBand(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "/sta")
+	rendered := m.input.View()
+	if strings.Contains(rendered, "\x1b[48;") || strings.Contains(rendered, "\x1b[47m") || strings.Contains(rendered, "\x1b[107m") {
+		t.Fatalf("input line paints a background band: %q", rendered)
+	}
+}
