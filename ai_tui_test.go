@@ -681,19 +681,19 @@ func TestAICustomerNameFromJSON(t *testing.T) {
 
 func TestAIMouseToggle(t *testing.T) {
 	m := aiTestModel(t)
-	if !m.mouseOn {
-		t.Fatal("mouse capture must default on")
+	if m.mouseOn {
+		t.Fatal("mouse capture must default off so terminal selection/copy works")
 	}
 	m = aiType(m, "/mouse")
 	updated, cmd := aiPress(m, tea.KeyEnter)
 	m = updated
-	if m.mouseOn || cmd == nil {
+	if !m.mouseOn || cmd == nil {
 		t.Fatalf("first /mouse: on=%v cmd=%v", m.mouseOn, cmd)
 	}
 	m = aiType(m, "/mouse")
 	updated, cmd = aiPress(m, tea.KeyEnter)
 	m = updated
-	if !m.mouseOn || cmd == nil {
+	if m.mouseOn || cmd == nil {
 		t.Fatalf("second /mouse: on=%v cmd=%v", m.mouseOn, cmd)
 	}
 }

@@ -3624,4 +3624,32 @@ func TestRenderHiddenColumnsHintCompactOnTTY(t *testing.T) {
 	if !strings.Contains(pair, "+2 hidden: 2026-08-04, 2026-08-05") {
 		t.Fatalf("short hidden lists must be spelled out, got %q", pair)
 	}
+
+	// A `dci ai` slash child is piped (no TTY), but a human reads the output
+	// in the session: DCI_SESSION_RENDER selects the compact form too.
+	forceTUI(t, false)
+	t.Setenv("DCI_SESSION_RENDER", "1")
+	session := renderHiddenColumnsHint(keys, hidden)
+	if !strings.Contains(session, "+3 hidden: 2026-08-04 … 2026-08-19") {
+		t.Fatalf("session-render hint must be the compact one-liner, got %q", session)
+	}
+}
+
+func TestSessionRenderActive(t *testing.T) {
+	t.Setenv("DCI_SESSION_RENDER", "")
+	if sessionRenderActive() {
+		t.Fatal("empty DCI_SESSION_RENDER must be inactive")
+	}
+	t.Setenv("DCI_SESSION_RENDER", "1")
+	if !sessionRenderActive() {
+		t.Fatal("DCI_SESSION_RENDER=1 must be active")
+	}
+	t.Setenv("DCI_SESSION_RENDER", "0")
+	if sessionRenderActive() {
+		t.Fatal("DCI_SESSION_RENDER=0 must be inactive")
+	}
+	t.Setenv("DCI_SESSION_RENDER", "banana")
+	if sessionRenderActive() {
+		t.Fatal("unparseable DCI_SESSION_RENDER must be inactive")
+	}
 }

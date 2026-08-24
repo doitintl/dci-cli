@@ -758,6 +758,16 @@ func heatmapEnabled(requested, agent, terminal, noColor bool) bool {
 	return requested && !agent && terminal && !noColor
 }
 
+// sessionRenderActive reports that a human is watching this output through
+// the dci ai session's transcript: the process is piped (no TTY), but the
+// rendering should stay human-shaped — compact hints, colored tables — the
+// way an interactive terminal would show it. Set by the session's dispatcher
+// (ai_tui.go), never by users.
+func sessionRenderActive() bool {
+	on, valid := parseBoolish(os.Getenv("DCI_SESSION_RENDER"))
+	return valid && on
+}
+
 // agentFlagOverride scans args for the explicit --agent / --no-agent flags and
 // returns +1 for agent mode, -1 for human mode, or 0 for no override. These are
 // two independent pflag bool flags, so this scan mirrors pflag's own semantics:
@@ -1727,7 +1737,7 @@ func addOutputFlag() {
 		// Whether cell accents (e.g. the insights easy-win title highlight) may
 		// color interactive table output. Same gate as the heatmap, minus the
 		// --heatmap flag, which governs only the pivot shading.
-		viper.Set("table-color", heatmapEnabled(true, agentMode, stdoutIsTTY(), os.Getenv("NO_COLOR") != ""))
+		viper.Set("table-color", heatmapEnabled(true, agentMode, stdoutIsTTY() || sessionRenderActive(), os.Getenv("NO_COLOR") != ""))
 		viper.Set("pivot-active", false)
 		viper.Set("pivot-total-rows", 0)
 		viper.Set("utc-label-columns", "")
@@ -2690,7 +2700,7 @@ func firstLine(s string) string {
 // the verbose form: scripts and agents need every hidden column name spelled
 // out, and the -C example stays copy-pasteable.
 func renderHiddenColumnsHint(keys, hidden []string) string {
-	if !tuiActive() {
+	if !tuiActive() && !sessionRenderActive() {
 		return fmt.Sprintf("\nHidden columns (nested objects, or too many to fit): %s\n", strings.Join(hidden, ", ")) +
 			fmt.Sprintf("Use -C to choose columns (e.g.: -C %s), -M wrap to wrap, or -W to widen\n", strings.Join(append(keys, hidden...), ","))
 	}
