@@ -13,7 +13,7 @@ set -euo pipefail
 
 CHANGELOG="${CHANGELOG_FILE:-CHANGELOG.md}"
 HELP_HOST="help.doit.com"
-CURL="curl -sS --max-time 15 --retry 2 --retry-delay 2"
+CURL="curl -sS --location --max-time 15 --retry 2 --retry-delay 2"
 
 fail=0
 err() { echo "::error file=${CHANGELOG}::$1" >&2; fail=1; }
