@@ -26,6 +26,16 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
+  changelog-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint CHANGELOG.md format
+        run: ./.github/changelog/check-changelog.sh --lint
+
   secrets-scan:
     runs-on: ubuntu-latest
     if: github.actor != 'dependabot[bot]'
