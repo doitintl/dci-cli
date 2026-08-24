@@ -216,8 +216,10 @@ stays out of it: authoring remains C1–C3 in this repo.
    with `doiteng/tech-docs` as reviewers — the established Scribe posture
    (always a draft, always human-merged, never auto-merge), adopted as-is.
    The PR is also **assigned to the dci-cli maintainers** — spark2ignite,
-   apgiorgi, taltultc, chaim0m (CODEOWNERS' individuals; teams can't be
-   assignees) — so each delivery lands on their radar (decided 2026-08-24);
+   apgiorgi, taltultc, chaim0m (the CODEOWNERS individuals plus
+   spark2ignite; teams can't be assignees, and the list is fixed here, not
+   derived from CODEOWNERS at run time) — so each delivery lands on their
+   radar (decided 2026-08-24);
    assignment is idempotent on both the create and update paths and
    best-effort per user. If the branch/PR already exists (previous
    release's delivery not yet merged), force-push the re-rendered page to
