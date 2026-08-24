@@ -104,11 +104,22 @@ type aiErrorEvent struct {
 	Message string `json:"message"`
 }
 
+// aiTurnDone carries the turn's telemetry: token usage summed across API
+// rounds, plus cost/latency counters for the eval harness (DCI_AI_STATS=1).
+// Fields were added within schema v1 — additive changes keep old consumers
+// working, so no version bump.
 type aiTurnDone struct {
-	TurnID       string `json:"turn_id"`
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
-	CacheRead    int64  `json:"cache_read_input_tokens"`
+	TurnID       string        `json:"turn_id"`
+	InputTokens  int64         `json:"input_tokens"`
+	OutputTokens int64         `json:"output_tokens"`
+	CacheRead    int64         `json:"cache_read_input_tokens"`
+	Rounds       int           `json:"rounds"`     // API rounds (streamer calls) in the turn
+	ToolCalls    int           `json:"tool_calls"` // tool invocations actually started
+	Wall         time.Duration `json:"wall_ns"`
+	// FirstText is the time from turn start to the first answer text delta —
+	// server-side thinking dominates it on analytical questions. Zero when the
+	// turn produced no text (error, cancel, ceiling before any answer).
+	FirstText time.Duration `json:"first_text_ns,omitempty"`
 }
 
 // --- Renderer → session -------------------------------------------------------

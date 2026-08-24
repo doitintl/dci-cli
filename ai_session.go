@@ -424,10 +424,19 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 	}()
 
 	s.emit(aiEvent{TurnStarted: &aiTurnStarted{TurnID: turnID}})
+	started := time.Now()
 	usage := aiTurnDone{TurnID: turnID}
+	finish := func() {
+		usage.Wall = time.Since(started)
+		s.emit(aiEvent{TurnDone: &usage})
+	}
 
 	for round := 0; round < aiMaxToolRounds; round++ {
+		usage.Rounds++
 		message, err := s.streamer(ctx, s.params(), func(text string) {
+			if usage.FirstText == 0 {
+				usage.FirstText = time.Since(started)
+			}
 			s.emit(aiEvent{TextDelta: &aiTextDelta{TurnID: turnID, Text: text}})
 		}, func(text string) {
 			s.emit(aiEvent{ThinkingDelta: &aiThinkingDelta{TurnID: turnID, Text: text}})
@@ -438,7 +447,7 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 			} else {
 				s.emit(aiEvent{Error: &aiErrorEvent{TurnID: turnID, Message: err.Error()}})
 			}
-			s.emit(aiEvent{TurnDone: &usage})
+			finish()
 			return
 		}
 		usage.InputTokens += message.Usage.InputTokens
@@ -455,11 +464,11 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 			// Cut mid-generation: aiHistoryParam stripped any half-generated
 			// tool calls, so the next question starts from a valid history.
 			s.emit(aiEvent{LimitReached: &aiLimitReached{TurnID: turnID, Kind: "output-token"}})
-			s.emit(aiEvent{TurnDone: &usage})
+			finish()
 			return
 		}
 		if message.StopReason != anthropic.StopReasonToolUse {
-			s.emit(aiEvent{TurnDone: &usage})
+			finish()
 			return
 		}
 
@@ -477,6 +486,7 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 				toolResults = append(toolResults, aiCanceledToolResult(toolUse.ID))
 				continue
 			}
+			usage.ToolCalls++
 			result, aborted := s.executeToolCall(ctx, turnID, toolUse)
 			if aborted {
 				canceled = true
@@ -492,17 +502,17 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 		}
 		if canceled {
 			s.emit(aiEvent{Error: &aiErrorEvent{TurnID: turnID, Message: "turn canceled"}})
-			s.emit(aiEvent{TurnDone: &usage})
+			finish()
 			return
 		}
 		if len(toolResults) == 0 {
-			s.emit(aiEvent{TurnDone: &usage})
+			finish()
 			return
 		}
 	}
 
 	s.emit(aiEvent{LimitReached: &aiLimitReached{TurnID: turnID, Kind: "turns"}})
-	s.emit(aiEvent{TurnDone: &usage})
+	finish()
 }
 
 // executeToolCall runs one tool_use block, emitting the protocol events and

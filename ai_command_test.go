@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
@@ -31,6 +32,25 @@ func TestRegisterAICommandVisibleAtGA(t *testing.T) {
 	}
 	if flag := aiCommand.Flags().Lookup("yes"); flag == nil {
 		t.Fatal("one-shot --yes flag missing")
+	}
+}
+
+func TestAIStatsLine(t *testing.T) {
+	done := aiTurnDone{
+		TurnID: "t1", Rounds: 3, ToolCalls: 2,
+		InputTokens: 48213, OutputTokens: 2911, CacheRead: 45102,
+		Wall: 88200 * time.Millisecond, FirstText: 6100 * time.Millisecond,
+	}
+	want := "[ai-stats] turn=1 rounds=3 tools=2 in=48213 out=2911 cache_read=45102 wall=88.2s ttft=6.1s"
+	if got := aiStatsLine(done); got != want {
+		t.Fatalf("stats line = %q, want %q", got, want)
+	}
+
+	// A turn with no answer text (error, cancel) has no first-text time; the
+	// key is omitted rather than printing a misleading ttft=0.0s.
+	done.FirstText = 0
+	if got := aiStatsLine(done); strings.Contains(got, "ttft") {
+		t.Fatalf("ttft printed for a textless turn: %q", got)
 	}
 }
 
