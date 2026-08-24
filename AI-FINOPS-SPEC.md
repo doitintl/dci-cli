@@ -124,6 +124,31 @@ baseline (Opus 4.8 74,818 / Fable 5 37,462 / Sonnet 4.6 31,987), a monthly total
 the Cursor billing-classification caveat kept as one line. P05 (short answer) is
 unaffected: 366 out tokens, 8.9s.
 
+### 1.3 Concluding retest (2026-08-24, post-#108–#111) — everything landed
+
+Full suite once, plus `RUNS=3` on the two hot prompts via the new repeat mode. All 12
+substantively correct; the persisted customer context was byte-identical after the CSP
+prompts (session-scoped switching holding in practice).
+
+- **Suite total (P01–P10): 346s** — original baseline 572s with one hard failure,
+  §1.2 411s. Per-prompt: P01 27s, P02 24s, P03 30s ✓, P04 30s, P05 13s, P06 76s,
+  P07 25s, P08 26s, P09 39s, P10 56s; P11 43s ✓, P12 63s ✓ (cold CSP query this run).
+- **P06 ordering fix (#110) holds across all four runs of the day**: `list-aws-savings-plans`
+  / `list-aws-recommendations` never appear without the org id and no run has a failed
+  tool call (previously one per run). `RUNS=3`: wall median 71.5s (49.8–72.5s),
+  tools 9 (7–9) — the remaining spread is legitimate exploration variance.
+- **P10 answer budget (#111) holds under repetition**: `RUNS=3` wall median 53.2s
+  (50.4–54.3s — tight), out tokens median 3,828 (was 5,016), single tool call every
+  run, top rows byte-identical to baseline, total ≈$206k, caveats one line each.
+- **Repeat mode + judge bundle (#109) verified live**: median/range summaries parse
+  from the `[ai-stats]` lines; `judge.md` renders prompt + ANSI-stripped final answers.
+
+Remaining observations, none blocking: sporadic TTFT spikes (~18–22s on isolated runs —
+P04/P08 this pass — that pattern-match prompt-cache re-writes or server queueing;
+worth a look only if they show up in interactive dogfood), P12's cold-CSP first query
+(~55s server-side, upstream), and the four upstream issues filed as doiteng/omni
+#61955–#61958.
+
 ## 2. Findings
 
 ### 2.1 Exit-30 collision: validation errors masquerade as destructive commands — FIXED
