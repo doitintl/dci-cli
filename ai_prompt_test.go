@@ -28,6 +28,35 @@ func TestAISystemPromptModes(t *testing.T) {
 	}
 }
 
+func TestAISystemPromptEmbedsQueryPatterns(t *testing.T) {
+	prompt := aiSystemPrompt(aiTestCatalog(), false)
+
+	// The embedded skill reference: query config shape, dimension discovery,
+	// and the GenAI worked example must reach the model without a --help or
+	// list-dimensions round-trip.
+	for _, needle := range []string{
+		"# Cost analytics queries (dci query)",
+		`"dataSource": "billing"`,
+		"genai/model",
+		"metricFilter",
+		"--search",
+		"--drop-unlabeled-rows",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("prompt missing %q", needle)
+		}
+	}
+	// Session-hostile advice from the reference must be stripped: tenant
+	// switches go through set_customer_context, never an env var.
+	if strings.Contains(prompt, "DCI_CUSTOMER_CONTEXT") {
+		t.Fatal("prompt leaks DCI_CUSTOMER_CONTEXT switching advice")
+	}
+	// The section must stay inside the cache budget's order of magnitude.
+	if estimate := aiEstimateTokens(aiQueryPatternsSection()); estimate > 2500 {
+		t.Fatalf("query patterns section estimates %d tokens", estimate)
+	}
+}
+
 func TestAISystemPromptEmptyCatalog(t *testing.T) {
 	prompt := aiSystemPrompt(nil, false)
 	if !strings.Contains(prompt, "dci login") {
