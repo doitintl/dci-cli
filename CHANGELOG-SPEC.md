@@ -20,7 +20,7 @@ ship without its entry.
 | C2 | Entry format & writing rules | User-terms prose, New/Improved/Fixed sections, help-center link policy | P1 |
 | C3 | Release gate | `release.yml` refuses to release a tag whose entry is missing or whose links don't resolve | P1 |
 | C4 | Help Center delivery via Scribe | Release fires a dispatch to doiteng/scribe, which renders the changelog to omni MDX and opens/updates a draft PR for tech-docs review | P1 |
-| C5 | Backfill | Seed the page with rewritten history from v2.3.0 to current | P2 |
+| C5 | Backfill | Seed the page with rewritten history from v2.0.0 to current | P2 |
 | C6 | CLI touchpoints | `dci docs` entry + update-notice link to the changelog page | P2 |
 | C7 | Curated GitHub Release header | Prepend the entry to the GitHub Release body above the raw commit list | P3 |
 
@@ -261,12 +261,12 @@ gives the changelog its first self-referential entry.
 Seed `CHANGELOG.md` before the first delivery so the page never publishes
 near-empty:
 
-- **v2.3.0 → current** (decided 2026-08-23): one section per release,
-  rewritten in user terms from the GitHub Release bodies (the raw material
-  is good — this audit rewrote
-  v2.5.2 in §3 in a few minutes). v2.3.0 is the natural epoch: it is where
-  the current versioning policy starts (AGENTS.md "Versioning").
-- **Before v2.3.0**: a single closing line — *"For earlier releases, see the
+- **v2.0.0 → current** (decided 2026-08-23 as v2.3.0; extended to the
+  whole v2 major 2026-08-24): one section per release, rewritten in user
+  terms from the GitHub Release bodies. v2.0.0 is the epoch the page tells
+  the story of — the human-experience overhaul the Help Center's
+  "before and after" page documents.
+- **Before v2.0.0**: a single closing line — *"For earlier releases, see the
   [GitHub releases page](https://github.com/doitintl/dci-cli/releases)."*
 - The seed is a PR the maintainer reviews line-by-line; it is the one place
   where entries are written without release-time context.
@@ -302,7 +302,8 @@ Center page. P3 — do it only if the duplication doesn't annoy.
    nothing else. The site-wide "What's new" section stays a manual,
    occasional call (via the product-announcement flow) for milestone
    releases — no standing per-release obligation.
-2. **Backfill depth**: seed from v2.3.0 (§9); earlier history collapses to
+2. **Backfill depth**: seed from v2.0.0 (§9; originally v2.3.0, extended
+   2026-08-24); earlier history collapses to
    the GitHub-releases link.
 3. **Delivery mechanism**: Scribe delivers, this repo authors (§7). The
    originally-drafted self-contained `sync-changelog.yml` (with Docs Bot
