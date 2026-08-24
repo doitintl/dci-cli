@@ -143,8 +143,6 @@ func aiArgvHasYes(argv []string) bool {
 	return false
 }
 
-// aiDestructiveSummary extracts the human-facing confirmation line from the
-// child's structured error, falling back to the command line itself.
 // aiEnvelopeCode extracts the structured error envelope's code from a child's
 // output ("" when no envelope line parses).
 func aiEnvelopeCode(output []byte) string {
@@ -161,6 +159,8 @@ func aiEnvelopeCode(output []byte) string {
 	return ""
 }
 
+// aiDestructiveSummary extracts the human-facing confirmation line from the
+// child's structured error, falling back to the command line itself.
 func aiDestructiveSummary(output []byte, argv []string) string {
 	var envelope struct {
 		Error struct {
