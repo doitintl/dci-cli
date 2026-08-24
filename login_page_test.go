@@ -353,9 +353,9 @@ func TestAuthorizationCodeTokenSourceFailsFastHeadless(t *testing.T) {
 	// The interactive flow blocks on the browser callback with no timeout;
 	// reached headless (agent-mode child, CI, or a --help description fetch)
 	// it must return an error immediately instead of hanging the process.
-	previousInteractive := invocationInteractive
-	invocationInteractive = func() bool { return false }
-	t.Cleanup(func() { invocationInteractive = previousInteractive })
+	previousHeadless := loginFlowHeadless
+	loginFlowHeadless = func() bool { return true }
+	t.Cleanup(func() { loginFlowHeadless = previousHeadless })
 
 	done := make(chan error, 1)
 	go func() {
@@ -369,6 +369,19 @@ func TestAuthorizationCodeTokenSourceFailsFastHeadless(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Token() did not return headless")
+	}
+}
+
+func TestLoginFlowHeadlessPredicate(t *testing.T) {
+	// Agent mode is always headless. The other branch (stderr TTY) cannot be
+	// exercised without a PTY, but the predicate must never consult stdin:
+	// a piped stdin is normally the request body (dci query < query.json)
+	// with a human still present to complete the browser flow.
+	previousMode := agentUAMode
+	agentUAMode = uaModeAgent
+	t.Cleanup(func() { agentUAMode = previousMode })
+	if !loginFlowHeadless() {
+		t.Fatal("agent mode not treated as headless")
 	}
 }
 

@@ -29,10 +29,12 @@ import (
 func transformSuccessBody(body interface{}) interface{} {
 	body = normalizeIntegralNumbers(body)
 	body = nullListsToEmpty(body)
-	body = transformInsightsList(body)
-	// Before applyListView: search matches raw item fields, not the curated
-	// view's renamed/derived columns.
+	// Before transformInsightsList and applyListView: search matches raw item
+	// fields, not presentation-derived text (the insights " (easy win)" title
+	// suffix, formatted savings) or the curated view's renamed columns —
+	// otherwise the match set would change with the output format.
 	body = applyListSearch(body)
+	body = transformInsightsList(body)
 	// Before applyListView: the view's title rewrite consults the UTC-label
 	// registry to keep anomaly window columns labeled and rendered in UTC.
 	markAnomalyWindowColumns()

@@ -292,15 +292,25 @@ func (ac *authorizationCodeTokenSource) getRedirectURL() string {
 	return ac.RedirectURL
 }
 
+// loginFlowHeadless reports whether the interactive browser flow cannot
+// complete: explicit agent mode, or no terminal on stderr (the same
+// human-presence predicate armLoginRunOffer uses). A var so tests can force
+// both outcomes without a PTY.
+var loginFlowHeadless = func() bool {
+	return agentUAMode == uaModeAgent || !stderrIsTTY()
+}
+
 // Token generates a new token using an authorization code.
 func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 	// Headless guard: everything below needs a human to complete the browser
 	// round-trip, and the select on the callback has no timeout. Reaching here
-	// in agent mode or without a stdin TTY — an AI-session child, CI, or an
-	// API command's --help loading the description with no cached token —
-	// would hang forever. Same predicate as the invocation preflight, so
-	// interactive humans keep the exact flow below.
-	if !invocationInteractive() {
+	// in agent mode or with no terminal at all — an AI-session child, CI, or
+	// an API command's --help loading the description with no cached token —
+	// would hang forever. Keyed off stderr (the channel this flow talks to
+	// the human on), NOT stdin: a piped stdin is normally the request body
+	// (dci query < query.json) with a human still present, and must keep the
+	// browser flow — e.g. for re-auth after a stale refresh token.
+	if loginFlowHeadless() {
 		return nil, errors.New("no credentials available and this session cannot open a browser to log in: set DCI_API_KEY, or run dci login from an interactive terminal")
 	}
 
