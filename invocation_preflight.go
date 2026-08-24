@@ -40,7 +40,7 @@ func invocationCanAuthenticateInteractively(stdinTTY bool) bool {
 }
 
 func preflightAPIInvocation(args []string) error {
-	if len(args) < 3 || args[1] != "dci" || invocationSkipsPreflight(args) {
+	if len(args) < 3 || args[1] != "dci" {
 		return nil
 	}
 	commandName := apiInvocationCommandName(args)
@@ -52,6 +52,14 @@ func preflightAPIInvocation(args []string) error {
 	interactive := invocationInteractive()
 	if !authenticated && !interactive && !invocationCachedSpecAvailable() {
 		return authenticationRequiredPreflightError()
+	}
+	if invocationRequestsHelp(args) {
+		// Help needs a loadable API description but nothing else: with a
+		// cached spec (or a way to authenticate) it renders offline, so it
+		// skips operation validation. Without one, the check above already
+		// failed fast — the description fetch would otherwise dead-end in the
+		// interactive login wait.
+		return nil
 	}
 
 	api, err := loadInvocationAPI()
@@ -73,13 +81,16 @@ func preflightAPIInvocation(args []string) error {
 	if err := validateAllPagesFlags(args[2:]); err != nil {
 		return err
 	}
+	if err := validateSearchFlags(args[2:]); err != nil {
+		return err
+	}
 	if authenticated || interactive || invocationHasFlag(args, "--dry-run") {
 		return nil
 	}
 	return authenticationRequiredPreflightError()
 }
 
-func invocationSkipsPreflight(args []string) bool {
+func invocationRequestsHelp(args []string) bool {
 	for _, argument := range args[2:] {
 		if argument == "--help" || argument == "-h" {
 			return true
