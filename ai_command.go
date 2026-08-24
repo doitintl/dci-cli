@@ -89,9 +89,11 @@ func runAIOneShot(configDir, question string, approveDestructive bool) error {
 			fmt.Fprintln(os.Stderr, renderAIToolStart(*event.ToolCallStarted))
 
 		case event.ToolResult != nil && verbose:
+			closeThinking()
 			fmt.Fprintln(os.Stderr, renderAIToolResult(*event.ToolResult))
 
 		case event.ApprovalRequest != nil:
+			closeThinking()
 			answer := approveDestructive
 			if verbose {
 				verdict := "declined (pass --yes to approve)"
@@ -103,16 +105,20 @@ func runAIOneShot(configDir, question string, approveDestructive bool) error {
 			_ = session.Send(aiUserInput{Kind: aiInputApproval, CallID: event.ApprovalRequest.CallID, Approved: answer})
 
 		case event.ContextSwitched != nil && verbose:
+			closeThinking()
 			fmt.Fprintf(os.Stderr, "customer context switched: %s → %s\n",
 				aiDisplayContext(event.ContextSwitched.From), event.ContextSwitched.To)
 
 		case event.LimitReached != nil:
+			closeThinking()
 			failure = fmt.Errorf("stopped: the turn hit the %s ceiling", event.LimitReached.Kind)
 
 		case event.Error != nil:
+			closeThinking()
 			failure = errors.New(aiFriendlyAPIError(configDir, event.Error.Message))
 
 		case event.TurnDone != nil:
+			closeThinking()
 			if printedText {
 				fmt.Println()
 			}

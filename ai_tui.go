@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -514,7 +515,13 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		// wants the last line, not the whole reasoning stream.
 		m.thinking += event.ThinkingDelta.Text
 		if len(m.thinking) > 4096 {
-			m.thinking = m.thinking[len(m.thinking)-2048:]
+			cut := len(m.thinking) - 2048
+			// Advance to a rune boundary: a raw byte cut can split a
+			// multi-byte rune and garble the status snippet.
+			for cut < len(m.thinking) && !utf8.RuneStart(m.thinking[cut]) {
+				cut++
+			}
+			m.thinking = m.thinking[cut:]
 		}
 		if snippet := aiActivitySnippet(m.thinking); snippet != "" {
 			m.turnActivity = "thinking · " + snippet
