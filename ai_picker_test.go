@@ -199,7 +199,7 @@ func TestAIPickerEscCancels(t *testing.T) {
 }
 
 func TestAIDispatchEnvForcesHumanMode(t *testing.T) {
-	env := aiDispatchEnv(132)
+	env := aiDispatchEnv(132, "")
 	for _, want := range []string{"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "DCI_SESSION_RENDER=1", "COLOR=1", "CLICOLOR_FORCE=1", "COLUMNS=132"} {
 		found := false
 		for _, entry := range env {

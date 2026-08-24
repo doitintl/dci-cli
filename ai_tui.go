@@ -55,7 +55,11 @@ type aiRunState struct {
 	cancel   context.CancelFunc
 	started  time.Time
 	customer string
-	width    int
+	// sessionCustomer is the agent's session-scoped context override, passed
+	// to the child as DCI_CUSTOMER_CONTEXT so user dispatches run against the
+	// same tenant the status line shows ("" = no override).
+	sessionCustomer string
+	width           int
 }
 
 // aiCmdDoneMsg reports a finished user dispatch back into the Update loop.
@@ -95,12 +99,16 @@ type aiModel struct {
 	historyPos int
 	draft      string
 
-	running      *aiRunState
-	ctrlCArmed   bool
-	identity     string // the tenant line, cached (rebuilt on switches/lookups)
-	userLine     string // "email · role", from the cached token
-	customerName string // resolved display name for an ID-shaped context
-	mouseOn      bool
+	running    *aiRunState
+	ctrlCArmed bool
+	// sessionCustomer mirrors the agent's session-scoped context override
+	// ("" = none): the identity line and user dispatches follow it, while the
+	// persisted context file stays untouched until the user runs /customer.
+	sessionCustomer string
+	identity        string // the tenant line, cached (rebuilt on switches/lookups)
+	userLine        string // "email · role", from the cached token
+	customerName    string // resolved display name for an ID-shaped context
+	mouseOn         bool
 
 	// Async name fetch backing the picker when the cache is empty.
 	fetchedNames map[string][]nameCacheEntry
@@ -292,7 +300,7 @@ func aiLookupCustomerName(customerContext string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		output, exitCode, err := aiAgentModeRunner(ctx, []string{"get-customer", customerContext, "--output", "json"})
+		output, exitCode, err := aiAgentModeRunner(ctx, []string{"get-customer", customerContext, "--output", "json"}, nil)
 		if err != nil || exitCode != 0 {
 			return aiCustomerNameMsg{context: customerContext}
 		}
@@ -337,6 +345,13 @@ func aiUserLine() string {
 // with the raw context in parentheses; doers with no context get the fix
 // spelled out; single-tenant customers see no tenant vocabulary (§6.1).
 func (m *aiModel) contextLabel() string {
+	if m.sessionCustomer != "" {
+		label := m.sessionCustomer
+		if m.customerName != "" {
+			label = m.customerName + " (" + m.sessionCustomer + ")"
+		}
+		return label + " · session-scoped"
+	}
 	context := readCustomerContext(m.configDir)
 	if context == "" {
 		if cachedTokenIsDoer() {
@@ -552,6 +567,11 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		m.append(renderAIApprovalRequest(request))
 
 	case event.ContextSwitched != nil:
+		// Agent switches are session-scoped (never persisted): track the
+		// override locally so the identity line and user dispatches follow it.
+		if event.ContextSwitched.By == "agent" {
+			m.sessionCustomer = event.ContextSwitched.To
+		}
 		m.customerName = ""
 		m.identity = m.contextLabel()
 		m.refreshBanner()
@@ -946,10 +966,15 @@ func (m aiModel) handleNamesFetched(msg aiNamesFetchedMsg) (tea.Model, tea.Cmd) 
 // startDispatch spawns one slash command subprocess and arms the spinner.
 func (m *aiModel) startDispatch(argv []string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
+	customer := m.sessionCustomer
+	if customer == "" {
+		customer = readCustomerContext(m.configDir)
+	}
 	m.running = &aiRunState{
 		argv: argv, cancel: cancel, started: time.Now(),
-		customer: readCustomerContext(m.configDir),
-		width:    m.width,
+		customer:        customer,
+		sessionCustomer: m.sessionCustomer,
+		width:           m.width,
 	}
 	return tea.Batch(m.spin.Tick, aiDispatchCommand(ctx, m.running))
 }
@@ -1112,6 +1137,17 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 			m.append(aiErrorStyle.Render(err.Error()))
 			return m, nil
 		}
+		if len(route.args) == 0 && m.sessionCustomer != "" {
+			result += " (AI session override active: " + m.sessionCustomer + ")"
+		}
+		if len(route.args) > 0 {
+			// The user persisted a context: that wins over any earlier agent
+			// session-scoped switch, in the session and in its children.
+			m.sessionCustomer = ""
+			if session, ok := m.session.(interface{ ClearCustomerOverride() }); ok {
+				session.ClearCustomerOverride()
+			}
+		}
 		m.customerName = ""
 		m.identity = m.contextLabel()
 		m.refreshBanner()
@@ -1232,19 +1268,21 @@ func (m aiModel) modelInfoText() string {
 // (lipgloss and restish emit color on the pipe), COLUMNS (the child cannot
 // measure the terminal, so it inherits the session's width), and DCI_NO_TUI
 // (no interactive prompt from a child that has no terminal to ask on).
-func aiDispatchEnv(width int) []string {
-	return append(os.Environ(),
+func aiDispatchEnv(width int, customer string) []string {
+	extras := append([]string{
 		"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "DCI_SESSION_RENDER=1",
 		"COLOR=1", "CLICOLOR_FORCE=1",
 		fmt.Sprintf("COLUMNS=%d", width),
-	)
+	}, aiCustomerEnv(customer)...)
+	return aiChildEnv(extras)
 }
 
 func aiDispatchCommand(ctx context.Context, run *aiRunState) tea.Cmd {
 	argv, started, customer, width := run.argv, run.started, run.customer, run.width
+	sessionCustomer := run.sessionCustomer
 	return func() tea.Msg {
 		command := exec.CommandContext(ctx, aiExecutablePath(), argv...)
-		command.Env = aiDispatchEnv(width)
+		command.Env = aiDispatchEnv(width, sessionCustomer)
 		output, err := command.CombinedOutput()
 		msg := aiCmdDoneMsg{argv: argv, output: string(output), elapsed: time.Since(started), customer: customer}
 		if ctx.Err() == context.Canceled {

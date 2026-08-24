@@ -230,7 +230,7 @@ func TestAIHistoryParam(t *testing.T) {
 
 func TestAISessionCancelKeepsHistoryValid(t *testing.T) {
 	session := newTestSession(t, []string{aiTestToolTurn("list-budgets")}, &scriptedRunner{})
-	session.executor.runner = func(ctx context.Context, argv []string) ([]byte, int, error) {
+	session.executor.runner = func(ctx context.Context, argv, _ []string) ([]byte, int, error) {
 		session.Cancel() // the user pressed esc while the command ran
 		return []byte("partial"), 0, nil
 	}

@@ -1638,6 +1638,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("include-empty-rows", false, "Keep null-group, zero-metric report rows (dropped by default)")
 	dciCmd.PersistentFlags().Bool("drop-unlabeled-rows", false, "Drop report rows whose grouped label dimensions are all null or [Value N/A], regardless of cost — the bucket aggregating all unlabeled spend when grouping by sparse labels")
 	dciCmd.PersistentFlags().Bool("include-dismissed", false, "Keep dismissed insights in list-insights results (excluded by default)")
+	dciCmd.PersistentFlags().String("rollup", "", "Aggregate report rows client-side: comma-separated result columns to group by; numeric metric columns are summed, all other columns (including per-period timestamps) are dropped (e.g. --rollup service_description totals a monthly result per service)")
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
 	dciCmd.PersistentFlags().Bool("utc", false, "Render timestamps in UTC instead of the local timezone (table output only; machine formats and report period columns are always UTC)")
 	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
@@ -1725,6 +1726,12 @@ func addOutputFlag() {
 			dropUnlabeled = flag.Value.String() == "true"
 		}
 		viper.Set("drop-unlabeled-rows", dropUnlabeled)
+
+		rollup := ""
+		if flag := cmd.Flags().Lookup("rollup"); flag != nil && flag.Changed {
+			rollup = strings.TrimSpace(flag.Value.String())
+		}
+		viper.Set("report-rollup", rollup)
 		if allPages {
 			// Installed lazily, only for --all runs: restish configures TLS and
 			// proxies via a http.DefaultTransport.(*http.Transport) assertion

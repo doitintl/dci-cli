@@ -83,6 +83,10 @@ func transformSuccessBody(body interface{}) interface{} {
 		}
 	}
 
+	if rollup := strings.TrimSpace(viper.GetString("report-rollup")); rollup != "" {
+		rows, schema = applyReportRollup(container, rows, schema, rollup)
+	}
+
 	if shouldPivotReportRows() {
 		if pivoted, ok := pivotReportBody(rows, schema); ok {
 			return pivoted
@@ -809,6 +813,112 @@ func isEmptyReportRow(cells []interface{}, schema []reportColumn) bool {
 		}
 	}
 	return hasNullDimension
+}
+
+// applyReportRollup aggregates report rows client-side (--rollup, decision
+// AI-FINOPS-SPEC follow-up): rows are grouped by the requested result
+// columns, numeric metric columns are summed, and every other column —
+// including per-period timestamps — is dropped. This exists because the
+// server always emits one row per group × time bucket, so "total per X over
+// the period" otherwise lands on the consumer as row-level arithmetic: for a
+// model that means minutes of error-prone reasoning; for a human, a
+// spreadsheet step. Unknown columns skip the rollup with a rollupError
+// marker naming the valid columns, so an agent can self-correct in one step.
+func applyReportRollup(container map[string]interface{}, rows []interface{}, schema []reportColumn, rollup string) ([]interface{}, []reportColumn) {
+	keyIndexes := []int{}
+	valid := make([]string, 0, len(schema))
+	for _, requested := range strings.Split(rollup, ",") {
+		requested = strings.TrimSpace(requested)
+		if requested == "" {
+			continue
+		}
+		found := -1
+		for i, col := range schema {
+			if strings.EqualFold(col.Name, requested) {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			for _, col := range schema {
+				valid = append(valid, col.Name)
+			}
+			container["rollupError"] = fmt.Sprintf("column %q is not in the result schema (columns: %s)", requested, strings.Join(valid, ", "))
+			return rows, schema
+		}
+		keyIndexes = append(keyIndexes, found)
+	}
+	if len(keyIndexes) == 0 {
+		return rows, schema
+	}
+	sumIndexes := []int{}
+	for i, col := range schema {
+		switch strings.ToLower(col.Type) {
+		case "float", "int", "integer", "number":
+			sumIndexes = append(sumIndexes, i)
+		}
+	}
+
+	type bucket struct {
+		keys []interface{}
+		sums []float64
+	}
+	order := []string{}
+	buckets := map[string]*bucket{}
+	for _, row := range rows {
+		cells, ok := row.([]interface{})
+		if !ok {
+			continue
+		}
+		keyParts := make([]string, len(keyIndexes))
+		keys := make([]interface{}, len(keyIndexes))
+		for j, i := range keyIndexes {
+			if i < len(cells) {
+				keys[j] = cells[i]
+			}
+			keyParts[j] = fmt.Sprintf("%v", keys[j])
+		}
+		key := strings.Join(keyParts, "\x1f")
+		b, seen := buckets[key]
+		if !seen {
+			b = &bucket{keys: keys, sums: make([]float64, len(sumIndexes))}
+			buckets[key] = b
+			order = append(order, key)
+		}
+		for j, i := range sumIndexes {
+			if i < len(cells) {
+				if v, ok := numericCell(cells[i]); ok {
+					b.sums[j] += v
+				}
+			}
+		}
+	}
+
+	rolledSchema := make([]reportColumn, 0, len(keyIndexes)+len(sumIndexes))
+	rawSchema := make([]interface{}, 0, cap(rolledSchema))
+	for _, i := range keyIndexes {
+		rolledSchema = append(rolledSchema, schema[i])
+		rawSchema = append(rawSchema, map[string]interface{}{"name": schema[i].Name, "type": schema[i].Type})
+	}
+	for _, i := range sumIndexes {
+		rolledSchema = append(rolledSchema, schema[i])
+		rawSchema = append(rawSchema, map[string]interface{}{"name": schema[i].Name, "type": schema[i].Type})
+	}
+	rolled := make([]interface{}, 0, len(order))
+	for _, key := range order {
+		b := buckets[key]
+		cells := make([]interface{}, 0, len(b.keys)+len(b.sums))
+		cells = append(cells, b.keys...)
+		for _, sum := range b.sums {
+			cells = append(cells, sum)
+		}
+		rolled = append(rolled, cells)
+	}
+	sortReportRows(rolled, rolledSchema)
+	container["rows"] = rolled
+	container["schema"] = rawSchema
+	container["rolledUpFrom"] = int64(len(rows))
+	return rolled, rolledSchema
 }
 
 // liftConstantReportColumns removes report columns that carry the identical

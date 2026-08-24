@@ -1109,3 +1109,63 @@ func TestAuthFailureHint403IncludesActiveContext(t *testing.T) {
 		t.Errorf("hint = %q, want active context included", hint)
 	}
 }
+
+func TestTransformRollupAggregatesRows(t *testing.T) {
+	// --rollup: group by the requested columns, sum numeric metrics, drop
+	// everything else (per-period timestamps included) — "total per X over
+	// the period" without pushing row-level arithmetic onto the consumer.
+	resetTransformConfig(t)
+	viper.Set("report-rollup", "service_description")
+	body := reportBody(
+		[]interface{}{"BigQuery", "2026", "05", 10.0, float64(1778000000)},
+		[]interface{}{"BigQuery", "2026", "06", 5.5, float64(1780000000)},
+		[]interface{}{"GCS", "2026", "05", 2.0, float64(1778000000)},
+		[]interface{}{"BigQuery", "2026", "07", 4.5, float64(1782864000)},
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	container := root["result"].(map[string]interface{})
+	rows := container["rows"].([]interface{})
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 rolled-up rows: %v", len(rows), rows)
+	}
+	if got := container["rolledUpFrom"]; got != int64(4) {
+		t.Fatalf("rolledUpFrom = %v", got)
+	}
+	byService := map[string]float64{}
+	for _, row := range rows {
+		cells := row.([]interface{})
+		if len(cells) != 2 {
+			t.Fatalf("rolled row width = %d, want key+sum: %v", len(cells), cells)
+		}
+		value, _ := numericCell(cells[1])
+		byService[cells[0].(string)] = value
+	}
+	if byService["BigQuery"] != 20.0 || byService["GCS"] != 2.0 {
+		t.Fatalf("sums = %v", byService)
+	}
+	schema := container["schema"].([]interface{})
+	if len(schema) != 2 {
+		t.Fatalf("rolled schema = %v", schema)
+	}
+}
+
+func TestTransformRollupUnknownColumnSelfCorrects(t *testing.T) {
+	// A typo'd column must not silently return unaggregated data as if it
+	// were rolled up: the rows pass through untouched and rollupError names
+	// the valid columns so an agent can fix the call in one step.
+	resetTransformConfig(t)
+	viper.Set("report-rollup", "servcie")
+	body := reportBody(
+		[]interface{}{"BigQuery", "2026", "05", 10.0, float64(1778000000)},
+		[]interface{}{"GCS", "2026", "05", 2.0, float64(1778000000)},
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	container := root["result"].(map[string]interface{})
+	if len(container["rows"].([]interface{})) != 2 {
+		t.Fatalf("rows changed despite unknown rollup column")
+	}
+	message, _ := container["rollupError"].(string)
+	if !strings.Contains(message, "servcie") || !strings.Contains(message, "service_description") {
+		t.Fatalf("rollupError = %q", message)
+	}
+}

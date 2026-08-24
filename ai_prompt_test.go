@@ -88,7 +88,7 @@ func TestAISystemPromptEmptyCatalog(t *testing.T) {
 func TestAIVolatileSystem(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	volatile := aiVolatileSystem(dir, now)
+	volatile := aiVolatileSystem(dir, now, "")
 	if !strings.Contains(volatile, "2026-08-24") {
 		t.Fatalf("volatile system missing date: %q", volatile)
 	}
@@ -98,7 +98,7 @@ func TestAIVolatileSystem(t *testing.T) {
 	if err := os.WriteFile(customerContextPath(dir), []byte("acme.com\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if volatile := aiVolatileSystem(dir, now); !strings.Contains(volatile, "acme.com") {
+	if volatile := aiVolatileSystem(dir, now, ""); !strings.Contains(volatile, "acme.com") {
 		t.Fatalf("volatile system missing active context: %q", volatile)
 	}
 }
