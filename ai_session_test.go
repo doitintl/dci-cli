@@ -45,6 +45,7 @@ func newTestSession(t *testing.T, turns []string, runner *scriptedRunner) *local
 		executor:     &aiToolExecutor{configDir: dir, runner: runner.run},
 		events:       make(chan aiEvent, 64),
 		approvals:    make(chan aiUserInput, 1),
+		done:         make(chan struct{}),
 	}
 	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta func(string)) (anthropic.Message, error) {
 		if turnIndex >= len(turns) {
@@ -142,6 +143,99 @@ func TestAISessionToolRoundTrip(t *testing.T) {
 	// user, assistant(tool_use), user(tool_result), assistant(text)
 	if len(session.history) != 4 {
 		t.Fatalf("history = %d messages", len(session.history))
+	}
+}
+
+// aiTestCutTurn is a message the output-token limit cut mid-generation: text
+// followed by a (possibly half-generated) tool_use.
+const aiTestCutTurn = `{"role":"assistant","content":[{"type":"text","text":"Partial answer"},{"type":"tool_use","id":"call-9","name":"run_dci_command","input":{"argv":["list-budgets"]}}],"stop_reason":"max_tokens","usage":{"input_tokens":5,"output_tokens":5}}`
+
+func TestAISessionOutputTokenCeiling(t *testing.T) {
+	runner := &scriptedRunner{}
+	session := newTestSession(t, []string{aiTestCutTurn}, runner)
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "big question"}); err != nil {
+		t.Fatal(err)
+	}
+	events := collectTurnEvents(t, session)
+	if got := eventKinds(events); got != "start delta limit done" {
+		t.Fatalf("events = %s", got)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("truncated tool call executed: %v", runner.calls)
+	}
+	// user + assistant (text only): the half-generated tool_use must not be
+	// replayed, or the next question 400s with a dangling tool_use.
+	if len(session.history) != 2 {
+		t.Fatalf("history = %d messages", len(session.history))
+	}
+	for _, block := range session.history[1].Content {
+		if block.OfToolUse != nil {
+			t.Fatal("truncated tool_use survived into history")
+		}
+	}
+}
+
+func TestAIHistoryParam(t *testing.T) {
+	cut := aiTestMessage(t, aiTestCutTurn)
+	param, keep := aiHistoryParam(cut)
+	if !keep {
+		t.Fatal("cut message with text must be kept")
+	}
+	for _, block := range param.Content {
+		if block.OfToolUse != nil {
+			t.Fatal("cut tool_use kept")
+		}
+	}
+	toolOnly := aiTestMessage(t, `{"role":"assistant","content":[{"type":"tool_use","id":"call-9","name":"run_dci_command","input":{}}],"stop_reason":"max_tokens","usage":{"input_tokens":1,"output_tokens":1}}`)
+	if _, keep := aiHistoryParam(toolOnly); keep {
+		t.Fatal("text-less cut message must be dropped")
+	}
+	full := aiTestMessage(t, aiTestToolTurn("list-budgets"))
+	param, keep = aiHistoryParam(full)
+	if !keep || len(param.Content) != 1 || param.Content[0].OfToolUse == nil {
+		t.Fatalf("tool_use stop must round-trip unchanged: %+v", param.Content)
+	}
+}
+
+func TestAISessionCancelKeepsHistoryValid(t *testing.T) {
+	session := newTestSession(t, []string{aiTestToolTurn("list-budgets")}, &scriptedRunner{})
+	session.executor.runner = func(ctx context.Context, argv []string) ([]byte, int, error) {
+		session.Cancel() // the user pressed esc while the command ran
+		return []byte("partial"), 0, nil
+	}
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "budgets?"}); err != nil {
+		t.Fatal(err)
+	}
+	events := collectTurnEvents(t, session)
+	if got := eventKinds(events); got != "start tool error done" {
+		t.Fatalf("events = %s", got)
+	}
+	// user, assistant(tool_use), user(canceled tool_result): the backfilled
+	// result keeps the history valid for the next question.
+	if len(session.history) != 3 {
+		t.Fatalf("history = %d messages", len(session.history))
+	}
+	last := session.history[2]
+	if len(last.Content) != 1 || last.Content[0].OfToolResult == nil {
+		t.Fatalf("canceled turn did not backfill the tool_result: %+v", last.Content)
+	}
+}
+
+func TestAISessionEmitAfterCloseDoesNotBlock(t *testing.T) {
+	session := newTestSession(t, nil, &scriptedRunner{})
+	for i := 0; i < cap(session.events); i++ {
+		session.events <- aiEvent{}
+	}
+	_ = session.Close()
+	finished := make(chan struct{})
+	go func() {
+		session.emit(aiEvent{TurnDone: &aiTurnDone{}})
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("emit blocked after Close on a full events buffer")
 	}
 }
 

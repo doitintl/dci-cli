@@ -144,6 +144,7 @@ type localAISession struct {
 
 	events    chan aiEvent
 	approvals chan aiUserInput
+	done      chan struct{} // closed by Close; emit drains against it
 
 	mu      sync.Mutex
 	history []anthropic.MessageParam
@@ -171,6 +172,7 @@ func newLocalAISession(configDir, apiKey, model string, catalog []aiCatalogEntry
 		executor:     newAIToolExecutor(configDir),
 		events:       make(chan aiEvent, 64),
 		approvals:    make(chan aiUserInput, 1),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -213,13 +215,17 @@ func (s *localAISession) Cancel() {
 	}
 }
 
+// Close cancels any in-flight turn and stops future emits. The events
+// channel is deliberately never closed: a turn goroutine may still be
+// draining, and a send racing a close would panic. Emitters select against
+// the done channel instead, so they always unblock.
 func (s *localAISession) Close() error {
 	s.Cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.closed {
 		s.closed = true
-		close(s.events)
+		close(s.done)
 	}
 	return nil
 }
@@ -294,13 +300,10 @@ func (s *localAISession) composeUserMessageLocked(question string) anthropic.Mes
 
 func (s *localAISession) emit(event aiEvent) {
 	event.V = aiEventSchemaVersion
-	s.mu.Lock()
-	closed := s.closed
-	s.mu.Unlock()
-	if closed {
-		return
+	select {
+	case <-s.done:
+	case s.events <- event:
 	}
-	s.events <- event
 }
 
 func (s *localAISession) tools() []anthropic.ToolUnionParam {
@@ -380,36 +383,60 @@ func (s *localAISession) runTurn(ctx context.Context, cancel context.CancelFunc,
 		usage.OutputTokens += message.Usage.OutputTokens
 		usage.CacheRead += message.Usage.CacheReadInputTokens
 
-		s.mu.Lock()
-		s.history = append(s.history, message.ToParam())
-		s.mu.Unlock()
+		if param, keep := aiHistoryParam(message); keep {
+			s.mu.Lock()
+			s.history = append(s.history, param)
+			s.mu.Unlock()
+		}
 
+		if message.StopReason == anthropic.StopReasonMaxTokens {
+			// Cut mid-generation: aiHistoryParam stripped any half-generated
+			// tool calls, so the next question starts from a valid history.
+			s.emit(aiEvent{LimitReached: &aiLimitReached{TurnID: turnID, Kind: "output-token"}})
+			s.emit(aiEvent{TurnDone: &usage})
+			return
+		}
 		if message.StopReason != anthropic.StopReasonToolUse {
 			s.emit(aiEvent{TurnDone: &usage})
 			return
 		}
 
+		// Every tool_use in the assistant message must gain a tool_result in
+		// the next user message — including on cancel, or the dangling
+		// tool_use makes the API reject every later question with a 400.
 		toolResults := make([]anthropic.ContentBlockParamUnion, 0, 2)
+		canceled := false
 		for _, block := range message.Content {
 			toolUse, ok := block.AsAny().(anthropic.ToolUseBlock)
 			if !ok {
 				continue
 			}
+			if canceled {
+				toolResults = append(toolResults, aiCanceledToolResult(toolUse.ID))
+				continue
+			}
 			result, aborted := s.executeToolCall(ctx, turnID, toolUse)
 			if aborted {
-				s.emit(aiEvent{Error: &aiErrorEvent{TurnID: turnID, Message: "turn canceled"}})
-				s.emit(aiEvent{TurnDone: &usage})
-				return
+				canceled = true
+				toolResults = append(toolResults, aiCanceledToolResult(toolUse.ID))
+				continue
 			}
 			toolResults = append(toolResults, result)
+		}
+		if len(toolResults) > 0 {
+			s.mu.Lock()
+			s.history = append(s.history, anthropic.NewUserMessage(toolResults...))
+			s.mu.Unlock()
+		}
+		if canceled {
+			s.emit(aiEvent{Error: &aiErrorEvent{TurnID: turnID, Message: "turn canceled"}})
+			s.emit(aiEvent{TurnDone: &usage})
+			return
 		}
 		if len(toolResults) == 0 {
 			s.emit(aiEvent{TurnDone: &usage})
 			return
 		}
-		s.mu.Lock()
-		s.history = append(s.history, anthropic.NewUserMessage(toolResults...))
-		s.mu.Unlock()
 	}
 
 	s.emit(aiEvent{LimitReached: &aiLimitReached{TurnID: turnID, Kind: "turns"}})
@@ -482,6 +509,38 @@ func (s *localAISession) executeToolCall(ctx context.Context, turnID string, too
 	default:
 		return anthropic.NewToolResultBlock(toolUse.ID, aiToolError("UNKNOWN_TOOL", toolUse.Name, ""), true), false
 	}
+}
+
+// aiHistoryParam shapes one assistant message for the conversation history.
+// A message cut by the output-token limit may end in a half-generated
+// tool_use block whose input is partial JSON; replaying that makes the API
+// reject every later request. Those blocks are stripped, and a message left
+// with no text at all is dropped entirely.
+func aiHistoryParam(message anthropic.Message) (anthropic.MessageParam, bool) {
+	param := message.ToParam()
+	if message.StopReason != anthropic.StopReasonMaxTokens {
+		return param, true
+	}
+	kept := make([]anthropic.ContentBlockParamUnion, 0, len(param.Content))
+	hasText := false
+	for _, block := range param.Content {
+		if block.OfToolUse != nil {
+			continue
+		}
+		if block.OfText != nil {
+			hasText = true
+		}
+		kept = append(kept, block)
+	}
+	param.Content = kept
+	return param, hasText
+}
+
+// aiCanceledToolResult satisfies one tool_use the user canceled out of, so
+// the history stays API-valid and the model knows the command never ran.
+func aiCanceledToolResult(callID string) anthropic.ContentBlockParamUnion {
+	return anthropic.NewToolResultBlock(callID,
+		aiToolError("CANCELED", "the user canceled the turn before this command finished — do not assume it ran", ""), true)
 }
 
 // awaitApproval blocks the loop on the human's answer, draining stale answers
