@@ -811,6 +811,54 @@ func isEmptyReportRow(cells []interface{}, schema []reportColumn) bool {
 	return hasNullDimension
 }
 
+// liftConstantReportColumns removes report columns that carry the identical
+// string (or null) value in every row of a TOON result, recording them once
+// in container.constantColumns. A single-period grouped query repeats the
+// same timestamp in all rows — hundreds of copies of one value is pure token
+// cost and pure reading work for the consuming model. Numeric cells are
+// never lifted (metrics are the data even when constant), small results are
+// left alone (nothing to save), and explicit field selections (-C, custom -f
+// filters) are honored — requested columns are never dropped.
+const liftConstantMinRows = 10
+
+func liftConstantReportColumns(container map[string]interface{}, rows []map[string]interface{}) {
+	if len(rows) < liftConstantMinRows {
+		return
+	}
+	opts := toonRowOptionsFromConfig()
+	if opts.keepAll || len(opts.selected) > 0 {
+		return
+	}
+	constant := map[string]interface{}{}
+	for key, first := range rows[0] {
+		switch first.(type) {
+		case string, nil:
+		default:
+			continue
+		}
+		same := true
+		for _, row := range rows[1:] {
+			value, present := row[key]
+			if !present || value != first {
+				same = false
+				break
+			}
+		}
+		if same {
+			constant[key] = first
+		}
+	}
+	if len(constant) == 0 || len(constant) == len(rows[0]) {
+		return
+	}
+	for key := range constant {
+		for _, row := range rows {
+			delete(row, key)
+		}
+	}
+	container["constantColumns"] = constant
+}
+
 // keyReportRows converts positional rows into schema-named objects so JSON
 // consumers can address fields by name instead of zipping with the schema.
 func keyReportRows(rows []interface{}, schema []reportColumn) []interface{} {

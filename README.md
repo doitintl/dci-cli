@@ -84,6 +84,8 @@ dci ai "top 3 cost anomalies this month"
 
 **Bring your own key.** AI features use your own Anthropic API key: export `ANTHROPIC_API_KEY`, or just ask a question in the session and it will walk you through saving one (stored locally with owner-only permissions). Your questions and the command results the AI reads are sent to Anthropic's API under your key; conversations are never stored anywhere but your terminal. Everything else — running `/` commands — works without a key.
 
+**Faster answers.** On analytical questions the model can reason for a minute before answering. To trade some reasoning depth for speed, cap the effort: set `DCI_AI_EFFORT=medium` (or `low`), or add `"effort": "medium"` to `ai_settings.json` next to your dci config. `DCI_AI_MODEL` likewise overrides the session model for one run.
+
 Define your own shortcuts in `ai_commands.json` next to your dci config:
 
 ```json

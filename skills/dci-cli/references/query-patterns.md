@@ -65,6 +65,9 @@ Practical rules:
 - Use `timeInterval: "month"` for trend questions — far fewer rows than daily granularity.
 - Use `--rows keyed` when consuming results programmatically (`result.rows` become objects
   keyed by schema names).
+- In TOON output, a column whose value is identical in every row (e.g. the timestamp of a
+  single-period query) is lifted out of the rows into `result.constantColumns` — read it
+  there once instead of expecting it per row.
 - Use `--pivot --output table` when presenting results to a human.
 - Use `--output csv` for spreadsheet export.
 
@@ -82,7 +85,7 @@ Label-scoped analysis (team/env/product tags, `system_label` taxonomies like `ge
 
 3. **Inconsistent null markers.** Absent group values render as empty strings in some rows and as the literal `[Value N/A]` in others; treat both as null.
 
-Worked example — spend by AI model from `genai/*` system labels (available on accounts with GenAI cost data):
+Worked example — spend by AI model from `genai/*` system labels (available on accounts with GenAI cost data). These label ids are known-good: query with them directly rather than re-verifying with `list-dimensions` first (fall back to `--search` only if the query errors on an unknown id):
 
 ```json
 {

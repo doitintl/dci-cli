@@ -47,7 +47,7 @@ func newTestSession(t *testing.T, turns []string, runner *scriptedRunner) *local
 		approvals:    make(chan aiUserInput, 1),
 		done:         make(chan struct{}),
 	}
-	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta func(string)) (anthropic.Message, error) {
+	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta, onThinking func(string)) (anthropic.Message, error) {
 		if turnIndex >= len(turns) {
 			t.Errorf("streamer called %d times, scripted %d", turnIndex+1, len(turns))
 			return aiTestMessage(t, aiTestTextTurn), nil
@@ -90,6 +90,8 @@ func eventKinds(events []aiEvent) string {
 			kinds = append(kinds, "start")
 		case event.TextDelta != nil:
 			kinds = append(kinds, "delta")
+		case event.ThinkingDelta != nil:
+			kinds = append(kinds, "thinking")
 		case event.ToolCallStarted != nil:
 			kinds = append(kinds, "tool")
 		case event.ToolResult != nil:
@@ -107,6 +109,35 @@ func eventKinds(events []aiEvent) string {
 		}
 	}
 	return strings.Join(kinds, " ")
+}
+
+func TestAISessionForwardsThinkingDeltas(t *testing.T) {
+	// Models with adaptive thinking reason before answering — often the
+	// longest stretch of a turn. The session must forward those deltas so
+	// renderers can show live progress instead of a silent gap.
+	session := newTestSession(t, nil, &scriptedRunner{})
+	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta, onThinking func(string)) (anthropic.Message, error) {
+		onThinking("normalizing model-name variants")
+		message := aiTestMessage(t, aiTestTextTurn)
+		for _, block := range message.Content {
+			if text, ok := block.AsAny().(anthropic.TextBlock); ok {
+				onDelta(text.Text)
+			}
+		}
+		return message, nil
+	}
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "token spend per model?"}); err != nil {
+		t.Fatal(err)
+	}
+	events := collectTurnEvents(t, session)
+	if got := eventKinds(events); got != "start thinking delta done" {
+		t.Fatalf("events = %s", got)
+	}
+	for _, event := range events {
+		if event.ThinkingDelta != nil && event.ThinkingDelta.Text != "normalizing model-name variants" {
+			t.Fatalf("thinking delta text = %q", event.ThinkingDelta.Text)
+		}
+	}
 }
 
 func TestAISessionPlainTextTurn(t *testing.T) {
@@ -315,7 +346,7 @@ func TestAISessionApprovalDeclined(t *testing.T) {
 func TestAISessionRejectsConcurrentTurns(t *testing.T) {
 	release := make(chan struct{})
 	session := newTestSession(t, nil, &scriptedRunner{})
-	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta func(string)) (anthropic.Message, error) {
+	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta, onThinking func(string)) (anthropic.Message, error) {
 		<-release
 		return aiTestMessage(t, aiTestTextTurn), nil
 	}
@@ -332,7 +363,7 @@ func TestAISessionRejectsConcurrentTurns(t *testing.T) {
 func TestAISessionInjectsCommandResults(t *testing.T) {
 	var captured anthropic.MessageNewParams
 	session := newTestSession(t, nil, &scriptedRunner{})
-	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta func(string)) (anthropic.Message, error) {
+	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta, onThinking func(string)) (anthropic.Message, error) {
 		captured = params
 		return aiTestMessage(t, aiTestTextTurn), nil
 	}
@@ -410,5 +441,28 @@ func TestAISettingsRoundTripAndResolution(t *testing.T) {
 	}
 	if err := aiValidateModel("claude-opus-5"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResolveAIEffortAndModelOverrides(t *testing.T) {
+	t.Setenv("DCI_AI_EFFORT", "")
+	t.Setenv("DCI_AI_MODEL", "")
+	if got := resolveAIEffort(aiSettings{}); got != "" {
+		t.Fatalf("no effort configured, got %q", got)
+	}
+	if got := resolveAIEffort(aiSettings{Effort: " Medium "}); got != "medium" {
+		t.Fatalf("settings effort = %q", got)
+	}
+	// A config typo must degrade to the API default, not break the session.
+	if got := resolveAIEffort(aiSettings{Effort: "max"}); got != "" {
+		t.Fatalf("invalid effort must resolve empty, got %q", got)
+	}
+	t.Setenv("DCI_AI_EFFORT", "low")
+	if got := resolveAIEffort(aiSettings{Effort: "high"}); got != "low" {
+		t.Fatalf("env must win, got %q", got)
+	}
+	t.Setenv("DCI_AI_MODEL", "claude-sonnet-5")
+	if got := resolveAIModel(aiSettings{Model: "claude-opus-5"}); got != "claude-sonnet-5" {
+		t.Fatalf("model env must win, got %q", got)
 	}
 }

@@ -118,10 +118,12 @@ type aiModel struct {
 	// non-zero Builder copied by value") as soon as a copy lands at a new
 	// address (stack growth, reallocation) — a mid-turn crash.
 	stream        string
-	turnActivity  string // status line: what the turn is doing right now
-	turnCommands  int    // agent tool calls completed this turn
-	toolLabel     string // label of the tool call in flight, for its result line
-	markdownStyle string // glamour style, resolved once before the program runs
+	turnActivity  string    // status line: what the turn is doing right now
+	turnStarted   time.Time // when the active turn began, for the elapsed display
+	thinking      string    // tail of the model's thinking stream (status snippet only)
+	turnCommands  int       // agent tool calls completed this turn
+	toolLabel     string    // label of the tool call in flight, for its result line
+	markdownStyle string    // glamour style, resolved once before the program runs
 	approval      *aiApprovalRequest
 	lastUsage     *aiTurnDone
 
@@ -495,6 +497,8 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		m.turnActive = true
 		m.stream = ""
 		m.turnActivity = ""
+		m.turnStarted = time.Now()
+		m.thinking = ""
 		m.turnCommands = 0
 		m.lastUsage = nil
 		commands = append(commands, m.spin.Tick)
@@ -502,6 +506,19 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 	case event.TextDelta != nil:
 		m.stream += event.TextDelta.Text
 		m.turnActivity = aiActivitySnippet(m.stream)
+
+	case event.ThinkingDelta != nil:
+		// Thinking never reaches the transcript; it drives the status line so
+		// an analytical pause (often the longest part of a turn) shows live
+		// progress instead of a frozen spinner. Keep only a tail: the snippet
+		// wants the last line, not the whole reasoning stream.
+		m.thinking += event.ThinkingDelta.Text
+		if len(m.thinking) > 4096 {
+			m.thinking = m.thinking[len(m.thinking)-2048:]
+		}
+		if snippet := aiActivitySnippet(m.thinking); snippet != "" {
+			m.turnActivity = "thinking · " + snippet
+		}
 
 	case event.ToolCallStarted != nil:
 		// Text so far was working narration, not the answer: it becomes the
@@ -1580,6 +1597,9 @@ func (m aiModel) statusLine() string {
 			activity = "thinking (" + m.modelName + ")"
 		}
 		line := " " + activity
+		if !m.turnStarted.IsZero() {
+			line += " · " + time.Since(m.turnStarted).Round(time.Second).String()
+		}
 		if m.turnCommands > 0 {
 			line += fmt.Sprintf(" · %d command", m.turnCommands)
 			if m.turnCommands > 1 {

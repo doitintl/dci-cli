@@ -58,7 +58,7 @@ Every command runs against the session's active customer context (tenant).
 `)
 	if patterns := aiQueryPatternsSection(); patterns != "" {
 		b.WriteString("\n# Cost analytics queries (dci query)\n\n")
-		b.WriteString("Pass the JSON body as the single argument after query: {\"argv\": [\"query\", \"{\\\"config\\\": …}\"]}. The reference below reads the body from a file — you have no shell or files, so always inline it.\n\n")
+		b.WriteString("Pass the JSON body as the single argument after query: {\"argv\": [\"query\", \"{\\\"config\\\": …}\"]}. The reference below reads the body from a file — you have no shell or files, so always inline it.\n\nThe dimension and label ids named in the reference (service_description, the genai/* system labels, …) are known-good — query with them directly instead of re-verifying with list-dimensions. Reserve --search discovery for topics the reference does not cover, or for when a query errors on an unknown id.\n\n")
 		b.WriteString(patterns)
 	}
 	b.WriteString("\n# Available commands\n\n")

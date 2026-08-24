@@ -2230,6 +2230,7 @@ func toonPrepare(v interface{}) interface{} {
 				if c, ok := root[key].(map[string]interface{}); ok {
 					if _, ok := c["rows"]; ok {
 						c["rows"] = items
+						liftConstantReportColumns(c, rows)
 						break
 					}
 				}
