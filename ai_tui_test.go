@@ -453,6 +453,35 @@ func TestAIQuietTurnToolActivity(t *testing.T) {
 	}
 }
 
+func TestAIQuietTurnInterleavedToolActivity(t *testing.T) {
+	// The session runs batched calls concurrently, so starts and results
+	// interleave: each result line must carry its own command's label, keyed
+	// by call ID, not whichever call started last.
+	m := aiTestModel(t)
+	m.session = newFakeAISession()
+
+	m, _ = aiEventUpdate(m, aiEvent{TurnStarted: &aiTurnStarted{TurnID: "t1"}})
+	m, _ = aiEventUpdate(m, aiEvent{ToolCallStarted: &aiToolCallStarted{
+		TurnID: "t1", CallID: "c1", Tool: aiToolRunCommand, Argv: []string{"list-budgets"}, By: "agent",
+	}})
+	m, _ = aiEventUpdate(m, aiEvent{ToolCallStarted: &aiToolCallStarted{
+		TurnID: "t1", CallID: "c2", Tool: aiToolRunCommand, Argv: []string{"list-reports"}, By: "agent",
+	}})
+	if status := m.statusLine(); !strings.Contains(status, "running 2 commands") {
+		t.Fatalf("status line = %q", status)
+	}
+	m, _ = aiEventUpdate(m, aiEvent{ToolResult: &aiToolResult{
+		TurnID: "t1", CallID: "c1", OK: true, Elapsed: time.Second,
+	}})
+	status := m.statusLine()
+	if !strings.Contains(status, "✓ dci list-budgets") {
+		t.Fatalf("result captioned with the wrong label: %q", status)
+	}
+	if !strings.Contains(status, "running dci list-reports") {
+		t.Fatalf("in-flight sibling missing from the status line: %q", status)
+	}
+}
+
 func TestAIApprovalKeys(t *testing.T) {
 	m := aiTestModel(t)
 	session := newFakeAISession()
