@@ -70,6 +70,15 @@ func TestAIRouteLine(t *testing.T) {
 	if route := aiRouteLine("/exit", catalog, nil); route.kind != aiRouteVerb || route.verb != "quit" {
 		t.Fatalf("/exit routed as %+v, want verb quit (alias)", route)
 	}
+	// Bare exit/quit leave the session; anything longer is a question.
+	for _, line := range []string{"exit", "quit", "EXIT", " exit "} {
+		if route := aiRouteLine(line, catalog, nil); route.kind != aiRouteVerb || route.verb != "quit" {
+			t.Fatalf("%q routed as %+v, want verb quit", line, route)
+		}
+	}
+	if route := aiRouteLine("exit strategy for GKE?", catalog, nil); route.kind != aiRouteChat {
+		t.Fatalf("question starting with exit routed as %+v, want chat", route)
+	}
 	if route := aiRouteLine("/customer acme.com", catalog, nil); route.kind != aiRouteVerb || route.verb != "customer" || len(route.args) != 1 || route.args[0] != "acme.com" {
 		t.Fatalf("/customer acme.com routed as %+v", route)
 	}
