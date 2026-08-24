@@ -115,6 +115,15 @@ here for the before/after story.
 Suite total (P01–P10): 572s at the original baseline (with one hard failure) → **411s,
 12/12 correct** on the full stack.
 
+**Follow-up (answer-budget rule, this branch):** footnote ³ is addressed by a new
+Answering rule in the system prompt (`ai_prompt.go`): results over ~10 rows present the
+top 10 plus one aggregated "everything else" line, caveats one line each, whole answer
+under ~300 words unless the user asked for the full breakdown. Measured live on P10:
+out tokens 5.0k → 3,963, wall 74s → 55.8s, with the top rows byte-identical to the
+baseline (Opus 4.8 74,818 / Fable 5 37,462 / Sonnet 4.6 31,987), a monthly total, and
+the Cursor billing-classification caveat kept as one line. P05 (short answer) is
+unaffected: 366 out tokens, 8.9s.
+
 ## 2. Findings
 
 ### 2.1 Exit-30 collision: validation errors masquerade as destructive commands — FIXED
