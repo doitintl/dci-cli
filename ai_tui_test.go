@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -8,13 +9,35 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// aiTestModel builds a session model without touching cli.Root or the real
-// config dir, with a fixed catalog.
+// aiTestModel builds a session model without touching cli.Root, the real
+// config dir, or the Claude API (no key), with a fixed catalog.
 func aiTestModel(t *testing.T) aiModel {
 	t.Helper()
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	model := newAIModel(t.TempDir())
 	model.catalog = aiTestCatalog()
 	return model
+}
+
+// fakeAISession records inputs and lets tests feed protocol events.
+type fakeAISession struct {
+	events   chan aiEvent
+	sent     []aiUserInput
+	canceled bool
+}
+
+func newFakeAISession() *fakeAISession {
+	return &fakeAISession{events: make(chan aiEvent, 8)}
+}
+
+func (f *fakeAISession) Send(input aiUserInput) error { f.sent = append(f.sent, input); return nil }
+func (f *fakeAISession) Events() <-chan aiEvent       { return f.events }
+func (f *fakeAISession) Cancel()                      { f.canceled = true }
+func (f *fakeAISession) Close() error                 { return nil }
+
+func aiEventUpdate(m aiModel, event aiEvent) (aiModel, tea.Cmd) {
+	updated, cmd := m.Update(aiSessionEventMsg{event: event})
+	return updated.(aiModel), cmd
 }
 
 func aiType(m aiModel, text string) aiModel {
@@ -237,6 +260,170 @@ func TestAIStatusLineStates(t *testing.T) {
 	running := m.statusLine()
 	if !strings.Contains(running, "running /status") || !strings.Contains(running, "esc to cancel") {
 		t.Fatalf("running status = %q", running)
+	}
+}
+
+func TestAIChatSendsToSession(t *testing.T) {
+	m := aiTestModel(t)
+	session := newFakeAISession()
+	m.session = session
+	m = aiType(m, "why did spend spike?")
+	updated, cmd := aiPress(m, tea.KeyEnter)
+	m = updated
+	if cmd == nil {
+		t.Fatal("chat submit returned no command")
+	}
+	if len(session.sent) != 1 || session.sent[0].Kind != aiInputChat || session.sent[0].Text != "why did spend spike?" {
+		t.Fatalf("session received %+v", session.sent)
+	}
+}
+
+func TestAITurnLifecycleEvents(t *testing.T) {
+	m := aiTestModel(t)
+	m.session = newFakeAISession()
+
+	m, _ = aiEventUpdate(m, aiEvent{TurnStarted: &aiTurnStarted{TurnID: "t1"}})
+	if !m.turnActive {
+		t.Fatal("TurnStarted did not activate the turn")
+	}
+	m, _ = aiEventUpdate(m, aiEvent{TextDelta: &aiTextDelta{TurnID: "t1", Text: "Spend rose because "}})
+	m, _ = aiEventUpdate(m, aiEvent{TextDelta: &aiTextDelta{TurnID: "t1", Text: "of GKE."}})
+	if got := m.streamBuf.String(); got != "Spend rose because of GKE." {
+		t.Fatalf("stream buffer = %q", got)
+	}
+	if view := m.View(); !strings.Contains(view, "Spend rose because of GKE.") {
+		t.Fatal("streamed text not visible in the managed region")
+	}
+	m, cmd := aiEventUpdate(m, aiEvent{TurnDone: &aiTurnDone{TurnID: "t1", InputTokens: 10}})
+	if m.turnActive {
+		t.Fatal("TurnDone left the turn active")
+	}
+	if cmd == nil {
+		t.Fatal("TurnDone did not commit the narration")
+	}
+	if m.streamBuf.Len() != 0 {
+		t.Fatal("stream buffer not reset after commit")
+	}
+	if m.lastUsage == nil || m.lastUsage.InputTokens != 10 {
+		t.Fatalf("usage not recorded: %+v", m.lastUsage)
+	}
+}
+
+func TestAIApprovalKeys(t *testing.T) {
+	m := aiTestModel(t)
+	session := newFakeAISession()
+	m.session = session
+	m, _ = aiEventUpdate(m, aiEvent{ApprovalRequest: &aiApprovalRequest{CallID: "c1", Kind: "destructive", Argv: []string{"delete-budget", "prod"}}})
+	if m.approval == nil {
+		t.Fatal("approval request not held")
+	}
+	if !strings.Contains(m.statusLine(), "destructive") {
+		t.Fatalf("status line = %q", m.statusLine())
+	}
+	// Random keys must not answer.
+	m = aiType(m, "x")
+	if m.approval == nil || m.input.Value() != "" {
+		t.Fatal("stray key answered or typed during approval")
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = updated.(aiModel)
+	if m.approval != nil {
+		t.Fatal("y did not clear the approval")
+	}
+	if len(session.sent) != 1 || session.sent[0].Kind != aiInputApproval || !session.sent[0].Approved || session.sent[0].CallID != "c1" {
+		t.Fatalf("approval answer = %+v", session.sent)
+	}
+}
+
+func TestAIApprovalDeclineOnEsc(t *testing.T) {
+	m := aiTestModel(t)
+	session := newFakeAISession()
+	m.session = session
+	m, _ = aiEventUpdate(m, aiEvent{ApprovalRequest: &aiApprovalRequest{CallID: "c2", Kind: "destructive"}})
+	m, _ = aiPress(m, tea.KeyEsc)
+	if m.approval != nil {
+		t.Fatal("esc did not clear the approval")
+	}
+	if len(session.sent) != 1 || session.sent[0].Approved {
+		t.Fatalf("esc answer = %+v", session.sent)
+	}
+}
+
+func TestAIEscCancelsActiveTurn(t *testing.T) {
+	m := aiTestModel(t)
+	session := newFakeAISession()
+	m.session = session
+	m.turnActive = true
+	m, _ = aiPress(m, tea.KeyEsc)
+	if !session.canceled {
+		t.Fatal("esc did not cancel the turn")
+	}
+}
+
+func TestAISlashResultJoinsConversation(t *testing.T) {
+	m := aiTestModel(t)
+	session := newFakeAISession()
+	m.session = session
+	updated, _ := m.Update(aiCmdDoneMsg{argv: []string{"list-budgets"}, output: "prod 42", customer: "acme.com", elapsed: time.Second})
+	m = updated.(aiModel)
+	if len(session.sent) != 1 || session.sent[0].Kind != aiInputCommandResult {
+		t.Fatalf("session received %+v", session.sent)
+	}
+	if session.sent[0].Output != "prod 42" || session.sent[0].Customer != "acme.com" {
+		t.Fatalf("command result = %+v", session.sent[0])
+	}
+	// Canceled dispatches stay out of the conversation.
+	session.sent = nil
+	updated, _ = m.Update(aiCmdDoneMsg{argv: []string{"status"}, canceled: true})
+	if _, ok := updated.(aiModel); !ok || len(session.sent) != 0 {
+		t.Fatalf("canceled dispatch injected: %+v", session.sent)
+	}
+}
+
+func TestAIContextSwitchEventRefreshesIdentity(t *testing.T) {
+	m := aiTestModel(t)
+	m.session = newFakeAISession()
+	if err := os.WriteFile(customerContextPath(m.configDir), []byte("globex.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, cmd := aiEventUpdate(m, aiEvent{ContextSwitched: &aiContextSwitched{From: "acme.com", To: "globex.com", By: "agent"}})
+	if cmd == nil {
+		t.Fatal("context switch printed nothing")
+	}
+	if !strings.Contains(m.identity, "globex.com") {
+		t.Fatalf("identity = %q", m.identity)
+	}
+}
+
+func TestAIModelVerb(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "/model claude-sonnet-5")
+	updated, cmd := aiPress(m, tea.KeyEnter)
+	m = updated
+	if cmd == nil {
+		t.Fatal("/model returned no command")
+	}
+	if m.modelName != "claude-sonnet-5" {
+		t.Fatalf("modelName = %q", m.modelName)
+	}
+	if got := loadAISettings(m.configDir).Model; got != "claude-sonnet-5" {
+		t.Fatalf("persisted model = %q", got)
+	}
+	m = aiType(m, "/model gpt-4")
+	updated, _ = aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.modelName != "claude-sonnet-5" {
+		t.Fatalf("invalid model applied: %q", m.modelName)
+	}
+}
+
+func TestAIChatWithoutKeyExplains(t *testing.T) {
+	m := aiTestModel(t)
+	if m.session != nil {
+		t.Fatal("keyless model built a session")
+	}
+	if !strings.Contains(m.sessionNote, "ANTHROPIC_API_KEY") {
+		t.Fatalf("session note = %q", m.sessionNote)
 	}
 }
 
