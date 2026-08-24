@@ -184,22 +184,24 @@ func newAIModel(configDir string) aiModel {
 	return m
 }
 
-// aiCloudLogo is the Cloud Intelligence™ mark: a pixel cloud with a spark,
-// in DoiT pink — the session's answer to Claude Code's robot.
-var aiCloudLogo = []string{
-	"    ▄▄███▄▄      ",
-	"  ▄█████████▄▄ ✦ ",
-	" ▟██████████████▖",
-	" ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘",
+// aiDoitLogo is the DoiT "d" mark — the lowercase d with its floating dot —
+// in the brand accent, the session's answer to Claude Code's robot.
+var aiDoitLogo = []string{
+	"        ██    ",
+	"  ▄▄▄▄▄▄██  ▄▄",
+	"  ██    ██  ▀▀",
+	"  ▀██████▀    ",
 }
 
-var aiLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+// aiLogoStyle carries the DoiT accent (#FC3165); lipgloss degrades the hex
+// to the terminal's nearest color when truecolor is unavailable.
+var aiLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FC3165"))
 
 // aiBannerBlock is the transcript's opening block, Claude Code-style: the
 // mark beside the product name, version, and the session facts that matter —
 // model and key source, tenant identity, catalog size.
 func aiBannerBlock(m *aiModel) string {
-	logo := aiLogoStyle.Render(strings.Join(aiCloudLogo, "\n"))
+	logo := aiLogoStyle.Render(strings.Join(aiDoitLogo, "\n"))
 
 	modelLine := m.modelName
 	switch {
