@@ -290,20 +290,19 @@ func hydrateAPICommandsForAI() {
 	if cli.Root == nil {
 		return
 	}
-	apiCommand := findDCICommand()
-	if apiCommand == nil || len(apiCommand.Commands()) > 0 {
-		return
-	}
 	cacheDir, _ := os.UserCacheDir()
 	cacheFile := filepath.Join(cacheDir, "dci", "dci.cbor")
 	if _, err := os.Stat(cacheFile); err != nil {
 		return
 	}
-	base, err := apiBase()
-	if err != nil {
-		return
+	if apiCommand := findDCICommand(); apiCommand != nil && len(apiCommand.Commands()) == 0 {
+		if base, err := apiBase(); err == nil {
+			cli.Load(base, apiCommand)
+		}
 	}
-	cli.Load(base, apiCommand)
+	// The resolution metadata (resolutionIndex, path parameters) powers the
+	// session's name picker (ai_picker.go) — same cached spec, still offline.
+	aiEnsureResolutionMetadata()
 }
 
 func aiCatalogHasCommand(catalog []aiCatalogEntry, first string) bool {
