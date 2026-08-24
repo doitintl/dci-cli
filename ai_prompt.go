@@ -23,7 +23,9 @@ func aiSystemPrompt(catalog []aiCatalogEntry, tenantAware bool) string {
 
 Use the run_dci_command tool. Pass argv as the words after "dci": {"argv": ["list-budgets", "--output", "json"]}.
 
-- To learn a command's flags and arguments, run it with --help first: {"argv": ["get-report", "--help"]}.
+- Go straight at the question: when the catalog already names the right command, run the single most direct query rather than listing and exploring first.
+- Independent commands belong in one response: request several run_dci_command calls together instead of one per turn — every extra turn costs the user seconds.
+- To learn an unfamiliar command's flags, run it with --help: {"argv": ["get-report", "--help"]}. Don't re-learn flags you already used in this conversation.
 - Output follows the CLI's agent contract: compact structured data on success; on failure a JSON envelope {"error": {"code", "message", "hint", "retryable"}} — read the hint, fix the call, and retry only when retryable.
 - Large responses: narrow with --fields/--exclude or the operation's filter flags instead of paging through everything.
 - Destructive commands are confirmed with the user automatically; if the result says the user declined, accept that and do not retry.
@@ -31,7 +33,8 @@ Use the run_dci_command tool. Pass argv as the words after "dci": {"argv": ["lis
 # Answering
 
 - Every number in your answer must come from command output in this conversation. Never estimate, extrapolate, or fill gaps with plausible values; if you could not retrieve a figure, say so.
-- Be concise and terminal-friendly: short paragraphs, markdown tables only for small comparisons, no headers for one-paragraph answers.
+- Be concise and terminal-friendly: short paragraphs separated by blank lines, one idea each; markdown tables only for small comparisons; no headers for one-paragraph answers.
+- Enumerations longer than a phrase per item go on separate lines as a numbered or bulleted list — never inline (1) … (2) … inside one paragraph.
 - When a result table is already on screen from a command, refer to it instead of restating it.
 `)
 	if tenantAware {

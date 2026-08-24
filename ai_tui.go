@@ -7,8 +7,9 @@ package main
 // the bottom until the user scrolls up. Slash commands dispatch to the CLI
 // itself as a subprocess (§7.4) and their results join the conversation
 // (§4.4); plain text goes to the conversation session (ai_session.go),
-// whose protocol events this program renders: streamed narration committed
-// through glamour, tool cards, destructive approvals, tenant switches.
+// whose protocol events this program renders quietly (D10): in-flight
+// narration and tool traffic drive the status line, the final answer commits
+// through glamour, and approvals and tenant switches surface immediately.
 // Routing, completion, and history logic live in ai_slash.go. Kept in a
 // sibling file per the AGENTS.md chapter-split guidance.
 
@@ -116,12 +117,13 @@ type aiModel struct {
 	// and writing to a copied non-empty Builder panics ("illegal use of
 	// non-zero Builder copied by value") as soon as a copy lands at a new
 	// address (stack growth, reallocation) — a mid-turn crash.
-	stream       string
-	turnActivity string // status line: what the turn is doing right now
-	turnCommands int    // agent tool calls completed this turn
-	toolLabel    string // label of the tool call in flight, for its result line
-	approval     *aiApprovalRequest
-	lastUsage    *aiTurnDone
+	stream        string
+	turnActivity  string // status line: what the turn is doing right now
+	turnCommands  int    // agent tool calls completed this turn
+	toolLabel     string // label of the tool call in flight, for its result line
+	markdownStyle string // glamour style, resolved once before the program runs
+	approval      *aiApprovalRequest
+	lastUsage     *aiTurnDone
 
 	// Guided key setup (P3): entering a key inline instead of editing files.
 	keyEntry        bool
@@ -197,6 +199,9 @@ func newAIModel(configDir string) aiModel {
 		modelName:    modelName,
 		mouseOn:      false,
 		fetchedNames: map[string][]nameCacheEntry{},
+		// Resolved here — before the program owns stdin — so no render ever
+		// queries the terminal mid-session (see aiMarkdownStyle).
+		markdownStyle: aiMarkdownStyle(),
 	}
 	m.identity = m.contextLabel()
 	if key := resolveAIKey(settings); key != "" {
@@ -564,7 +569,7 @@ func (m *aiModel) commitStream() {
 	if text == "" {
 		return
 	}
-	m.append(renderAIMarkdown(text, m.view.Width))
+	m.append(renderAIMarkdown(text, m.view.Width, m.markdownStyle))
 }
 
 // aiActivitySnippet condenses in-flight narration to one status-line phrase:
@@ -1268,21 +1273,70 @@ func aiExecutablePath() string {
 	return exe
 }
 
-// renderAIMarkdown renders committed narration as markdown, falling back to
-// the raw text when the renderer objects (exotic terminals).
-func renderAIMarkdown(text string, width int) string {
+// aiMarkdownStyle picks the glamour style for this terminal, once, BEFORE
+// the Bubble Tea program starts. It must never be probed mid-session:
+// glamour's WithAutoStyle queries the terminal background (OSC 11) on every
+// render, and inside the running program Bubble Tea's input reader swallows
+// the terminal's reply — the printable tail (";rgb:0000/0000/0000\") then
+// lands in the textarea as if the user typed it.
+func aiMarkdownStyle() string {
+	if lipgloss.HasDarkBackground() {
+		return "dark"
+	}
+	return "light"
+}
+
+// renderAIMarkdown renders committed answer text as markdown, falling back
+// to the raw text when the renderer objects (exotic terminals).
+func renderAIMarkdown(text string, width int, style string) string {
 	if width <= 0 || width > 100 {
 		width = 100
 	}
-	renderer, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(width))
+	if style == "" {
+		style = "dark"
+	}
+	renderer, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(width))
 	if err != nil {
 		return text
 	}
-	rendered, err := renderer.Render(text)
+	rendered, err := renderer.Render(aiUnescapeMarkdown(text))
 	if err != nil {
 		return text
 	}
 	return strings.Trim(rendered, "\n")
+}
+
+// aiUnescapeMarkdown resolves backslash-escaped markdown punctuation before
+// rendering: the glamour pinned in the tree (v0.6.0 via restish, the F8
+// version-skew caveat) prints CommonMark escapes literally — a model writing
+// "\*August is partial" to suppress emphasis reaches the screen with the
+// backslash. Fenced code blocks pass through untouched.
+func aiUnescapeMarkdown(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	inFence := false
+	for i, line := range strings.Split(text, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			b.WriteString(line)
+			continue
+		}
+		if inFence {
+			b.WriteString(line)
+			continue
+		}
+		for j := 0; j < len(line); j++ {
+			if line[j] == '\\' && j+1 < len(line) && strings.IndexByte("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", line[j+1]) >= 0 {
+				continue
+			}
+			b.WriteByte(line[j])
+		}
+	}
+	return b.String()
 }
 
 // renderAIRunCard renders one finished user dispatch for the transcript:
@@ -1545,7 +1599,7 @@ func (m aiModel) statusLine() string {
 	case m.ctrlCArmed:
 		segments = append(segments, "ctrl+c again to quit")
 	case m.session != nil:
-		segments = append(segments, "ask about your cloud costs · / for commands")
+		segments = append(segments, "Ask \"how much do we spend on tokens per AI model?\" · / for commands")
 	default:
 		segments = append(segments, "ask a question to set up AI · / for commands")
 	}
