@@ -176,15 +176,51 @@ func newAIModel(configDir string) aiModel {
 	}
 	if key := resolveAIKey(settings); key != "" {
 		m.session = newAIConversationSession(configDir, key, modelName, catalog)
-		m.input.Placeholder = "Ask about your cloud costs, or type / for commands"
 	} else {
 		m.sessionNote = "AI needs an Anthropic API key — ask a question to set one up, or export ANTHROPIC_API_KEY"
-		m.input.Placeholder = "Ask a question to set up AI, or type / for commands"
 	}
-	m.append(aiNoticeStyle.Render("Cloud Intelligence™ interactive session") +
-		aiEchoStyle.Render("  —  /help for commands, /quit to leave"))
+	m.append(aiBannerBlock(&m))
 	m.layout()
 	return m
+}
+
+// aiCloudLogo is the Cloud Intelligence™ mark: a pixel cloud with a spark,
+// in DoiT pink — the session's answer to Claude Code's robot.
+var aiCloudLogo = []string{
+	"    ▄▄███▄▄      ",
+	"  ▄█████████▄▄ ✦ ",
+	" ▟██████████████▖",
+	" ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘",
+}
+
+var aiLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
+// aiBannerBlock is the transcript's opening block, Claude Code-style: the
+// mark beside the product name, version, and the session facts that matter —
+// model and key source, tenant identity, catalog size.
+func aiBannerBlock(m *aiModel) string {
+	logo := aiLogoStyle.Render(strings.Join(aiCloudLogo, "\n"))
+
+	modelLine := m.modelName
+	switch {
+	case m.session == nil:
+		modelLine = "AI off — ask a question to set up a key"
+	case strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "":
+		modelLine += " · API key from env"
+	default:
+		modelLine += " · API key from " + aiSettingsFileName
+	}
+
+	info := []string{
+		aiCardHeadStyle.Render("Cloud Intelligence™ CLI") + aiEchoStyle.Render(" v"+version),
+		aiEchoStyle.Render(modelLine),
+	}
+	if m.identity != "" {
+		info = append(info, aiEchoStyle.Render(m.identity))
+	}
+	info = append(info, aiEchoStyle.Render(fmt.Sprintf("%d commands · /help for how this works", len(m.catalog))))
+
+	return lipgloss.JoinHorizontal(lipgloss.Center, logo, "  ", strings.Join(info, "\n")) + "\n"
 }
 
 // aiIdentitySegment is the tenant half of the status line: doers always see
@@ -259,15 +295,15 @@ func (m *aiModel) refreshTranscript() {
 func (m *aiModel) layout() {
 	m.input.SetWidth(m.width - 2)
 	m.view.Width = m.width
-	bottom := len(m.completions) + 1 /*input*/
+	middle := len(m.completions) + 1 /*input*/
 	if m.picker != nil {
 		rows := len(m.picker.filtered(m.pickerFilter))
 		if rows > aiPickerVisibleRows {
 			rows = aiPickerVisibleRows
 		}
-		bottom = rows + 2 // selection header + filter line
+		middle = rows + 2 // selection header + filter line
 	}
-	chrome := 1 /*header*/ + bottom + 1 /*status*/
+	chrome := 2 /*rules around the input*/ + middle + 1 /*status*/
 	height := m.height - chrome
 	if height < 3 {
 		height = 3
@@ -704,7 +740,6 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyBuf = ""
 		m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
 		m.sessionNote = ""
-		m.input.Placeholder = "Ask about your cloud costs, or type / for commands"
 		m.append(tuiSuccessStyle.Render("Key saved — AI is ready."))
 		commands := []tea.Cmd{aiListen(m.session)}
 		if question := m.pendingQuestion; question != "" {
@@ -793,7 +828,7 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		// so stale tenant data can't leak into the next question (§6.2).
 		m.transcript = nil
 		m.streamBuf.Reset()
-		m.refreshTranscript()
+		m.append(aiBannerBlock(&m))
 		if m.session != nil {
 			_ = m.session.Close()
 			settings := loadAISettings(m.configDir)
@@ -1124,37 +1159,61 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 
 func (m aiModel) View() string {
 	var b strings.Builder
-	b.WriteString(m.headerLine())
-	b.WriteString("\n")
 	b.WriteString(m.view.View())
 	b.WriteString("\n")
-	if m.keyEntry {
+	b.WriteString(m.topRule())
+	b.WriteString("\n")
+	switch {
+	case m.keyEntry:
 		masked := strings.Repeat("•", len([]rune(m.keyBuf)))
-		b.WriteString("API key: " + masked + "\n")
-		b.WriteString(aiEchoStyle.Render("paste your key · enter save · esc cancel"))
-		return b.String()
-	}
-	if m.picker != nil {
+		b.WriteString("API key: " + masked)
+	case m.picker != nil:
 		b.WriteString(m.pickerView())
-		b.WriteString("\n")
-		b.WriteString(m.statusLine())
-		return b.String()
-	}
-	for index, completion := range m.completions {
-		line := fmt.Sprintf(" /%s  %s", completion.Value, aiEchoStyle.Render(completion.Summary))
-		if index == m.completionIndex {
-			line = aiSelectedStyle.Render(" /" + completion.Value + " ")
-			if completion.Summary != "" {
-				line += " " + aiEchoStyle.Render(completion.Summary)
+	default:
+		for index, completion := range m.completions {
+			line := fmt.Sprintf(" /%s  %s", completion.Value, aiEchoStyle.Render(completion.Summary))
+			if index == m.completionIndex {
+				line = aiSelectedStyle.Render(" /" + completion.Value + " ")
+				if completion.Summary != "" {
+					line += " " + aiEchoStyle.Render(completion.Summary)
+				}
 			}
+			b.WriteString(line)
+			b.WriteString("\n")
 		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		b.WriteString(m.input.View())
 	}
-	b.WriteString(m.input.View())
+	b.WriteString("\n")
+	b.WriteString(aiRule(m.width, ""))
 	b.WriteString("\n")
 	b.WriteString(m.statusLine())
 	return b.String()
+}
+
+// aiRule draws one horizontal frame line, with an optional right-aligned
+// hint embedded in it.
+func aiRule(width int, hint string) string {
+	if width < 4 {
+		width = 4
+	}
+	if hint == "" {
+		return aiEchoStyle.Render(strings.Repeat("─", width))
+	}
+	label := " " + hint + " "
+	dashes := width - lipgloss.Width(label) - 2
+	if dashes < 1 {
+		dashes = 1
+	}
+	return aiEchoStyle.Render(strings.Repeat("─", dashes)) + aiNoticeStyle.Render(label) + aiEchoStyle.Render("──")
+}
+
+// topRule is the line above the input; it carries the scrolled-up hint when
+// the viewport is not following the bottom.
+func (m aiModel) topRule() string {
+	if !m.follow {
+		return aiRule(m.width, "↓ scrolled up — PgDn for latest")
+	}
+	return aiRule(m.width, "")
 }
 
 const aiPickerVisibleRows = 8
@@ -1192,16 +1251,6 @@ func (m aiModel) pickerView() string {
 	return b.String()
 }
 
-// headerLine is the fixed top of the frame; a scroll hint appears when the
-// viewport is not following the bottom.
-func (m aiModel) headerLine() string {
-	title := aiHeaderStyle.Render("dci ai") + aiEchoStyle.Render(" · Cloud Intelligence™")
-	if !m.follow {
-		title += aiNoticeStyle.Render("  ↓ scrolled up — PgDn for latest")
-	}
-	return title
-}
-
 func (m aiModel) statusLine() string {
 	if m.picker != nil {
 		return aiEchoStyle.Render("↑/↓ select · enter run · esc cancel")
@@ -1217,14 +1266,20 @@ func (m aiModel) statusLine() string {
 	if m.turnActive {
 		return m.spin.View() + aiEchoStyle.Render(" thinking ("+m.modelName+") · esc to cancel")
 	}
+	if m.keyEntry {
+		return aiEchoStyle.Render("paste your key · enter save · esc cancel")
+	}
 	segments := make([]string, 0, 3)
 	if m.identity != "" {
 		segments = append(segments, m.identity)
 	}
-	if m.ctrlCArmed {
+	switch {
+	case m.ctrlCArmed:
 		segments = append(segments, "ctrl+c again to quit")
-	} else {
-		segments = append(segments, "/help for commands")
+	case m.session != nil:
+		segments = append(segments, "ask about your cloud costs · / for commands")
+	default:
+		segments = append(segments, "ask a question to set up AI · / for commands")
 	}
 	return aiEchoStyle.Render(strings.Join(segments, " · "))
 }
