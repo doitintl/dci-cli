@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // scriptedRunner returns canned (output, exit) pairs in order and records the
@@ -108,6 +109,38 @@ func TestAIRunCommandExitAndExecErrors(t *testing.T) {
 	outcome = executor30.RunCommand(context.Background(), aiRunCommandInput{Argv: []string{"delete-budget"}}, true)
 	if outcome.NeedsApproval || !outcome.IsError {
 		t.Fatalf("approved exit-30 outcome = %+v, want plain error", outcome)
+	}
+}
+
+func TestAIRunCommandTimesOutWedgedChild(t *testing.T) {
+	previousTimeout := aiToolCommandTimeout
+	aiToolCommandTimeout = 30 * time.Millisecond
+	t.Cleanup(func() { aiToolCommandTimeout = previousTimeout })
+
+	executor := newAIToolExecutor(t.TempDir())
+	executor.runner = func(ctx context.Context, argv []string) ([]byte, int, error) {
+		<-ctx.Done() // a wedged child: only dies when the executor kills it
+		return nil, -1, ctx.Err()
+	}
+	outcome := executor.RunCommand(context.Background(), aiRunCommandInput{Argv: []string{"list-budgets"}}, false)
+	if !outcome.IsError || !strings.Contains(outcome.Data, "COMMAND_TIMED_OUT") {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func TestAIRunCommandUserCancelIsNotATimeout(t *testing.T) {
+	// Esc cancels the turn context; that must surface as the plain execution
+	// error, not as COMMAND_TIMED_OUT telling the model to narrow the query.
+	ctx, cancel := context.WithCancel(context.Background())
+	executor := newAIToolExecutor(t.TempDir())
+	executor.runner = func(runCtx context.Context, argv []string) ([]byte, int, error) {
+		cancel()
+		<-runCtx.Done()
+		return nil, -1, runCtx.Err()
+	}
+	outcome := executor.RunCommand(ctx, aiRunCommandInput{Argv: []string{"list-budgets"}}, false)
+	if !outcome.IsError || strings.Contains(outcome.Data, "COMMAND_TIMED_OUT") {
+		t.Fatalf("outcome = %+v", outcome)
 	}
 }
 

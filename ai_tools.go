@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const (
@@ -23,6 +24,12 @@ const (
 	aiToolSetCustomer     = "set_customer_context"
 	aiToolResultByteLimit = 32 * 1024 // per tool result entering model context (§7.6)
 )
+
+// aiToolCommandTimeout bounds one run_dci_command child. Without it a wedged
+// child (a stuck network call, or anything that blocks waiting for input that
+// will never come) hangs the whole turn until the user presses Esc. Generous
+// enough for a full --all pagination sweep; a var so tests shrink it.
+var aiToolCommandTimeout = 2 * time.Minute
 
 // aiDeniedCommands are argv[0] values run_dci_command refuses: they open
 // browsers, mutate the binary, or recurse into the session. The model is told
@@ -97,7 +104,16 @@ func (e *aiToolExecutor) RunCommand(ctx context.Context, input aiRunCommandInput
 	if approved && !aiArgvHasYes(argv) {
 		argv = append(append([]string{}, argv...), "--yes")
 	}
-	output, exitCode, err := e.runner(ctx, argv)
+	runCtx, cancel := context.WithTimeout(ctx, aiToolCommandTimeout)
+	defer cancel()
+	output, exitCode, err := e.runner(runCtx, argv)
+	if runCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+		return aiToolOutcome{Data: aiToolError(
+			"COMMAND_TIMED_OUT",
+			fmt.Sprintf("dci %s was stopped after %s", strings.Join(argv, " "), aiToolCommandTimeout),
+			"Narrow the request (server-side filters, --fields, a smaller time range) or ask the user to run it themselves",
+		), IsError: true}
+	}
 	if err != nil {
 		return aiToolOutcome{Data: aiToolError("EXEC_FAILED", err.Error(), ""), IsError: true}
 	}
