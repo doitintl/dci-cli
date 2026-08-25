@@ -955,3 +955,38 @@ func TestAIPickerFetchErrorDispatchesOriginal(t *testing.T) {
 	}
 	m.running.cancel()
 }
+
+func TestRenderAIMarkdownUsesFullTerminalWidth(t *testing.T) {
+	// Wide terminals get wide answers: the old hard 100-column cap squeezed
+	// markdown tables into wrapped cells no matter how much room there was.
+	table := "| Source | Savings |\n|---|---|\n| Flexsave (DoiT-managed AWS commitments) on a very long descriptive label for coverage | $1,806.62 across the whole of July 2026 as measured |\n"
+	wide := renderAIMarkdown(table, 220, "dark")
+	maxLine := 0
+	for _, line := range strings.Split(stripANSI(wide), "\n") {
+		if n := len([]rune(line)); n > maxLine {
+			maxLine = n
+		}
+	}
+	if maxLine <= 100 {
+		t.Fatalf("table still wrapped at the old 100-col cap: widest line %d", maxLine)
+	}
+	// Unknown width (first render, tests) keeps a sane default.
+	if got := renderAIMarkdown("plain text", 0, "dark"); got == "" {
+		t.Fatal("zero width must fall back, not fail")
+	}
+}
+
+func TestAITranscriptBlocksSeparatedByBlankLine(t *testing.T) {
+	// A question echo and the previous answer were rendered back-to-back with
+	// no gap; blocks now join with a blank line so turns are scannable.
+	m := aiTestModel(t)
+	m.append("answer block one")
+	m.append("› next question")
+	if !strings.Contains(m.view.View(), "answer block one") {
+		t.Fatal("viewport missing first block")
+	}
+	content := strings.Join(m.transcript, "\n\n")
+	if !strings.Contains(content, "answer block one\n\n› next question") {
+		t.Fatalf("blocks not blank-line separated: %q", content)
+	}
+}
