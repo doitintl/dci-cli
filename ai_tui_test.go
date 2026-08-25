@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // aiTestModel builds a session model without touching cli.Root, the real
@@ -21,7 +21,7 @@ func aiTestModel(t *testing.T) aiModel {
 	model := newAIModel(t.TempDir())
 	// A keyless session opens in the guided key setup (F7); these tests
 	// exercise the normal session, so dismiss it the way a user would.
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	model = updated.(aiModel)
 	model.catalog = aiTestCatalog()
 	return model
@@ -50,14 +50,19 @@ func aiEventUpdate(m aiModel, event aiEvent) (aiModel, tea.Cmd) {
 
 func aiType(m aiModel, text string) aiModel {
 	for _, r := range text {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		updated, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 		m = updated.(aiModel)
 	}
 	return m
 }
 
-func aiPress(m aiModel, key tea.KeyType) (aiModel, tea.Cmd) {
-	updated, cmd := m.Update(tea.KeyMsg{Type: key})
+func aiPress(m aiModel, code rune) (aiModel, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: code})
+	return updated.(aiModel), cmd
+}
+
+func aiCtrl(m aiModel, code rune) (aiModel, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: code, Mod: tea.ModCtrl})
 	return updated.(aiModel), cmd
 }
 
@@ -126,7 +131,7 @@ func TestAIEscCancelsRunningCommand(t *testing.T) {
 	m := aiTestModel(t)
 	canceled := false
 	m.running = &aiRunState{argv: []string{"status"}, cancel: func() { canceled = true }, started: time.Now()}
-	m, _ = aiPress(m, tea.KeyEsc)
+	m, _ = aiPress(m, tea.KeyEscape)
 	if !canceled {
 		t.Fatal("esc did not cancel the running command")
 	}
@@ -155,11 +160,11 @@ func TestAIPlainTextRoutesToChatNotice(t *testing.T) {
 
 func TestAICtrlCTwiceQuits(t *testing.T) {
 	m := aiTestModel(t)
-	m, cmd := aiPress(m, tea.KeyCtrlC)
+	m, cmd := aiCtrl(m, 'c')
 	if cmd != nil || !m.ctrlCArmed {
 		t.Fatalf("first ctrl+c: cmd=%v armed=%v", cmd, m.ctrlCArmed)
 	}
-	_, cmd = aiPress(m, tea.KeyCtrlC)
+	_, cmd = aiCtrl(m, 'c')
 	if cmd == nil {
 		t.Fatal("second ctrl+c returned no command")
 	}
@@ -171,7 +176,7 @@ func TestAICtrlCTwiceQuits(t *testing.T) {
 func TestAICtrlCClearsNonEmptyInput(t *testing.T) {
 	m := aiTestModel(t)
 	m = aiType(m, "/sta")
-	m, cmd := aiPress(m, tea.KeyCtrlC)
+	m, cmd := aiCtrl(m, 'c')
 	if cmd != nil {
 		t.Fatal("ctrl+c on non-empty input must not quit")
 	}
@@ -491,7 +496,7 @@ func TestAIApprovalKeys(t *testing.T) {
 	if m.approval == nil || m.input.Value() != "" {
 		t.Fatal("stray key answered or typed during approval")
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	m = updated.(aiModel)
 	if m.approval != nil {
 		t.Fatal("y did not clear the approval")
@@ -506,7 +511,7 @@ func TestAIApprovalDeclineOnEsc(t *testing.T) {
 	session := newFakeAISession()
 	m.session = session
 	m, _ = aiEventUpdate(m, aiEvent{ApprovalRequest: &aiApprovalRequest{CallID: "c2", Kind: "destructive"}})
-	m, _ = aiPress(m, tea.KeyEsc)
+	m, _ = aiPress(m, tea.KeyEscape)
 	if m.approval != nil {
 		t.Fatal("esc did not clear the approval")
 	}
@@ -520,7 +525,7 @@ func TestAIEscCancelsActiveTurn(t *testing.T) {
 	session := newFakeAISession()
 	m.session = session
 	m.turnActive = true
-	m, _ = aiPress(m, tea.KeyEsc)
+	m, _ = aiPress(m, tea.KeyEscape)
 	if !session.canceled {
 		t.Fatal("esc did not cancel the turn")
 	}
@@ -618,7 +623,7 @@ func TestAIKeyOnboardingFlow(t *testing.T) {
 	if m.pendingQuestion != "why is spend up?" {
 		t.Fatalf("pending question = %q", m.pendingQuestion)
 	}
-	if view := m.View(); !strings.Contains(view, "API key:") {
+	if view := m.View().Content; !strings.Contains(view, "API key:") {
 		t.Fatalf("key entry view = %q", view)
 	}
 
@@ -629,13 +634,13 @@ func TestAIKeyOnboardingFlow(t *testing.T) {
 	if !m.keyEntry {
 		t.Fatal("invalid key closed the setup")
 	}
-	if masked := m.View(); strings.Contains(masked, "not-a-key") {
+	if masked := m.View().Content; strings.Contains(masked, "not-a-key") {
 		t.Fatal("key text rendered unmasked")
 	}
 
 	// Clear it and paste a valid key: saved, session built, question sent.
 	for range "not-a-key" {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 		m = updated.(aiModel)
 	}
 	m = aiType(m, "sk-ant-test-0123456789")
@@ -658,7 +663,7 @@ func TestAIKeyOnboardingEscCancels(t *testing.T) {
 	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
 	m = aiType(m, "sk-partial")
-	updated2, _ := aiPress(m, tea.KeyEsc)
+	updated2, _ := aiPress(m, tea.KeyEscape)
 	m = updated2
 	if m.keyEntry || m.keyBuf != "" || m.pendingQuestion != "" {
 		t.Fatalf("esc did not fully cancel: %+v", m)
@@ -788,7 +793,7 @@ func TestAIBannerAndFrame(t *testing.T) {
 			t.Fatalf("banner missing %q: %s", want, banner)
 		}
 	}
-	view := m.View()
+	view := m.View().Content
 	if got := strings.Count(view, strings.Repeat("─", 10)); got < 2 {
 		t.Fatalf("view has %d rule lines, want the two around the input", got)
 	}
@@ -853,16 +858,18 @@ func TestAIMouseToggle(t *testing.T) {
 		t.Fatal("mouse capture must default off so terminal selection/copy works")
 	}
 	m = aiType(m, "/mouse")
-	updated, cmd := aiPress(m, tea.KeyEnter)
+	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
-	if !m.mouseOn || cmd == nil {
-		t.Fatalf("first /mouse: on=%v cmd=%v", m.mouseOn, cmd)
+	// The toggle is declarative in v2: no command, the next frame carries the
+	// new mouse mode.
+	if !m.mouseOn || m.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("first /mouse: on=%v mode=%v", m.mouseOn, m.View().MouseMode)
 	}
 	m = aiType(m, "/mouse")
-	updated, cmd = aiPress(m, tea.KeyEnter)
+	updated, _ = aiPress(m, tea.KeyEnter)
 	m = updated
-	if m.mouseOn || cmd == nil {
-		t.Fatalf("second /mouse: on=%v cmd=%v", m.mouseOn, cmd)
+	if m.mouseOn || m.View().MouseMode != tea.MouseModeNone {
+		t.Fatalf("second /mouse: on=%v mode=%v", m.mouseOn, m.View().MouseMode)
 	}
 }
 
@@ -912,7 +919,7 @@ func TestAIPickerFetchesWhenCacheEmpty(t *testing.T) {
 	m = aiType(m, "/get-report")
 	m, _ = aiPress(m, tea.KeyEnter)
 	stale := m.fetchIntent
-	m, _ = aiPress(m, tea.KeyEsc)
+	m, _ = aiPress(m, tea.KeyEscape)
 	if m.fetchIntent != nil {
 		t.Fatal("esc did not abandon the fetch")
 	}
@@ -997,7 +1004,7 @@ func aiFrameSized(t *testing.T, m aiModel, width, height int) (aiModel, []string
 	t.Helper()
 	next, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	sized := next.(aiModel)
-	return sized, strings.Split(sized.View(), "\n")
+	return sized, strings.Split(sized.View().Content, "\n")
 }
 
 // The frame must be exactly the terminal's cell grid in every state. Bubble
@@ -1085,7 +1092,7 @@ func TestAICtrlLRedrawsFromEveryState(t *testing.T) {
 	for name, mutate := range states {
 		m := aiTestModel(t)
 		mutate(&m)
-		_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlL})
+		_, cmd := m.handleKey(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
 		if cmd == nil {
 			t.Fatalf("%s: ctrl+l produced no command", name)
 		}
@@ -1321,7 +1328,7 @@ func TestAIKeylessSessionOpensKeySetup(t *testing.T) {
 	if joined := strings.Join(m.transcript, "\n"); !strings.Contains(joined, "press Esc to skip") {
 		t.Fatalf("startup setup lacks the skip hint: %q", joined)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = updated.(aiModel)
 	if m.keyEntry {
 		t.Fatal("esc should drop to a normal session")
@@ -1345,7 +1352,7 @@ func TestAIKeySetupSlashDropsToCommandInput(t *testing.T) {
 		t.Fatal("popup should open for the typed prefix")
 	}
 	// A slash into a non-empty buffer stays key input (mid-key paste).
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = updated.(aiModel)
 	m = aiType(m, "what changed?")
 	m, _ = aiPress(m, tea.KeyEnter) // keyless chat re-opens the setup, question queued
@@ -1402,7 +1409,7 @@ func TestAICompletionPopupScrollsPastVisibleRows(t *testing.T) {
 	if m.completionIndex != 8 {
 		t.Fatalf("completionIndex = %d, want 8", m.completionIndex)
 	}
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "list-i") || !strings.Contains(view, "9/9") {
 		t.Fatalf("view lacks the scrolled-to candidate or its counter:\n%s", view)
 	}

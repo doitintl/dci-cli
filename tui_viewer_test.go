@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func viewerFixture() *tableViewerModel {
@@ -24,17 +24,17 @@ func TestViewerSortCycle(t *testing.T) {
 	model.focusCol = 1 // cost
 
 	// First press: ascending numeric sort.
-	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	model.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	if got := model.rows[model.visible[0]]["cost"]; got != 10.0 {
 		t.Fatalf("ascending sort first row cost = %v, want 10", got)
 	}
 	// Second press: descending.
-	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	model.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	if got := model.rows[model.visible[0]]["cost"]; got != 30.0 {
 		t.Fatalf("descending sort first row cost = %v, want 30", got)
 	}
 	// Third press: original order restored.
-	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	model.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	if got := model.rows[model.visible[0]]["cost"]; got != 30.0 || model.sortCol != -1 {
 		t.Fatalf("third press must restore original order, got %v (sortCol %d)", got, model.sortCol)
 	}
@@ -43,7 +43,7 @@ func TestViewerSortCycle(t *testing.T) {
 func TestViewerStringSortIsCaseInsensitive(t *testing.T) {
 	model := viewerFixture()
 	model.focusCol = 0 // name
-	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	model.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	order := make([]string, len(model.visible))
 	for i, rowIndex := range model.visible {
 		order[i] = model.rows[rowIndex]["name"].(string)
@@ -55,12 +55,12 @@ func TestViewerStringSortIsCaseInsensitive(t *testing.T) {
 
 func TestViewerFilter(t *testing.T) {
 	model := viewerFixture()
-	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	model.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
 	if !model.filtering {
 		t.Fatal("/ must enter filter mode")
 	}
-	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("bet")})
-	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model.Update(tea.KeyPressMsg{Text: "bet"})
+	model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if model.filtering {
 		t.Fatal("enter must apply the filter and leave filter mode")
 	}
@@ -68,8 +68,8 @@ func TestViewerFilter(t *testing.T) {
 		t.Fatalf("filter 'bet' kept %d rows", len(model.visible))
 	}
 	// Esc clears the filter entirely.
-	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
-	model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if len(model.visible) != 3 {
 		t.Fatalf("esc must clear the filter, %d rows visible", len(model.visible))
 	}
@@ -77,7 +77,7 @@ func TestViewerFilter(t *testing.T) {
 
 func TestViewerSelectionPrintsID(t *testing.T) {
 	model := viewerFixture()
-	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if model.selection != "id-alpha" {
 		t.Fatalf("selection = %q, want the focused row's id", model.selection)
 	}

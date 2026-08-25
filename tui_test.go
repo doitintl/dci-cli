@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

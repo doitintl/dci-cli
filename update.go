@@ -73,7 +73,7 @@ func maybeNotifyUpdate(configDir string) {
 	if !ok || !isNewerVersion(version, c.LatestVersion) {
 		return
 	}
-	fmt.Fprint(os.Stderr, "\n"+styleUpdateNotice(updateNotice(version, c.LatestVersion, "dci update")))
+	fmt.Fprint(tuiStyledStderr(), "\n"+styleUpdateNotice(updateNotice(version, c.LatestVersion, "dci update")))
 }
 
 func stderrIsTTY() bool {

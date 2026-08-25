@@ -24,12 +24,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 )
 
 var (
@@ -178,13 +178,10 @@ func runAISession(configDir string) error {
 	// of the box (dogfood: capture broke copy/paste even with modifier keys in
 	// some terminals); /mouse opts into wheel scrolling, and the choice
 	// persists in the settings file (F5). Keyboard scrolling (PgUp/PgDn)
-	// always works.
+	// always works. The alt screen and mouse mode are declared per-frame in
+	// View (v2's declarative model), so the program takes no options.
 	initial := newAIModel(configDir)
-	options := []tea.ProgramOption{tea.WithAltScreen()}
-	if initial.mouseOn {
-		options = append(options, tea.WithMouseCellMotion())
-	}
-	program := tea.NewProgram(initial, options...)
+	program := tea.NewProgram(initial)
 	model, err := program.Run()
 	if m, ok := model.(aiModel); ok && m.session != nil {
 		_ = m.session.Close()
@@ -202,12 +199,19 @@ func newAIModel(configDir string) aiModel {
 	// The default textarea styles paint a background band across the cursor
 	// line (adaptive, and often guessed wrong inside the alt screen), leaving
 	// gray-on-gray input. The session wants the terminal's own colors: no
-	// band, bright text, faint placeholder.
-	input.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	input.FocusedStyle.Text = lipgloss.NewStyle()
-	input.FocusedStyle.Prompt = lipgloss.NewStyle().Bold(true)
-	input.FocusedStyle.Placeholder = lipgloss.NewStyle().Faint(true)
-	input.BlurredStyle = input.FocusedStyle
+	// band, bright text, faint placeholder. The blinking virtual cursor keeps
+	// its reverse-video default.
+	inputState := textarea.StyleState{
+		CursorLine:  lipgloss.NewStyle(),
+		Text:        lipgloss.NewStyle(),
+		Prompt:      lipgloss.NewStyle().Bold(true),
+		Placeholder: lipgloss.NewStyle().Faint(true),
+	}
+	input.SetStyles(textarea.Styles{
+		Focused: inputState,
+		Blurred: inputState,
+		Cursor:  textarea.CursorStyle{Shape: tea.CursorBlock, Blink: true},
+	})
 	input.Focus()
 
 	history := loadAIHistory(configDir)
@@ -220,7 +224,7 @@ func newAIModel(configDir string) aiModel {
 		catalog:      catalog,
 		userCommands: loadAIUserCommands(configDir),
 		input:        input,
-		view:         viewport.New(80, 20),
+		view:         viewport.New(viewport.WithWidth(80), viewport.WithHeight(20)),
 		spin:         spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		width:        80,
 		height:       24,
@@ -462,7 +466,7 @@ func (m *aiModel) refreshTranscript() {
 // chrome (header, completion popup, input, status) does not.
 func (m *aiModel) layout() {
 	m.input.SetWidth(m.width - 2)
-	m.view.Width = m.width
+	m.view.SetWidth(m.width)
 	popup := len(m.completions)
 	if popup > aiCompletionLimit {
 		popup = aiCompletionLimit // the popup is a window; extra matches scroll
@@ -479,7 +483,7 @@ func (m *aiModel) layout() {
 		// from the top, so the frame still ends exactly at the last row.
 		height = 1
 	}
-	m.view.Height = height
+	m.view.SetHeight(height)
 	m.refreshTranscript()
 }
 
@@ -544,10 +548,35 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case aiSessionClosedMsg:
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.PasteMsg:
+		return m.handlePaste(msg)
+
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// handlePaste routes a bracketed paste to whichever text sink owns the
+// keyboard. v1 delivered pastes as key messages, so the key handlers covered
+// this; v2 makes them their own message type.
+func (m aiModel) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case m.keyEntry:
+		m.keyBuf += msg.Content
+		return m, nil
+	case m.picker != nil:
+		m.pickerFilter += msg.Content
+		m.clampPickerIndex()
+		m.layout()
+		return m, nil
+	case m.fetchIntent != nil, m.dispatchApproval != nil, m.approval != nil, m.running != nil:
+		return m, nil // states that only accept their answer keys
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionMatchCap))
+	return m, cmd
 }
 
 // handleSessionEvent renders one protocol event and re-arms the listener.
@@ -695,7 +724,7 @@ func (m *aiModel) commitStream() {
 	if text == "" {
 		return
 	}
-	m.append(renderAIMarkdown(text, m.view.Width, m.markdownStyle))
+	m.append(renderAIMarkdown(text, m.view.Width(), m.markdownStyle))
 }
 
 // aiActivitySnippet condenses in-flight narration to one status-line phrase:
@@ -765,7 +794,7 @@ func aiDisplayContext(context string) string {
 	return context
 }
 
-func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m aiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// ctrl+l redraws, from every state (the repair gesture it is everywhere
@@ -818,14 +847,14 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Viewport scrolling works in every other state.
 	switch key {
 	case "pgup", "ctrl+u":
-		m.view.HalfViewUp()
+		m.view.HalfPageUp()
 		m.follow = m.view.AtBottom()
 		return m, nil
 	case "pgdown", "ctrl+d":
 		if key == "ctrl+d" && strings.TrimSpace(m.input.Value()) == "" && m.running == nil && m.approval == nil {
 			return m, tea.Quit
 		}
-		m.view.HalfViewDown()
+		m.view.HalfPageDown()
 		m.follow = m.view.AtBottom()
 		return m, nil
 	}
@@ -1153,7 +1182,7 @@ func renderAIKeyOnboarding() string {
 }
 
 // handleKeyEntryKey owns the keyboard while the key setup is active.
-func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m aiModel) handleKeyEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.keyEntry = false
@@ -1192,26 +1221,26 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if msg.Type == tea.KeyRunes && m.keyBuf == "" && m.pendingQuestion == "" &&
-		strings.HasPrefix(string(msg.Runes), "/") {
+	if msg.Text != "" && m.keyBuf == "" && m.pendingQuestion == "" &&
+		strings.HasPrefix(msg.Text, "/") {
 		// The startup hint promises / commands work without a key: a slash on
 		// an empty buffer is a command being typed, not a key — drop to the
 		// normal input with the popup open. A slash into a non-empty buffer
 		// (mid-key paste) or after a question queued the setup stays key input.
 		m.keyEntry = false
-		m.input.SetValue(string(msg.Runes))
+		m.input.SetValue(msg.Text)
 		m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionMatchCap))
 		return m, nil
 	}
-	if msg.Type == tea.KeyRunes {
-		m.keyBuf += string(msg.Runes)
+	if msg.Text != "" {
+		m.keyBuf += msg.Text
 	}
 	return m, nil
 }
 
 // handlePickerKey drives the name selection: type to filter with the CLI's
 // own matcher, ↑/↓ to move, enter dispatches with the chosen ID, esc cancels.
-func (m aiModel) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m aiModel) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	rows := m.picker.filtered(m.pickerFilter)
 	switch msg.String() {
 	case "esc", "ctrl+c":
@@ -1245,8 +1274,8 @@ func (m aiModel) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 	}
-	if msg.Type == tea.KeyRunes {
-		m.pickerFilter += string(msg.Runes)
+	if msg.Text != "" {
+		m.pickerFilter += msg.Text
 		m.clampPickerIndex()
 		m.layout()
 	}
@@ -1324,14 +1353,16 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "mouse":
+		// Flipping the flag is the whole toggle: the next frame declares the
+		// new mouse mode on the view (v2's declarative model).
 		m.mouseOn = !m.mouseOn
 		m.persistToggle(func(settings *aiSettings) { settings.Mouse = boolPointer(m.mouseOn) })
 		if m.mouseOn {
 			m.append(aiEchoStyle.Render("mouse capture on — wheel scrolls the transcript; /mouse to select text (saved for future sessions)"))
-			return m, tea.EnableMouseCellMotion
+			return m, nil
 		}
 		m.append(aiEchoStyle.Render("mouse capture off — select and copy text normally; /mouse to re-enable wheel scrolling"))
-		return m, tea.DisableMouse
+		return m, nil
 	case "default":
 		return m.runDefaultVerb(route.args)
 	case "bell":
@@ -1568,18 +1599,20 @@ func aiExecutablePath() string {
 }
 
 // aiMarkdownStyle picks the glamour style for this terminal, once, BEFORE
-// the Bubble Tea program starts. It must never be probed mid-session:
-// glamour's WithAutoStyle queries the terminal background (OSC 11) on every
-// render, and inside the running program Bubble Tea's input reader swallows
-// the terminal's reply — the printable tail (";rgb:0000/0000/0000\") then
-// lands in the textarea as if the user typed it. This call is effectively
-// free: Bubble Tea v1's package init() already ran the terminal query and
-// cached the answer (tea_init.go upstream). That init is also where a mute
-// terminal (a pty harness that never answers OSC 11 / CSI 6n) pays termenv's
-// 5s OSCTimeout — before main() runs, so it is not fixable here; Bubble Tea
-// v2 removes the init. Real terminals answer in ~1ms.
+// the Bubble Tea program starts, using lipgloss v2's explicit standalone
+// detection against the session's own streams. Mid-session probing stays
+// off-limits by design: glamour's WithAutoStyle would run its own OSC 11
+// query on every render, racing the program's input reader for the reply
+// (v2 has a first-class tea.RequestBackgroundColor for in-program detection;
+// adopting it is a possible follow-up, not part of the mechanical port).
+// Under v1, bubbletea's package init() ran the terminal query before main()
+// — which is where a mute terminal (a pty harness that never answers OSC 11)
+// paid termenv's 5s OSCTimeout. v2 removes that init, so this explicit call
+// is now the session's one background query and the only place a mute
+// terminal waits — bounded by lipgloss's 2s query timeout, down from
+// termenv's 5s. Real terminals answer in ~1ms.
 func aiMarkdownStyle() string {
-	if lipgloss.HasDarkBackground() {
+	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
 		return "dark"
 	}
 	return "light"
@@ -1751,7 +1784,7 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m aiModel) View() string {
+func (m aiModel) View() tea.View {
 	var b strings.Builder
 	b.WriteString(m.view.View())
 	b.WriteString("\n")
@@ -1790,7 +1823,12 @@ func (m aiModel) View() string {
 	b.WriteString(aiRule(m.width, ""))
 	b.WriteString("\n")
 	b.WriteString(m.statusLine())
-	return aiFitFrame(b.String(), m.width, m.height)
+	view := tea.NewView(aiFitFrame(b.String(), m.width, m.height))
+	view.AltScreen = true
+	if m.mouseOn {
+		view.MouseMode = tea.MouseModeCellMotion
+	}
+	return view
 }
 
 // aiFitFrame pins the frame to the terminal's cell grid exactly: every line

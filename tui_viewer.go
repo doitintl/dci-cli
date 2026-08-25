@@ -14,9 +14,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/table"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/table"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -50,7 +50,9 @@ var runTableViewer = runTableViewerProgram
 
 func runTableViewerProgram(rows []map[string]interface{}, keys []string) (string, error) {
 	model := newTableViewerModel(rows, keys)
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithOutput(os.Stderr), tea.WithInput(os.Stdin))
+	// The alternate screen is declared per-frame in View (v2's declarative
+	// model); only the stderr/stdin wiring remains a program option.
+	program := tea.NewProgram(model, tea.WithOutput(os.Stderr), tea.WithInput(os.Stdin))
 	final, err := program.Run()
 	if err != nil {
 		return "", fmt.Errorf("interactive table viewer: %w", err)
@@ -224,22 +226,22 @@ func (m *tableViewerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.rebuild()
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.filtering {
-			switch msg.Type {
-			case tea.KeyEnter, tea.KeyEsc:
-				if msg.Type == tea.KeyEsc {
+			switch {
+			case msg.Code == tea.KeyEnter, msg.Code == tea.KeyEscape:
+				if msg.Code == tea.KeyEscape {
 					m.filter = ""
 				}
 				m.filtering = false
-			case tea.KeyBackspace:
+			case msg.Code == tea.KeyBackspace:
 				if runes := []rune(m.filter); len(runes) > 0 {
 					m.filter = string(runes[:len(runes)-1])
 				}
-			case tea.KeyRunes, tea.KeySpace:
-				m.filter += string(msg.Runes)
-			case tea.KeyCtrlC:
+			case msg.String() == "ctrl+c":
 				return m, tea.Quit
+			case msg.Text != "": // typed characters, space included
+				m.filter += msg.Text
 			}
 			m.applyFilterAndSort()
 			m.rebuild()
@@ -296,7 +298,7 @@ func (m *tableViewerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *tableViewerModel) View() string {
+func (m *tableViewerModel) View() tea.View {
 	status := fmt.Sprintf("%d/%d rows", len(m.visible), len(m.rows))
 	if m.filter != "" {
 		status += fmt.Sprintf(" · filter: %q", m.filter)
@@ -317,5 +319,7 @@ func (m *tableViewerModel) View() string {
 		parts = append(parts, filterLine)
 	}
 	parts = append(parts, tuiDimStyle.Render(help))
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	view := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, parts...))
+	view.AltScreen = true
+	return view
 }
