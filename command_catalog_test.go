@@ -49,21 +49,10 @@ func TestBuildCommandCatalog(t *testing.T) {
 				{Name: "Idempotency-Key", Type: "string", Description: "Idempotency key"},
 			},
 		},
-		{
-			Name:          "import-cloudflows",
-			Method:        "POST",
-			BodyMediaType: "application/json",
-			QueryParams: []*cli.Param{
-				{Name: "dryRun", Type: "boolean", Description: "Use the API simulation"},
-			},
-			HeaderParams: []*cli.Param{
-				{Name: "Idempotency-Key", Type: "string", Description: "Idempotency key"},
-			},
-		},
 		{Name: "list-budgets", Short: "List budgets", Method: "GET"},
 	}}
 	catalog := buildCommandCatalog(api)
-	if catalog.Version != catalogSchemaVersion || len(catalog.Commands) != 8 {
+	if catalog.Version != catalogSchemaVersion || len(catalog.Commands) != 7 {
 		t.Fatalf("unexpected catalog: %+v", catalog)
 	}
 	var deleteEntry commandCatalogEntry
@@ -130,22 +119,20 @@ func TestBuildCommandCatalog(t *testing.T) {
 		t.Fatal("catalog did not mark --idempotency-key as required")
 	}
 
-	for _, importName := range []string{"import-cloudflow-flow", "import-cloudflows"} {
-		var importEntry commandCatalogEntry
-		for _, entry := range catalog.Commands {
-			if strings.Join(entry.Path, " ") == importName {
-				importEntry = entry
-			}
+	var importEntry commandCatalogEntry
+	for _, entry := range catalog.Commands {
+		if strings.Join(entry.Path, " ") == "import-cloudflow-flow" {
+			importEntry = entry
 		}
-		foundRequiredImportIdempotencyKey := false
-		for _, flag := range importEntry.Flags {
-			if flag.Name == "--idempotency-key" && flag.Required {
-				foundRequiredImportIdempotencyKey = true
-			}
+	}
+	foundRequiredImportIdempotencyKey := false
+	for _, flag := range importEntry.Flags {
+		if flag.Name == "--idempotency-key" && flag.Required {
+			foundRequiredImportIdempotencyKey = true
 		}
-		if !foundRequiredImportIdempotencyKey {
-			t.Fatalf("catalog did not mark --idempotency-key as required for %s", importName)
-		}
+	}
+	if !foundRequiredImportIdempotencyKey {
+		t.Fatal("catalog did not mark --idempotency-key as required for import-cloudflow-flow")
 	}
 }
 
