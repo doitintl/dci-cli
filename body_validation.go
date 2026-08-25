@@ -235,7 +235,14 @@ func extractRequestCurrency(validFields map[string]bool, bodyArguments []string,
 			}
 		}
 	}
-	return currencyFromJSONBody(stdinBody)
+	if currency := currencyFromJSONBody(stdinBody); currency != "" {
+		return currency
+	}
+	// No currency declared anywhere in the request: the API applies its
+	// documented default, USD. Returning it keeps the currency context always
+	// resolved for report-shaped responses, so tables money-format and agents
+	// never read unlabeled cost columns (AI-POLISH-SPEC F4).
+	return "USD"
 }
 
 func currencyFromJSONBody(data []byte) string {

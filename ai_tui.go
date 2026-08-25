@@ -109,6 +109,7 @@ type aiModel struct {
 	userLine        string // "email · role", from the cached token
 	customerName    string // resolved display name for an ID-shaped context
 	mouseOn         bool
+	bellOn          bool // ring the terminal bell when a turn finishes (F2)
 
 	// Async name fetch backing the picker when the cache is empty.
 	fetchedNames map[string][]nameCacheEntry
@@ -163,11 +164,17 @@ type aiDispatchApproval struct {
 
 // runAISession is the entry point behind `dci ai` (ai_command.go).
 func runAISession(configDir string) error {
-	// Mouse capture starts OFF so the terminal's own selection/copy works out
+	// Mouse capture defaults OFF so the terminal's own selection/copy works out
 	// of the box (dogfood: capture broke copy/paste even with modifier keys in
-	// some terminals); /mouse opts into wheel scrolling. Keyboard scrolling
-	// (PgUp/PgDn) always works.
-	program := tea.NewProgram(newAIModel(configDir), tea.WithAltScreen())
+	// some terminals); /mouse opts into wheel scrolling, and the choice
+	// persists in the settings file (F5). Keyboard scrolling (PgUp/PgDn)
+	// always works.
+	initial := newAIModel(configDir)
+	options := []tea.ProgramOption{tea.WithAltScreen()}
+	if initial.mouseOn {
+		options = append(options, tea.WithMouseCellMotion())
+	}
+	program := tea.NewProgram(initial, options...)
 	model, err := program.Run()
 	if m, ok := model.(aiModel); ok && m.session != nil {
 		_ = m.session.Close()
@@ -212,7 +219,8 @@ func newAIModel(configDir string) aiModel {
 		historyPos:   len(history),
 		userLine:     aiUserLine(),
 		modelName:    modelName,
-		mouseOn:      false,
+		mouseOn:      resolveAIMouse(settings),
+		bellOn:       resolveAIBell(settings),
 		fetchedNames: map[string][]nameCacheEntry{},
 		// Resolved here — before the program owns stdin — so no render ever
 		// queries the terminal mid-session (see aiMarkdownStyle).
@@ -225,6 +233,15 @@ func newAIModel(configDir string) aiModel {
 		m.sessionNote = "AI needs an Anthropic API key — ask a question to set one up, or export ANTHROPIC_API_KEY"
 	}
 	m.append(aiBannerBlock(&m))
+	if m.session == nil {
+		// A keyless session offers the guided key setup up front instead of
+		// waiting for the first question (F7 — dogfood tested one-shot first
+		// and never met the type-a-question trigger). Esc drops to a normal
+		// session; / commands work either way.
+		m.keyEntry = true
+		m.append(renderAIKeyOnboarding() + "\n" +
+			aiEchoStyle.Render("(/ commands work without a key — Esc skips this)"))
+	}
 	m.layout()
 	return m
 }
@@ -632,8 +649,27 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		m.turnActive = false
 		m.turnActivity = ""
 		m.approval = nil
+		if m.bellOn && aiBellWorthy(usage) {
+			commands = append(commands, aiRingBell)
+		}
 	}
 	return m, tea.Batch(commands...)
+}
+
+// aiBellWorthy gates the end-of-turn bell (F2) to turns worth signaling: any
+// turn that ran commands, or thought long enough for the user to look away.
+// Without the gate, instant echo turns would beep too.
+func aiBellWorthy(done aiTurnDone) bool {
+	return done.ToolCalls > 0 || done.Wall >= 3*time.Second
+}
+
+// aiRingBell writes BEL to stderr — stdout belongs to the renderer, and both
+// point at the same terminal — which maps it to its own notification (sound,
+// dock bounce, tab highlight). Never in one-shot mode: a piped stream must
+// stay byte-clean (ai_command.go).
+func aiRingBell() tea.Msg {
+	fmt.Fprint(os.Stderr, "\a")
+	return nil
 }
 
 // commitStream moves the accumulated assistant text into the transcript,
@@ -822,15 +858,19 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
+		// With the popup open, Enter accepts the highlighted completion —
+		// parity with Claude Code's picker (F1; dogfood: Enter submitting the
+		// still-partial token reads as the picker ignoring the selection). An
+		// input that already names a completion exactly submits, so /quit⏎
+		// never needs a double-Enter.
+		if len(m.completions) > 0 && !aiCompletionExact(m.input.Value(), m.completions) {
+			m.acceptCompletion()
+			return m, nil
+		}
 		return m.submit()
 
 	case "tab":
-		if len(m.completions) > 0 {
-			selected := m.completions[m.completionIndex]
-			m.input.Reset()
-			m.input.SetValue("/" + selected.Value + " ")
-			m.setCompletions(nil)
-		}
+		m.acceptCompletion()
 		return m, nil
 
 	case "up":
@@ -906,6 +946,19 @@ func (m aiModel) answerApproval(approved bool) (tea.Model, tea.Cmd) {
 	}
 	m.append(aiEchoStyle.Render("↳ " + answer))
 	return m, nil
+}
+
+// acceptCompletion replaces the input with the highlighted completion, ready
+// for arguments. Tab always accepts; Enter accepts unless the input already
+// names a completion exactly (see handleKey).
+func (m *aiModel) acceptCompletion() {
+	if len(m.completions) == 0 {
+		return
+	}
+	selected := m.completions[m.completionIndex]
+	m.input.Reset()
+	m.input.SetValue("/" + selected.Value + " ")
+	m.setCompletions(nil)
 }
 
 // setInput replaces the input content (history navigation), leaving the
@@ -1230,12 +1283,22 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "mouse":
 		m.mouseOn = !m.mouseOn
+		m.persistToggle(func(settings *aiSettings) { settings.Mouse = boolPointer(m.mouseOn) })
 		if m.mouseOn {
-			m.append(aiEchoStyle.Render("mouse capture on — wheel scrolls the transcript; /mouse to select text"))
+			m.append(aiEchoStyle.Render("mouse capture on — wheel scrolls the transcript; /mouse to select text (saved for future sessions)"))
 			return m, tea.EnableMouseCellMotion
 		}
 		m.append(aiEchoStyle.Render("mouse capture off — select and copy text normally; /mouse to re-enable wheel scrolling"))
 		return m, tea.DisableMouse
+	case "bell":
+		m.bellOn = !m.bellOn
+		m.persistToggle(func(settings *aiSettings) { settings.Bell = boolPointer(m.bellOn) })
+		if m.bellOn {
+			m.append(aiEchoStyle.Render("bell on — the terminal bell rings when a turn finishes; /bell to disable"))
+		} else {
+			m.append(aiEchoStyle.Render("bell off — turns finish silently; /bell to re-enable"))
+		}
+		return m, nil
 	case "model":
 		return m.runModelVerb(route.args)
 	case "export":
@@ -1249,6 +1312,19 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// persistToggle saves one settings mutation (F2/F5: the /bell and /mouse
+// choices). The in-session toggle stands even when the save fails — the
+// error is reported, not fatal.
+func (m *aiModel) persistToggle(mutate func(*aiSettings)) {
+	settings := loadAISettings(m.configDir)
+	mutate(&settings)
+	if err := saveAISettings(m.configDir, settings); err != nil {
+		m.append(aiErrorStyle.Render("could not save the setting: " + err.Error()))
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
 
 // aiExportTranscript writes the transcript, ANSI styling stripped, to the
 // given path (or a timestamped default in the working directory). With the
@@ -1591,7 +1667,7 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 		aiEchoStyle.Render("Copying text: select and copy normally (mouse capture is off by default); /mouse enables wheel scrolling instead; /export saves the whole transcript."),
 		aiEchoStyle.Render("Scrolling: PgUp/PgDn move the transcript. With mouse capture off the wheel scrolls the terminal itself, which slides this frame out of view and can leave it smeared — ctrl+l redraws it."),
 		"",
-		"  tab completes · ↑/↓ history or popup · PgUp/PgDn scroll (wheel via /mouse) · ctrl+l redraw · esc clears or cancels")
+		"  tab/enter complete · ↑/↓ history or popup · PgUp/PgDn scroll (wheel via /mouse) · ctrl+l redraw · esc clears or cancels")
 	return strings.Join(lines, "\n")
 }
 

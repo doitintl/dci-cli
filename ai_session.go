@@ -61,6 +61,11 @@ type aiSettings struct {
 	// questions can reason server-side for a minute-plus before the first
 	// answer token — lower effort trades some of that depth for latency.
 	Effort string `json:"effort,omitempty"`
+	// Bell rings the terminal bell when a session turn finishes (absent = on);
+	// Mouse restores the /mouse wheel-capture choice (absent = off). Pointers
+	// so an absent field keeps its default without a sentinel value.
+	Bell  *bool `json:"bell,omitempty"`
+	Mouse *bool `json:"mouse,omitempty"`
 }
 
 func aiSettingsPath(configDir string) string {
@@ -102,6 +107,25 @@ func resolveAIModel(settings aiSettings) string {
 		return model
 	}
 	return aiDefaultModel
+}
+
+// resolveAIBell reports whether the session rings the terminal bell when a
+// turn completes (AI-POLISH-SPEC F2). Default on; /bell toggles and persists.
+func resolveAIBell(settings aiSettings) bool {
+	if settings.Bell != nil {
+		return *settings.Bell
+	}
+	return true
+}
+
+// resolveAIMouse restores the persisted /mouse choice (AI-POLISH-SPEC F5).
+// Default off so the terminal's own selection/copy works out of the box
+// (AI-SPEC D9).
+func resolveAIMouse(settings aiSettings) bool {
+	if settings.Mouse != nil {
+		return *settings.Mouse
+	}
+	return false
 }
 
 // resolveAIEffort returns the reasoning-effort cap: DCI_AI_EFFORT wins over

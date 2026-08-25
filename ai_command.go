@@ -30,9 +30,17 @@ func registerAICommand(configDir string) {
 			"sent to Anthropic's API under your key.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			quiet, _ := command.Flags().GetBool("quiet")
+			verbose, _ := command.Flags().GetBool("verbose")
+			if quiet && verbose {
+				return errors.New("--quiet and --verbose are mutually exclusive")
+			}
 			if len(args) > 0 {
 				yes, _ := command.Flags().GetBool("yes")
-				return runAIOneShot(configDir, strings.Join(args, " "), yes)
+				return runAIOneShot(configDir, strings.Join(args, " "), yes, quiet, verbose)
+			}
+			if quiet || verbose {
+				return errors.New("--quiet/--verbose apply to one-shot mode (dci ai \"question\"); the interactive session always shows the investigation")
 			}
 			if !tuiActive() {
 				return errors.New("dci ai needs an interactive terminal; pass a question for one-shot mode: dci ai \"why did spend spike?\"")
@@ -41,6 +49,8 @@ func registerAICommand(configDir string) {
 		},
 	}
 	command.Flags().Bool("yes", false, "Approve destructive commands the AI proposes (one-shot mode)")
+	command.Flags().BoolP("quiet", "q", false, "One-shot: only the answer — no thinking or tool narration on stderr")
+	command.Flags().Bool("verbose", false, "One-shot: stream the investigation narration even when stderr is piped")
 	cli.Root.AddCommand(command)
 }
 
@@ -58,16 +68,25 @@ func aiStatsLine(done aiTurnDone) string {
 	return line
 }
 
+// aiOneShotVerbosity resolves the one-shot output gates (F3): narrate covers
+// the investigation narration (thinking, tool traffic, context switches) —
+// on for a watching human (tty), forced by --verbose, silenced by --quiet;
+// verdict covers the destructive-approval line, which is contract rather
+// than narration, so --quiet keeps it while pipes hide it as before.
+func aiOneShotVerbosity(tty, quiet, forceVerbose bool) (narrate, verdict bool) {
+	return (tty || forceVerbose) && !quiet, tty || forceVerbose
+}
+
 // runAIOneShot drives one question through the conversation session without
-// a TUI: the answer streams to stdout; tool activity goes to stderr only when
-// stderr is a terminal (piped/agent callers get clean streams).
-func runAIOneShot(configDir, question string, approveDestructive bool) error {
+// a TUI: the answer streams to stdout; the investigation narration and the
+// destructive-approval verdict go to stderr per aiOneShotVerbosity.
+func runAIOneShot(configDir, question string, approveDestructive, quiet, forceVerbose bool) error {
 	settings := loadAISettings(configDir)
 	key := resolveAIKey(settings)
 	if key == "" {
-		return errors.New("AI needs an Anthropic API key: export ANTHROPIC_API_KEY, or add {\"api_key\": \"…\"} to " + aiSettingsPath(configDir))
+		return errors.New("AI needs an Anthropic API key: export ANTHROPIC_API_KEY, run dci ai interactively to save one, or add {\"api_key\": \"…\"} to " + aiSettingsPath(configDir))
 	}
-	verbose := term.IsTerminal(int(os.Stderr.Fd()))
+	verbose, verdictShown := aiOneShotVerbosity(term.IsTerminal(int(os.Stderr.Fd())), quiet, forceVerbose)
 	stats := os.Getenv("DCI_AI_STATS") == "1"
 	session := newLocalAISession(configDir, key, resolveAIModel(settings), aiSessionCatalog())
 	defer session.Close()
@@ -110,7 +129,7 @@ func runAIOneShot(configDir, question string, approveDestructive bool) error {
 		case event.ApprovalRequest != nil:
 			closeThinking()
 			answer := approveDestructive
-			if verbose {
+			if verdictShown {
 				verdict := "declined (pass --yes to approve)"
 				if answer {
 					verdict = "approved via --yes"
