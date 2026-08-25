@@ -62,10 +62,10 @@ dci commands --json
 
 ## AI Assistant
 
-`dci ai` opens an interactive session where you can ask questions in plain English — the AI runs `dci` commands for you and explains the results — or run any command yourself with a `/` prefix:
+Running `dci` with no arguments at a terminal opens an interactive session where you can ask questions in plain English — the AI runs `dci` commands for you and explains the results — or run any command yourself with a `/` prefix (`dci ai` opens the same session):
 
 ```bash
-dci ai
+dci
 ```
 
 ```text
@@ -75,6 +75,8 @@ dci ai
 ```
 
 Inside the session: type `/` to browse every command with completion, `↑/↓` for history, `Esc` to cancel a running command or answer, `/customer` to switch customer context, `/model` to pick the AI model, and `/help` for everything else. Commands you run yourself stay in the conversation, so follow-up questions can refer to what's on screen. Destructive commands the AI proposes always stop for your y/N confirmation first.
+
+The session only ever opens for a human at a terminal: in pipes, scripts, and CI, bare `dci` prints the help screen exactly as before. Prefer the help screen at your terminal too? Run `/default help` once inside the session (or set `"default": "help"` in `ai_settings.json`); `DCI_NO_TUI=1` disables all interactive behavior wholesale.
 
 One-shot mode answers a single question and exits — handy in scripts:
 

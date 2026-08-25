@@ -166,7 +166,13 @@ type aiDispatchApproval struct {
 	summary string
 }
 
-// runAISession is the entry point behind `dci ai` (ai_command.go).
+// launchAISession is what bare `dci` calls through the root RunE
+// (AI-DEFAULT-SPEC §3) — a var so tests can verify the routing without a
+// terminal.
+var launchAISession = runAISession
+
+// runAISession is the entry point behind `dci ai` (ai_command.go) and, via
+// launchAISession, behind bare `dci` at a human terminal.
 func runAISession(configDir string) error {
 	// Mouse capture defaults OFF so the terminal's own selection/copy works out
 	// of the box (dogfood: capture broke copy/paste even with modifier keys in
@@ -1326,6 +1332,8 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		}
 		m.append(aiEchoStyle.Render("mouse capture off — select and copy text normally; /mouse to re-enable wheel scrolling"))
 		return m, tea.DisableMouse
+	case "default":
+		return m.runDefaultVerb(route.args)
 	case "bell":
 		m.bellOn = !m.bellOn
 		m.persistToggle(func(settings *aiSettings) { settings.Bell = boolPointer(m.bellOn) })
@@ -1349,9 +1357,40 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// runDefaultVerb shows or sets what bare `dci` opens at a human terminal
+// (AI-DEFAULT-SPEC §6): "session" (the default) or "help" (the persisted
+// opt-out).
+func (m aiModel) runDefaultVerb(args []string) (tea.Model, tea.Cmd) {
+	switch len(args) {
+	case 0:
+		current := "session"
+		if !aiDefaultEnabled(m.configDir) {
+			current = "help"
+		}
+		m.append(aiEchoStyle.Render("bare dci opens: " + current + " — /default session|help to change"))
+		return m, nil
+	case 1:
+		choice := strings.ToLower(strings.TrimSpace(args[0]))
+		if choice != "session" && choice != "help" {
+			m.append(aiErrorStyle.Render("usage: /default [session|help]"))
+			return m, nil
+		}
+		m.persistToggle(func(settings *aiSettings) { settings.Default = choice })
+		if choice == "help" {
+			m.append(tuiSuccessStyle.Render("Saved — bare dci shows the help screen; dci ai still opens this session."))
+		} else {
+			m.append(tuiSuccessStyle.Render("Saved — bare dci opens this session."))
+		}
+		return m, nil
+	default:
+		m.append(aiErrorStyle.Render("usage: /default [session|help]"))
+		return m, nil
+	}
+}
+
 // persistToggle saves one settings mutation (F2/F5: the /bell and /mouse
-// choices). The in-session toggle stands even when the save fails — the
-// error is reported, not fatal.
+// choices; the /default opt-out). The in-session toggle stands even when the
+// save fails — the error is reported, not fatal.
 func (m *aiModel) persistToggle(mutate func(*aiSettings)) {
 	settings := loadAISettings(m.configDir)
 	mutate(&settings)

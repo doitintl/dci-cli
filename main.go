@@ -242,10 +242,10 @@ func printFirstRunOnboarding(configured bool) {
 	fmt.Fprintln(os.Stderr, "Cloud Intelligence™ CLI is ready.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Next steps:")
+	fmt.Fprintln(os.Stderr, "  dci        (open the AI session — ask questions in plain English)")
 	fmt.Fprintln(os.Stderr, "  dci status")
 	fmt.Fprintln(os.Stderr, "  dci list-budgets")
-	fmt.Fprintln(os.Stderr, "  dci list-reports --output table")
-	fmt.Fprintln(os.Stderr, "  dci ai   (ask questions in plain English)")
+	fmt.Fprintln(os.Stderr, "  dci --help (list every command)")
 	fmt.Fprintln(os.Stderr, "")
 }
 
@@ -279,7 +279,7 @@ func run() (exitCode int) {
 			fmt.Fprintf(os.Stderr, "warning: ignoring unrecognized DCI_AGENT_MODE=%q (use 1 or 0)\n", v)
 		}
 	}
-	dec := resolveAgentMode(os.Getenv("DCI_AGENT_MODE"), os.Args, agentEnvDetected, stdoutIsTTY())
+	dec := resolveAgentMode(os.Getenv("DCI_AGENT_MODE"), os.Args, agentEnvDetected, ciEnvDetected(), stdoutIsTTY())
 	agentMode = dec.enabled
 	agentModeReason = dec.reason
 	agentUAMode = dec.mode
@@ -364,7 +364,7 @@ func run() (exitCode int) {
 	hideGlobalFlags()
 	customizeDCIUsage()
 	applyCustomerContext(configDir)
-	lockToDCI()
+	lockToDCI(configDir)
 	setupCompletion()
 	// The API subcommands do not exist yet — restish hydrates them inside
 	// cli.Run — so the arity relaxation for space-split resolvable names must
@@ -504,7 +504,11 @@ func terseHelpText(long string) (string, bool) {
 
 func normalizeArgs(args []string) []string {
 	if len(args) <= 1 {
-		return []string{args[0], "--help"}
+		// Bare `dci` reaches the root RunE untouched, which routes on the TUI
+		// gate: a human terminal opens the AI session, everything else prints
+		// help (AI-DEFAULT-SPEC §3). The old rewrite to --help would bypass
+		// that routing inside cobra before the RunE could run.
+		return args
 	}
 
 	cmd := firstCommandArg(args)
@@ -711,7 +715,7 @@ type agentModeResult struct {
 //  4. non-TTY stdout (soft signal: pipe/redirect)
 //
 // Inputs are passed explicitly so the logic stays easy to test.
-func resolveAgentMode(dciAgentMode string, args []string, agentEnv string, stdoutTTY bool) agentModeResult {
+func resolveAgentMode(dciAgentMode string, args []string, agentEnv string, ciEnv, stdoutTTY bool) agentModeResult {
 	if v := strings.TrimSpace(dciAgentMode); v != "" {
 		// Only recognized boolean tokens are decisive. An unrecognized value
 		// (e.g. DCI_AGENT_MODE=2) is ignored so a typo can't silently force a
@@ -732,12 +736,27 @@ func resolveAgentMode(dciAgentMode string, args []string, agentEnv string, stdou
 	if agentEnv != "" {
 		return agentModeResult{enabled: true, mode: uaModeAgent, reason: "agent env var " + agentEnv}
 	}
+	if ciEnv {
+		// CI systems sometimes allocate a PTY, which would otherwise open the
+		// bare-`dci` AI session and block on input (AI-DEFAULT-SPEC §7). Same
+		// behavior and UA classification as the non-TTY soft signal.
+		return agentModeResult{enabled: true, mode: uaModeNonInteractive, reason: "CI env var"}
+	}
 	if !stdoutTTY {
 		// Non-TTY is a soft signal (pipe/redirect/CI), not a confirmed agent, so
 		// it gets its own UA classification even though behavior matches agent mode.
 		return agentModeResult{enabled: true, mode: uaModeNonInteractive, reason: "non-TTY stdout"}
 	}
 	return agentModeResult{enabled: false, mode: uaModeInteractive, reason: "interactive terminal"}
+}
+
+// ciEnvDetected reports whether a CI environment declared itself via the
+// near-universal CI variable (GitHub Actions, GitLab, CircleCI, Travis, …
+// all set CI=true). Only boolean-ish values count, so CI=<vendor name>
+// oddities don't force the mode.
+func ciEnvDetected() bool {
+	on, ok := parseBoolish(os.Getenv("CI"))
+	return ok && on
 }
 
 // detectedAgentEnv returns the name of the first agent env var found, or "".
@@ -937,10 +956,14 @@ Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
 `
 
 const dciLongDescription = "Command-line interface for the Cloud Intelligence™ API.\n\n" +
+	"Run `dci` with no arguments at a terminal to open the interactive AI session\n" +
+	"(ask questions in plain English; /default help restores this screen instead).\n" +
+	"In pipes, scripts, and CI, bare `dci` prints this help.\n\n" +
 	"Documentation: https://help.doit.com/docs/cli or run `dci docs` for every entry point.\n" +
 	"AI agents: `dci skill <agent>` installs usage guidance; `dci commands --json` prints the machine-readable catalog."
 
 var rootExamples = []string{
+	"  dci        (interactive AI session)",
 	"  dci status",
 	"  dci list-budgets",
 	"  dci list-reports --output table",
@@ -1000,10 +1023,20 @@ func brandRootCommand() {
 	cli.Root.SetUsageTemplate(dciUsageTemplate)
 }
 
-func lockToDCI() {
+func lockToDCI(configDir string) {
 	cli.Root.Args = cobra.NoArgs
 	cli.Root.Run = nil
+	// Bare `dci` opens the AI session for a human at a terminal; every other
+	// caller — pipes, CI, agents, TERM=dumb, DCI_NO_TUI=1 — keeps help,
+	// byte-identical to before, guarded by the same tuiActive() gate the rest
+	// of the TUI uses (AI-DEFAULT-SPEC §2–3). --help never reaches this RunE:
+	// cobra resolves the help flag first. The persisted opt-out ({"default":
+	// "help"} in ai_settings.json, set by /default) restores help for humans
+	// whose muscle memory wants the usage screen.
 	cli.Root.RunE = func(cmd *cobra.Command, args []string) error {
+		if tuiActive() && aiDefaultEnabled(configDir) {
+			return launchAISession(configDir)
+		}
 		return cmd.Help()
 	}
 	cli.Root.ValidArgsFunction = nil
