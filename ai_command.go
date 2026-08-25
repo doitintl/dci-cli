@@ -49,7 +49,10 @@ func registerAICommand(configDir string) {
 		},
 	}
 	command.Flags().Bool("yes", false, "Approve destructive commands the AI proposes (one-shot mode)")
-	command.Flags().BoolP("quiet", "q", false, "One-shot: only the answer — no thinking or tool narration on stderr")
+	// No -q shorthand: restish's global --rsh-query owns it, and pflag only
+	// detects the redefinition when the command parses at runtime (broke
+	// every dci ai invocation in v2.6.1).
+	command.Flags().Bool("quiet", false, "One-shot: only the answer — no thinking or tool narration on stderr")
 	command.Flags().Bool("verbose", false, "One-shot: stream the investigation narration even when stderr is piped")
 	cli.Root.AddCommand(command)
 }

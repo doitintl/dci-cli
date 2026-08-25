@@ -44,7 +44,7 @@ Analytical turns run 1–2 minutes (opus thinking dominates); users tab away and
 
 **Change:** two flags on the `ai` command, honored only in one-shot mode:
 
-- `--quiet` / `-q`: suppress the investigation narration (thinking deltas, tool start/result lines, context-switch notes) even on a TTY. Errors, the destructive-approval verdict line, and `DCI_AI_STATS` output still print — those are contract, not narration.
+- `--quiet` (long form only — restish's global `--rsh-query` owns the `-q` shorthand, and pflag panics on the redefinition at parse time, which broke `dci ai` in v2.6.1): suppress the investigation narration (thinking deltas, tool start/result lines, context-switch notes) even on a TTY. Errors, the destructive-approval verdict line, and `DCI_AI_STATS` output still print — those are contract, not narration.
 - `--verbose`: force narration on even when stderr is piped (useful when capturing a full investigation transcript to a file).
 
 Both flags set, or either combined with interactive mode → usage error. The default stays the current TTY auto-detection, so nothing changes for existing callers.

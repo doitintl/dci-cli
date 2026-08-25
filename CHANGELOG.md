@@ -26,6 +26,14 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.6.2 — August 25, 2026
+
+### Fixed
+
+- `dci ai` failed to start in v2.6.1 with a flag error ("unable to redefine
+  'q' shorthand"). The one-shot quiet mode is spelled `--quiet` — the `-q`
+  shorthand belongs to another flag and is not used.
+
 ## v2.6.1 — August 25, 2026
 
 ### New
@@ -34,7 +42,7 @@ the CLI guide.
   finishes, so you can switch away during a long investigation and still
   catch the result. `/bell` turns it off and remembers your choice.
 - One-shot mode can control how much of the investigation you see:
-  `dci ai -q "question"` prints just the answer, and `--verbose` keeps the
+  `dci ai --quiet "question"` prints just the answer, and `--verbose` keeps the
   full narration even when output is piped to a file.
 
 ### Improved
