@@ -1,6 +1,6 @@
 # Design spec: migrating the TUI layer to Bubble Tea v2
 
-Status: **draft for maintainer review** — evaluation and migration plan, no code changed.
+Status: **implemented** — the migration landed in the same PR as this spec; §13 records where the implementation deviates from the plan below.
 Audited at commit `f1eaf2d`; upstream versions checked against the Go module proxy and charm.land docs on 2026-08-25.
 
 Scope: moving the Charm stack from v1 (`github.com/charmbracelet/*`) to v2 (`charm.land/*/v2`) across every TUI chapter — `tui.go`, `tui_picker.go`, `tui_querybuilder.go`, `tui_viewer.go`, `ai_tui.go`, `charts.go`, `self_update.go` — plus their tests. Everything outside the TUI layer (restish, table rendering, agent mode, output contracts) is untouched by construction.
@@ -269,3 +269,18 @@ huh v2 forms *could* move first (they only exchange strings with the rest of the
 1. Timing: land now, or after the next feature release so the patch release is migration-only? (Spec assumes migration-only.)
 2. Is the ntcharts fallback posture in §9.4 acceptable, or is "stacked chart blocks the migration" the bar?
 3. Any known-exotic terminal among users (tmux+screen-256color, PuTTY?) to add to the dogfood list?
+
+## 13. Implementation notes (as landed)
+
+Where the implementation deviates from or resolves the plan above:
+
+- **Pastes are their own message type in v2** (`tea.PasteMsg`), no longer key messages — a gap in §6.1's map. Without handling, pasting an API key into the guided setup or text into the picker filter would silently do nothing. `aiModel.handlePaste` routes pastes to whichever text sink owns the keyboard (key entry, picker filter, or the textarea, which handles `PasteMsg` itself); answer-only states ignore them.
+- **`compat.AdaptiveColor` was not used** (§6.3 suggested it): the compat package probes the terminal at package *init* — an OSC round trip on every `dci` invocation, keyed on stdout rather than stderr where charts render. `charts.go` instead defines a local `chartAdaptiveColor` resolving lazily through a `sync.OnceValue` around `lipgloss.HasDarkBackground(os.Stdin, os.Stderr)`, so building a palette never queries the terminal and non-chart invocations never pay for detection.
+- **Styled stderr output outside programs goes through a `colorprofile.Writer`** (`tuiStyledStderr` in tui.go): v1's `Style.Render` downsampled and stripped implicitly; in v2 that responsibility is the writer's. Routed sites: the login notice, the destructive-confirm box, the update notice, and the stacked chart. This restores NO_COLOR/non-TTY stripping and degrades the truecolor chart palette on 16/256-color terminals.
+- **The §6.1 key-name audit came back clean**: only space changed (`"space"` vs `" "`), and no dci binding matched `" "` via `String()` — every existing `msg.String()` comparison stands, with `tea.KeyEsc` → `tea.KeyEscape` as the one constant rename in tests.
+- **textarea's virtual cursor is on by default in v2** — the planned `SetVirtualCursor(true)` call (§6.2) is unnecessary; the custom styles moved into `textarea.Styles`/`StyleState` via `SetStyles` as planned, keeping the blinking reverse-video cursor.
+- **The §9.4 ntcharts risk did not bite**: v2.2.0 compiles and passes the chart tests against upstream `charm.land/bubbletea/v2` v2.0.9. The partial-block background-compensation workaround in `renderStackedChart` is kept as-is.
+- **huh v2 needed no theme wiring** (§7.1's contingency): forms detect the background themselves via `tea.BackgroundColorMsg`; confirm on light terminals during dogfooding.
+- **Module graph after `go mod tidy`**: bubbletea, bubbles, huh, and ntcharts v1 are gone entirely; lipgloss v1 and termenv remain only as restish/glamour indirects, per §5.
+- **Binary size** (linux/amd64, `-trimpath` dev build): 68.5 MB → 70.4 MB, **+1.9 MB (+2.7%)** — within §5's expectation.
+- The §11 dogfood checklist (real terminals, light and dark, Windows Terminal) remains to be run before tagging a release.
