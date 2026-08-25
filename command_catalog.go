@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/rest-sh/restish/openapi"
@@ -18,6 +19,14 @@ import (
 )
 
 const catalogSchemaVersion = "1"
+
+// specHTTPClient fetches the OpenAPI spec for the command catalog and the
+// help-context enrichment (help_context.go). Both call sites can now run
+// from a --help invocation that used to be purely local and instant, so —
+// like every other network client in this codebase (name_resolution.go,
+// open_command.go, update.go) — this one carries an explicit timeout rather
+// than blocking on http.DefaultClient's unbounded default.
+var specHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 type commandCatalog struct {
 	Version    string                    `json:"version"`
@@ -144,7 +153,7 @@ func fetchOpenAPISpec(command *cobra.Command, base string) (*http.Response, erro
 	if err != nil {
 		return nil, err
 	}
-	response, err := http.DefaultClient.Do(request)
+	response, err := specHTTPClient.Do(request)
 	if err != nil {
 		return nil, err
 	}

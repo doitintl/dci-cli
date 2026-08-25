@@ -177,9 +177,9 @@ func TestFetchOpenAPISpecToleratesNilCommandContext(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	previousTransport := http.DefaultTransport
-	http.DefaultTransport = server.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+	previousClient := specHTTPClient
+	specHTTPClient = server.Client()
+	t.Cleanup(func() { specHTTPClient = previousClient })
 
 	// A bare *cobra.Command, as loadHelpContext(&cobra.Command{}) or any
 	// caller invoked before cobra's Execute() dispatch would pass — ctx is
@@ -189,4 +189,17 @@ func TestFetchOpenAPISpecToleratesNilCommandContext(t *testing.T) {
 		t.Fatalf("fetchOpenAPISpec with nil command context: %v", err)
 	}
 	response.Body.Close()
+}
+
+// TestFetchOpenAPISpecHasATimeout guards against a regression a Claude Code
+// review caught on the PR: this call now runs from --help (main.go's
+// setupCompletion HelpFunc / help_context.go), a path that used to be purely
+// local and instant. http.DefaultClient has no timeout, so an unreachable
+// API host would hang --help on the OS-level DNS/TCP timeout (30-120+s)
+// instead of rendering help immediately, unlike every other network client
+// in this codebase (name_resolution.go, open_command.go, update.go).
+func TestFetchOpenAPISpecHasATimeout(t *testing.T) {
+	if specHTTPClient.Timeout <= 0 {
+		t.Fatalf("specHTTPClient has no timeout (%v); --help must not be able to hang on an unreachable API host", specHTTPClient.Timeout)
+	}
 }
