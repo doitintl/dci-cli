@@ -240,7 +240,7 @@ func newAIModel(configDir string) aiModel {
 		// session; / commands work either way.
 		m.keyEntry = true
 		m.append(renderAIKeyOnboarding() + "\n" +
-			aiEchoStyle.Render("(/ commands work without a key — Esc skips this)"))
+			aiEchoStyle.Render("(/ commands work without a key — type one, or press Esc to skip)"))
 	}
 	m.layout()
 	return m
@@ -1159,6 +1159,17 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if runes := []rune(m.keyBuf); len(runes) > 0 {
 			m.keyBuf = string(runes[:len(runes)-1])
 		}
+		return m, nil
+	}
+	if msg.Type == tea.KeyRunes && m.keyBuf == "" && m.pendingQuestion == "" &&
+		strings.HasPrefix(string(msg.Runes), "/") {
+		// The startup hint promises / commands work without a key: a slash on
+		// an empty buffer is a command being typed, not a key — drop to the
+		// normal input with the popup open. A slash into a non-empty buffer
+		// (mid-key paste) or after a question queued the setup stays key input.
+		m.keyEntry = false
+		m.input.SetValue(string(msg.Runes))
+		m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionLimit))
 		return m, nil
 	}
 	if msg.Type == tea.KeyRunes {

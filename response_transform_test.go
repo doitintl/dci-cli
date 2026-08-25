@@ -1193,3 +1193,50 @@ func TestTransformRollupNumericKeyIsNotDoubleCounted(t *testing.T) {
 		t.Fatalf("schema = %v, want cost exactly once", schema)
 	}
 }
+
+func TestTransformCurrencyDefaultsUSDForMoneyMetricsOnly(t *testing.T) {
+	resetTransformConfig(t)
+	oldCurrency := requestReportCurrency
+	requestReportCurrency = ""
+	t.Cleanup(func() {
+		requestReportCurrency = oldCurrency
+		viper.Set("report-currency", "")
+		viper.Set("money-columns", "")
+	})
+
+	// Cost metric, no currency declared in the request: the API's documented
+	// default (USD) is stamped so cost columns are never unlabeled (F4).
+	root := transformSuccessBody(reportBody(
+		[]interface{}{"svc", "2026", "07", 1.5, float64(1786060800000)},
+	)).(map[string]interface{})
+	if got := root["result"].(map[string]interface{})["currency"]; got != "USD" {
+		t.Fatalf("cost result currency = %v, want the USD default", got)
+	}
+
+	// Usage-only metrics carry no money columns: no currency stamp — a
+	// currency on unit metrics would mislabel them.
+	viper.Set("report-currency", "")
+	usage := map[string]interface{}{"result": map[string]interface{}{
+		"rows": []interface{}{[]interface{}{"svc", 12.5}},
+		"schema": []interface{}{
+			map[string]interface{}{"name": "service_description", "type": "string"},
+			map[string]interface{}{"name": "usage", "type": "float"},
+		},
+	}}
+	root = transformSuccessBody(usage).(map[string]interface{})
+	if got, present := root["result"].(map[string]interface{})["currency"]; present {
+		t.Fatalf("usage-only result stamped with currency %v", got)
+	}
+	if viper.GetString("report-currency") != "" {
+		t.Fatal("usage-only result set a report currency")
+	}
+
+	// An explicitly declared request currency still wins.
+	requestReportCurrency = "EUR"
+	root = transformSuccessBody(reportBody(
+		[]interface{}{"svc", "2026", "07", 1.5, float64(1786060800000)},
+	)).(map[string]interface{})
+	if got := root["result"].(map[string]interface{})["currency"]; got != "EUR" {
+		t.Fatalf("declared currency = %v, want EUR", got)
+	}
+}

@@ -185,8 +185,10 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 	}
 
 	// When the pivoted metric is monetary and the currency is known, the
-	// period and total cells are money for the renderer.
-	if requestCurrencyContext() != "" && allMetricsMoney(metricIdx, schema) {
+	// period and total cells are money for the renderer. report-currency is
+	// the transform's resolved value (request config, or the USD default when
+	// the result has money columns) — set before the pivot runs.
+	if viper.GetString("report-currency") != "" && allMetricsMoney(metricIdx, schema) {
 		viper.Set("money-columns", strings.Join(append(append([]string{}, periods...), "total"), ","))
 	}
 

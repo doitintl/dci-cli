@@ -230,10 +230,11 @@ func TestValidateRequestBodyCanBeBypassed(t *testing.T) {
 
 func TestExtractRequestCurrency(t *testing.T) {
 	validFields := map[string]bool{"config": true}
-	// No currency in the request → the API's documented default, so the
-	// result's currency context is always resolved (AI-POLISH-SPEC F4).
-	if currency := extractRequestCurrency(validFields, nil, nil); currency != "USD" {
-		t.Errorf("unspecified currency = %q, want the USD API default", currency)
+	// Unspecified stays empty here: the USD API default is applied in the
+	// response transform, where money-typed columns are known — a usage-only
+	// result must not inherit a currency (AI-POLISH-SPEC F4).
+	if currency := extractRequestCurrency(validFields, nil, nil); currency != "" {
+		t.Errorf("unspecified currency = %q, want empty", currency)
 	}
 	if currency := extractRequestCurrency(validFields, []string{`config.currency: EUR`}, nil); currency != "EUR" {
 		t.Errorf("shorthand currency = %q, want EUR", currency)
