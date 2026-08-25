@@ -745,8 +745,8 @@ func TestAITranscriptCapAndExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "› /status\nplain\n" {
-		t.Fatalf("export = %q, want ANSI stripped", data)
+	if string(data) != "› /status\n\nplain\n" {
+		t.Fatalf("export = %q, want ANSI stripped and blank-line separated", data)
 	}
 	if _, err := aiExportTranscript(nil, []string{"a", "b"}, time.Now()); err == nil {
 		t.Fatal("two-arg export accepted")
