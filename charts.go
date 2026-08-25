@@ -14,11 +14,12 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
-	"github.com/NimbleMarkets/ntcharts/barchart"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"github.com/NimbleMarkets/ntcharts/v2/barchart"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/guptarohit/asciigraph"
-	"github.com/muesli/termenv"
 	"github.com/spf13/viper"
 )
 
@@ -96,7 +97,10 @@ func maybeRenderChart(tableWidth int) {
 		return
 	}
 	if viper.GetString("chart-mode") == "stacked" && stackedChartRenderable(series) {
-		fmt.Fprintln(os.Stderr, "\n"+renderStackedChart(series, chartRenderWidth(tableWidth)))
+		// The styled writer owns color degradation: lipgloss v2 styles emit
+		// the palette's truecolor as-is, and 256/16-color terminals need the
+		// writer to downsample it (tui.go).
+		fmt.Fprintln(tuiStyledStderr(), "\n"+renderStackedChart(series, chartRenderWidth(tableWidth)))
 		return
 	}
 	// asciigraph prepends a y-axis value margin, so the graph area is
@@ -140,10 +144,34 @@ func stackedChartRenderable(series *chartSeriesData) bool {
 	return len(series.groups) >= 2 && viper.GetBool("table-color") && chartColorCapable()
 }
 
-// chartColorCapable reports whether lipgloss will emit color at all. A var so
-// tests can force it: under go test the detected profile is always Ascii.
+// chartColorCapable reports whether the chart's stderr stream renders color
+// at all. A var so tests can force it: under go test the detected profile is
+// always NoTTY.
 var chartColorCapable = func() bool {
-	return lipgloss.ColorProfile() != termenv.Ascii
+	return colorprofile.Detect(os.Stderr, os.Environ()) >= colorprofile.ANSI
+}
+
+// chartDarkBackground resolves the terminal background once, lazily, against
+// stderr — where charts render. lipgloss v2 made background detection
+// explicit (v1 probed implicitly on first use); on any failure (piped stderr,
+// exotic terminal) it defaults to dark, matching upstream.
+var chartDarkBackground = sync.OnceValue(func() bool {
+	return lipgloss.HasDarkBackground(os.Stdin, os.Stderr)
+})
+
+// chartAdaptiveColor is a theme color with light- and dark-background
+// variants — lipgloss v1's AdaptiveColor, rebuilt on v2's explicit detection.
+// The variant is picked lazily at render time, so building a palette never
+// queries the terminal.
+type chartAdaptiveColor struct {
+	light, dark string
+}
+
+func (c chartAdaptiveColor) RGBA() (r, g, b, a uint32) {
+	if chartDarkBackground() {
+		return lipgloss.Color(c.dark).RGBA()
+	}
+	return lipgloss.Color(c.light).RGBA()
 }
 
 // chartThemeColors is a report color theme's series palette: parallel arrays
@@ -180,11 +208,11 @@ var presetChartThemes = map[string]chartThemeColors{
 // chartThemePalette resolves the stacked segment styles, largest group first;
 // the final gray entry is reserved for the folded "other" segment. Colors
 // come from the user's active report theme (fetched from the API when it is
-// a custom theme), falling back to the DoiT preset. AdaptiveColor picks the
-// theme's light or dark variant by terminal background — the same split the
-// console makes — and terminals without truecolor degrade to the nearest
-// supported color. A custom theme shorter than the segment count is padded
-// from the DoiT preset.
+// a custom theme), falling back to the DoiT preset. chartAdaptiveColor picks
+// the theme's light or dark variant by terminal background — the same split
+// the console makes — and the styled stderr writer degrades truecolor to the
+// nearest supported color. A custom theme shorter than the segment count is
+// padded from the DoiT preset.
 func chartThemePalette() []lipgloss.Style {
 	theme := activeChartTheme()
 	doit := presetChartThemes["doit"]
@@ -195,7 +223,7 @@ func chartThemePalette() []lipgloss.Style {
 		if i < len(theme.light) && i < len(theme.dark) {
 			light, dark = theme.light[i], theme.dark[i]
 		}
-		styles = append(styles, lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: light, Dark: dark}))
+		styles = append(styles, lipgloss.NewStyle().Foreground(chartAdaptiveColor{light: light, dark: dark}))
 	}
 	return append(styles, lipgloss.NewStyle().Foreground(lipgloss.Color("8"))) // gray — "other"
 }

@@ -10,6 +10,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"os"
@@ -17,8 +18,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"golang.org/x/term"
 )
 
@@ -47,6 +49,16 @@ var (
 			BorderForeground(lipgloss.Color("3")).
 			Padding(0, 1)
 )
+
+// tuiStyledStderr wraps stderr for styled text rendered outside a Bubble Tea
+// program (login notice, destructive confirm box, update notice, charts).
+// lipgloss v2 styles no longer degrade colors in Render — the writer owns
+// downsampling and NO_COLOR/non-TTY stripping, the way the in-program
+// renderer does for the full-screen views. Built per call so tests that swap
+// os.Stderr see the swap.
+func tuiStyledStderr() io.Writer {
+	return colorprofile.NewWriter(os.Stderr, os.Environ())
+}
 
 // tuiWidth is the render width for prompts: the terminal width, capped so
 // wide terminals don't stretch labels, with a safe floor when detection fails
@@ -144,7 +156,7 @@ func tuiConfirmDestructive(commandName string) bool {
 		}
 	}
 	lines = append(lines, "This action cannot be undone.")
-	fmt.Fprintln(os.Stderr, tuiDangerBorder.Render(strings.Join(lines, "\n")))
+	fmt.Fprintln(tuiStyledStderr(), tuiDangerBorder.Render(strings.Join(lines, "\n")))
 
 	confirmed := false // default answer is Cancel
 	field := huh.NewConfirm().
@@ -191,7 +203,7 @@ func announceLoginSuccess(configDir string, doerConfigured bool) {
 		}
 		lines = append(lines, "  Customer context: "+context+note)
 	}
-	fmt.Fprintln(os.Stderr, strings.Join(lines, "\n"))
+	fmt.Fprintln(tuiStyledStderr(), strings.Join(lines, "\n"))
 }
 
 // styleUpdateNotice boxes the new-version notice for interactive terminals

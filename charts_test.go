@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/spf13/viper"
 )
 
@@ -277,7 +277,9 @@ func TestChartAlignsWithTableWidth(t *testing.T) {
 	}
 	out := renderStackedChart(series, 60)
 	first := strings.Split(out, "\n")[0]
-	if got := len([]rune(first)); got != 60 {
+	// Cell width, not rune count: lipgloss v2 styles emit ANSI even under go
+	// test (degradation moved to the writer), so the raw string carries codes.
+	if got := lipgloss.Width(first); got != 60 {
 		t.Fatalf("stacked chart canvas width = %d, want 60 (aligned with the table)", got)
 	}
 }
@@ -314,12 +316,12 @@ func TestActiveChartThemeResolution(t *testing.T) {
 	if len(palette) != chartMaxGroups+1 {
 		t.Fatalf("palette size = %d, want %d", len(palette), chartMaxGroups+1)
 	}
-	first, ok := palette[0].GetForeground().(lipgloss.AdaptiveColor)
-	if !ok || first.Dark != "#AAAAAA" {
+	first, ok := palette[0].GetForeground().(chartAdaptiveColor)
+	if !ok || first.dark != "#AAAAAA" {
 		t.Fatalf("palette[0] = %#v, want the custom theme's first color", palette[0].GetForeground())
 	}
-	third, ok := palette[2].GetForeground().(lipgloss.AdaptiveColor)
-	if !ok || third.Dark != presetChartThemes["doit"].dark[2] {
+	third, ok := palette[2].GetForeground().(chartAdaptiveColor)
+	if !ok || third.dark != presetChartThemes["doit"].dark[2] {
 		t.Fatalf("palette[2] = %#v, want DoiT padding", palette[2].GetForeground())
 	}
 }

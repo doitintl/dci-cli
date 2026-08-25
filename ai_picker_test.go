@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/rest-sh/restish/cli"
 )
 
@@ -157,7 +157,7 @@ func TestAIPickerFlowInSession(t *testing.T) {
 	if m.picker == nil || m.running != nil {
 		t.Fatalf("ambiguous dispatch did not open the picker (picker=%v running=%v)", m.picker != nil, m.running != nil)
 	}
-	if !strings.Contains(m.View(), "Select a report") {
+	if !strings.Contains(m.View().Content, "Select a report") {
 		t.Fatal("picker not rendered")
 	}
 	if !strings.Contains(m.statusLine(), "enter run") {
@@ -189,7 +189,7 @@ func TestAIPickerEscCancels(t *testing.T) {
 	if m.picker == nil {
 		t.Fatal("zero-arg dispatch did not open the picker")
 	}
-	m, _ = aiPress(m, tea.KeyEsc)
+	m, _ = aiPress(m, tea.KeyEscape)
 	if m.picker != nil || m.running != nil {
 		t.Fatal("esc did not cancel the picker")
 	}
@@ -261,7 +261,7 @@ func TestAIDispatchDestructiveApprovalFlow(t *testing.T) {
 	if m.dispatchApproval == nil || m.input.Value() != "" {
 		t.Fatal("stray key answered or typed during dispatch approval")
 	}
-	updated2, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	updated2, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	m = updated2.(aiModel)
 	if m.dispatchApproval != nil || m.running == nil || cmd == nil {
 		t.Fatal("y did not re-dispatch")
@@ -277,7 +277,7 @@ func TestAIDispatchDestructiveDeclined(t *testing.T) {
 	m := aiTestModel(t)
 	updated, _ := m.Update(aiCmdDoneMsg{argv: []string{"delete-report", "x"}, output: "Error: needs --yes", exitCode: aiDestructiveExitCode})
 	m = updated.(aiModel)
-	m, _ = aiPress(m, tea.KeyEsc)
+	m, _ = aiPress(m, tea.KeyEscape)
 	if m.dispatchApproval != nil || m.running != nil {
 		t.Fatal("esc did not decline")
 	}
