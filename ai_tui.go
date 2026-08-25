@@ -446,8 +446,11 @@ func (m *aiModel) layout() {
 	}
 	chrome := 2 /*rules around the input*/ + middle + 1 /*status*/
 	height := m.height - chrome
-	if height < 3 {
-		height = 3
+	if height < 1 {
+		// A pane too short for the chrome itself: keep the viewport legal (a
+		// zero height renders unbounded) and let aiFitFrame drop the overflow
+		// from the top, so the frame still ends exactly at the last row.
+		height = 1
 	}
 	m.view.Height = height
 	m.refreshTranscript()
@@ -666,6 +669,22 @@ func aiActivitySnippet(stream string) string {
 	return ""
 }
 
+// aiTrimTo shortens plain text to fit `width` cells, marking the cut. Under
+// four cells there is no room for a legible fragment, so nothing is kept.
+func aiTrimTo(text string, width int) string {
+	if lipgloss.Width(text) <= width {
+		return text
+	}
+	if width < 4 {
+		return ""
+	}
+	runes := []rune(text)
+	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > width {
+		runes = runes[:len(runes)-1]
+	}
+	return strings.TrimRight(string(runes), " ") + "…"
+}
+
 // inFlightLabel names what the agent is running right now: the single call's
 // label, or a count when a concurrent batch has several in flight.
 func (m *aiModel) inFlightLabel() string {
@@ -702,6 +721,17 @@ func aiDisplayContext(context string) string {
 
 func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+
+	// ctrl+l redraws, from every state (the repair gesture it is everywhere
+	// else). The renderer only rewrites lines whose content changed, so a
+	// frame the terminal disturbed on its own — scrolling the alt screen out
+	// from under it with mouse capture off, another process writing to the
+	// tty — stays smeared until every cell is repainted. Nothing else in the
+	// session forces that, and the banner (static by definition) is exactly
+	// what stays broken.
+	if key == "ctrl+l" {
+		return m, tea.ClearScreen
+	}
 
 	// The guided key setup owns the keyboard while active (P3).
 	if m.keyEntry {
@@ -1563,8 +1593,9 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 		aiEchoStyle.Render("Saved commands: define your own in "+aiUserCommandsFileName+" — {\"top5\": {\"command\": \"list-reports --limit 5\"}, \"review\": {\"prompt\": \"Review last month's spend\"}}"),
 		aiEchoStyle.Render("Privacy: AI questions and dci command results are sent to Anthropic's API under your key."),
 		aiEchoStyle.Render("Copying text: select and copy normally (mouse capture is off by default); /mouse enables wheel scrolling instead; /export saves the whole transcript."),
+		aiEchoStyle.Render("Scrolling: PgUp/PgDn move the transcript. With mouse capture off the wheel scrolls the terminal itself, which slides this frame out of view and can leave it smeared — ctrl+l redraws it."),
 		"",
-		"  tab completes · ↑/↓ history or popup · PgUp/PgDn scroll (wheel via /mouse) · esc clears or cancels")
+		"  tab completes · ↑/↓ history or popup · PgUp/PgDn scroll (wheel via /mouse) · ctrl+l redraw · esc clears or cancels")
 	return strings.Join(lines, "\n")
 }
 
@@ -1598,7 +1629,48 @@ func (m aiModel) View() string {
 	b.WriteString(aiRule(m.width, ""))
 	b.WriteString("\n")
 	b.WriteString(m.statusLine())
-	return b.String()
+	return aiFitFrame(b.String(), m.width, m.height)
+}
+
+// aiFitFrame pins the frame to the terminal's cell grid exactly: every line
+// clamped to the width, exactly `height` lines.
+//
+// Two reasons, both about the alternate screen. First, only the viewport
+// bounds itself — the chrome around it does not, so a long narration snippet,
+// a wide completion summary, or a picker row can run past the right edge and
+// leave the cut to Bubble Tea's own truncation. Second, and the one that
+// shows: the standard renderer skips any line whose text matches what it last
+// wrote, so rows the terminal disturbed behind our back — the wheel scrolling
+// the alt screen out from under the frame and compositing scrollback into it,
+// another process writing to the tty — are never rewritten while their
+// content is unchanged. The banner is the frame's most static block, so it
+// keeps the damage longest. A frame that owns every cell is a frame one
+// repaint (ctrl+l) restores completely.
+//
+// Overflow is dropped from the top: the input and status line are the live
+// chrome, so a pane too short to hold everything keeps those and loses
+// transcript rows.
+func aiFitFrame(frame string, width, height int) string {
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
+	}
+	lines := strings.Split(frame, "\n")
+	if len(lines) > height {
+		lines = lines[len(lines)-height:]
+	}
+	clamp := lipgloss.NewStyle().MaxWidth(width)
+	for index, line := range lines {
+		if lipgloss.Width(line) > width {
+			lines[index] = clamp.Render(line)
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // aiRule draws one horizontal frame line, with an optional right-aligned
@@ -1662,6 +1734,18 @@ func (m aiModel) pickerView() string {
 	return b.String()
 }
 
+// statusBudget is the room left on the status row for one variable-length
+// part, once the fixed text around it is accounted for. The width falls back
+// to 80 when the terminal size is not known yet, so a status line is never
+// trimmed to nothing before the first WindowSizeMsg.
+func (m aiModel) statusBudget(fixed string) int {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	return width - lipgloss.Width(fixed)
+}
+
 func (m aiModel) statusLine() string {
 	if m.picker != nil {
 		return aiEchoStyle.Render("↑/↓ select · enter run · esc cancel")
@@ -1673,41 +1757,54 @@ func (m aiModel) statusLine() string {
 		return m.spin.View() + aiEchoStyle.Render(" fetching "+m.fetchIntent.resource+" names… · esc to cancel")
 	}
 	if m.running != nil {
-		return m.spin.View() + aiEchoStyle.Render(fmt.Sprintf(" running /%s · %s · esc to cancel",
-			strings.Join(m.running.argv, " "),
-			time.Since(m.running.started).Round(time.Second)))
+		head := " running "
+		tail := fmt.Sprintf(" · %s · esc to cancel", time.Since(m.running.started).Round(time.Second))
+		command := aiTrimTo("/"+strings.Join(m.running.argv, " "), m.statusBudget(m.spin.View()+head+tail))
+		return m.spin.View() + aiEchoStyle.Render(head+command+tail)
 	}
 	if m.turnActive {
 		activity := m.turnActivity
 		if activity == "" {
 			activity = "thinking (" + m.modelName + ")"
 		}
-		line := " " + activity
+		tail := ""
 		if !m.turnStarted.IsZero() {
-			line += " · " + time.Since(m.turnStarted).Round(time.Second).String()
+			tail += " · " + time.Since(m.turnStarted).Round(time.Second).String()
 		}
 		if m.turnCommands > 0 {
-			line += fmt.Sprintf(" · %d command", m.turnCommands)
+			tail += fmt.Sprintf(" · %d command", m.turnCommands)
 			if m.turnCommands > 1 {
-				line += "s"
+				tail += "s"
 			}
 		}
-		return m.spin.View() + aiEchoStyle.Render(line+" · esc to cancel")
+		tail += " · esc to cancel"
+		// Trim the narration, never the tail: on a narrow pane the elapsed
+		// time and the cancel affordance matter more than the snippet's last
+		// words, and a blind right-edge clamp would drop exactly those.
+		activity = aiTrimTo(activity, m.statusBudget(m.spin.View()+" "+tail))
+		return m.spin.View() + aiEchoStyle.Render(" "+activity+tail)
 	}
 	if m.keyEntry {
 		return aiEchoStyle.Render("paste your key · enter save · esc cancel")
 	}
-	segments := make([]string, 0, 3)
-	if m.identity != "" {
-		segments = append(segments, m.identity)
-	}
+	var hint string
 	switch {
 	case m.ctrlCArmed:
-		segments = append(segments, "ctrl+c again to quit")
+		hint = "ctrl+c again to quit"
 	case m.session != nil:
-		segments = append(segments, "Ask \"how much do we spend on tokens per AI model?\" · / for commands")
+		hint = "Ask \"how much do we spend on tokens per AI model?\" · / for commands"
 	default:
-		segments = append(segments, "ask a question to set up AI · / for commands")
+		hint = "ask a question to set up AI · / for commands"
 	}
-	return aiEchoStyle.Render(strings.Join(segments, " · "))
+	if m.identity == "" {
+		return aiEchoStyle.Render(aiTrimTo(hint, m.statusBudget("")))
+	}
+	// Which tenant the session is pointed at outranks the prompt hint, so a
+	// narrow pane loses the hint rather than half the customer's name.
+	identity := aiTrimTo(m.identity, m.statusBudget(""))
+	hint = aiTrimTo(hint, m.statusBudget(identity+" · "))
+	if hint == "" {
+		return aiEchoStyle.Render(identity)
+	}
+	return aiEchoStyle.Render(identity + " · " + hint)
 }

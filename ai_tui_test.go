@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // aiTestModel builds a session model without touching cli.Root, the real
@@ -441,6 +442,11 @@ func TestAIQuietTurnInterleavedToolActivity(t *testing.T) {
 	// by call ID, not whichever call started last.
 	m := aiTestModel(t)
 	m.session = newFakeAISession()
+	// A pane wide enough for both labels: the status line trims the activity
+	// snippet to the terminal width, and this assertion is about which label
+	// each event carries, not about narrow-pane trimming.
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = sized.(aiModel)
 
 	m, _ = aiEventUpdate(m, aiEvent{TurnStarted: &aiTurnStarted{TurnID: "t1"}})
 	m, _ = aiEventUpdate(m, aiEvent{ToolCallStarted: &aiToolCallStarted{
@@ -978,5 +984,150 @@ func TestAITranscriptBlocksSeparatedByBlankLine(t *testing.T) {
 	content := strings.Join(m.transcript, "\n\n")
 	if !strings.Contains(content, "answer block one\n\n› next question") {
 		t.Fatalf("blocks not blank-line separated: %q", content)
+	}
+}
+
+// aiFrameSized renders the session at a fixed terminal size.
+func aiFrameSized(t *testing.T, m aiModel, width, height int) (aiModel, []string) {
+	t.Helper()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	sized := next.(aiModel)
+	return sized, strings.Split(sized.View(), "\n")
+}
+
+// The frame must be exactly the terminal's cell grid in every state. Bubble
+// Tea's renderer rewrites only the lines whose content changed, so a frame
+// that leaves cells unclaimed cannot be restored by a repaint — and a line
+// running past the right edge is a cut nobody chose.
+func TestAIFrameMatchesTerminalGrid(t *testing.T) {
+	sizes := [][2]int{{200, 50}, {120, 30}, {100, 30}, {80, 24}, {60, 20}, {40, 12}, {30, 8}, {24, 6}, {20, 3}}
+	states := map[string]func(m *aiModel){
+		"idle": func(m *aiModel) {},
+		"turn with long narration": func(m *aiModel) {
+			m.turnActive = true
+			m.turnStarted = time.Now()
+			m.turnCommands = 3
+			m.turnActivity = "thinking · " + strings.Repeat("narration ", 12)
+		},
+		"long identity": func(m *aiModel) {
+			m.identity = "A Very Long Customer Display Name Ltd (RSTDkHhaoGWwOEvlYlHyBUhm)"
+		},
+		"completion popup": func(m *aiModel) {
+			m.completions = []aiCompletion{
+				{Value: "cloud-analytics-reports-list", Summary: strings.Repeat("a long command summary ", 4)},
+				{Value: "b", Summary: "short"},
+			}
+		},
+		"scrolled up": func(m *aiModel) { m.follow = false },
+		"picker": func(m *aiModel) {
+			m.picker = &aiNameSelection{resource: "customer", candidates: []nameCacheEntry{
+				{Name: strings.Repeat("Long Customer Name ", 4), ID: "RSTDkHhaoGWwOEvlYlHyBUhm"},
+			}}
+		},
+		"wide transcript block": func(m *aiModel) { m.append(strings.Repeat("x", 400)) },
+	}
+	for name, mutate := range states {
+		for _, size := range sizes {
+			width, height := size[0], size[1]
+			model := aiTestModel(t)
+			mutate(&model)
+			model.layout()
+			_, lines := aiFrameSized(t, model, width, height)
+			if len(lines) != height {
+				t.Errorf("%s at %dx%d: frame has %d lines, want %d", name, width, height, len(lines), height)
+			}
+			for index, line := range lines {
+				if got := lipgloss.Width(line); got > width {
+					t.Errorf("%s at %dx%d: line %d is %d cells wide: %q",
+						name, width, height, index, got, stripANSI(line))
+				}
+			}
+		}
+	}
+}
+
+// A pane too short for the chrome keeps what the user acts through: the input
+// and the status line. Transcript rows are what give way.
+func TestAIFrameTooShortKeepsInputAndStatus(t *testing.T) {
+	m := aiTestModel(t)
+	m.session = newFakeAISession()
+	_, lines := aiFrameSized(t, m, 60, 4)
+	if len(lines) != 4 {
+		t.Fatalf("frame has %d lines, want 4", len(lines))
+	}
+	frame := stripANSI(strings.Join(lines, "\n"))
+	if !strings.Contains(frame, "›") {
+		t.Errorf("input line dropped from a short frame:\n%s", frame)
+	}
+	if !strings.Contains(frame, "Ask \"how much") {
+		t.Errorf("status line dropped from a short frame:\n%s", frame)
+	}
+}
+
+// ctrl+l is the repair gesture: it must reach the renderer from every state,
+// including the ones that otherwise own the keyboard.
+func TestAICtrlLRedrawsFromEveryState(t *testing.T) {
+	states := map[string]func(m *aiModel){
+		"idle":     func(m *aiModel) {},
+		"keyEntry": func(m *aiModel) { m.keyEntry = true },
+		"picker": func(m *aiModel) {
+			m.picker = &aiNameSelection{resource: "customer", candidates: []nameCacheEntry{{Name: "Acme", ID: "abc"}}}
+		},
+		"fetching":         func(m *aiModel) { m.fetchIntent = &aiPickerIntent{resource: "customer"} },
+		"dispatchApproval": func(m *aiModel) { m.dispatchApproval = &aiDispatchApproval{argv: []string{"delete"}} },
+		"approval":         func(m *aiModel) { m.approval = &aiApprovalRequest{} },
+	}
+	for name, mutate := range states {
+		m := aiTestModel(t)
+		mutate(&m)
+		_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlL})
+		if cmd == nil {
+			t.Fatalf("%s: ctrl+l produced no command", name)
+		}
+		if got := cmd(); got != tea.ClearScreen() {
+			t.Fatalf("%s: ctrl+l sent %T, want a full repaint", name, got)
+		}
+	}
+}
+
+// The status line trims the narration, not the affordances: on a narrow pane
+// the elapsed time and "esc to cancel" survive a long snippet.
+func TestAIStatusLineTrimsNarrationNotAffordances(t *testing.T) {
+	m := aiTestModel(t)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 24})
+	m = next.(aiModel)
+	m.turnActive = true
+	m.turnStarted = time.Now().Add(-90 * time.Second)
+	m.turnCommands = 2
+	m.turnActivity = "thinking · " + strings.Repeat("a long reasoning snippet ", 6)
+
+	status := stripANSI(m.statusLine())
+	if lipgloss.Width(status) > 70 {
+		t.Fatalf("status line is %d cells wide on a 70-column pane: %q", lipgloss.Width(status), status)
+	}
+	for _, want := range []string{"1m30s", "2 commands", "esc to cancel", "…"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("status line lost %q: %q", want, status)
+		}
+	}
+}
+
+func TestAITrimTo(t *testing.T) {
+	cases := []struct {
+		text  string
+		width int
+		want  string
+	}{
+		{"short", 10, "short"},
+		{"exactly-10", 10, "exactly-10"},
+		{"truncate me here", 10, "truncate…"},
+		{"trailing space cut", 6, "trail…"},
+		{"no room", 3, ""},
+		{"no room", 0, ""},
+	}
+	for _, c := range cases {
+		if got := aiTrimTo(c.text, c.width); got != c.want {
+			t.Errorf("aiTrimTo(%q, %d) = %q, want %q", c.text, c.width, got, c.want)
+		}
 	}
 }
