@@ -3741,46 +3741,47 @@ func TestSessionRenderActive(t *testing.T) {
 
 func TestBareDCIRoutesOnTUIGate(t *testing.T) {
 	oldRoot := cli.Root
-	cli.Root = &cobra.Command{Use: "dci", SilenceUsage: true, SilenceErrors: true}
-	t.Cleanup(func() { cli.Root = oldRoot })
 	oldTUI := tuiActive
 	oldLaunch := launchAISession
-	t.Cleanup(func() { tuiActive = oldTUI; launchAISession = oldLaunch })
+	t.Cleanup(func() { cli.Root = oldRoot; tuiActive = oldTUI; launchAISession = oldLaunch })
 
 	dir := t.TempDir()
-	lockToDCI(dir)
-	cli.Root.SetOut(io.Discard)
-	cli.Root.SetErr(io.Discard)
-
 	launched := false
 	launchAISession = func(configDir string) error { launched = true; return nil }
 
+	// Each case executes a fresh root: cobra persists parsed flag values
+	// (notably --help) across Execute calls on one command, which would let
+	// every case after the --help one pass without exercising the RunE
+	// routing at all.
+	execute := func(args ...string) {
+		t.Helper()
+		cli.Root = &cobra.Command{Use: "dci", SilenceUsage: true, SilenceErrors: true}
+		lockToDCI(dir)
+		cli.Root.SetOut(io.Discard)
+		cli.Root.SetErr(io.Discard)
+		cli.Root.SetArgs(args)
+		launched = false
+		if err := cli.Root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	// Human at a terminal: bare dci opens the session.
 	tuiActive = func() bool { return true }
-	cli.Root.SetArgs(nil)
-	if err := cli.Root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	execute()
 	if !launched {
 		t.Fatal("bare dci at a terminal should open the AI session")
 	}
 
 	// --help wins even at a terminal: cobra resolves it before RunE.
-	launched = false
-	cli.Root.SetArgs([]string{"--help"})
-	if err := cli.Root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	execute("--help")
 	if launched {
 		t.Fatal("dci --help must print help, never open a session")
 	}
 
 	// Pipes/CI/agents (the gate is false): help, exactly as before.
 	tuiActive = func() bool { return false }
-	cli.Root.SetArgs(nil)
-	if err := cli.Root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	execute()
 	if launched {
 		t.Fatal("non-TTY bare dci must print help, not open a session")
 	}
@@ -3790,11 +3791,19 @@ func TestBareDCIRoutesOnTUIGate(t *testing.T) {
 	if err := saveAISettings(dir, aiSettings{Default: "help"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.Root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	execute()
 	if launched {
 		t.Fatal("default=help must fall back to the help screen")
+	}
+
+	// And removing the opt-out routes back to the session — proof the later
+	// cases run against live routing, not a stale help flag.
+	if err := saveAISettings(dir, aiSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	execute()
+	if !launched {
+		t.Fatal("clearing the opt-out should restore the session default")
 	}
 }
 
