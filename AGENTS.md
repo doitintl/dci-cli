@@ -22,6 +22,10 @@ This repo is one piece of a much larger system. `dci` wraps restish, sits in fro
 
 Pinned to restish **v0.21.2** (already includes the CVE-2025-22868 patch). Restish **v2** is a ground-up redesign that **deletes the in-process library model `dci` is built on** — it makes restish the binary and pushes extensions to out-of-process plugins, so moving to v2 is a rewrite, not a dependency bump, with no security pressure and real UX regressions. **Don't upgrade without revisiting the full evaluation in [issue #20](https://github.com/doitintl/dci-cli/issues/20).**
 
+### Charm Stack (v2)
+
+The TUI layer is on the Charm v2 stack: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`, `charm.land/lipgloss/v2`, `charm.land/huh/v2`, and `github.com/NimbleMarkets/ntcharts/v2`. Do not "fix" imports back to the `github.com/charmbracelet/*` v1 paths — lipgloss v1 and termenv remain in the module graph only as restish/glamour transitive dependencies, and glamour stays at v1 on purpose (it rides restish's requirement; see BUBBLETEA-V2-SPEC.md §5). The migration record, per-symbol API map, and as-landed deviations live in [BUBBLETEA-V2-SPEC.md](BUBBLETEA-V2-SPEC.md).
+
 ### Commit Message Conventions
 
 GoReleaser changelog auto-generates from commits between tags. Filtered prefixes (excluded from changelog):
