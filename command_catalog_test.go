@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -160,4 +162,31 @@ func TestCatalogAndRuntimeDestructiveClassificationMatch(t *testing.T) {
 			t.Errorf("%s runtime destructive = %t, catalog = %t", operation.Name, got, want)
 		}
 	}
+}
+
+// TestFetchOpenAPISpecToleratesNilCommandContext guards against a real bug
+// found while manually verifying help_context.go against the live DCI API:
+// cobra.Command.Context() is nil until Execute()/ExecuteContext() runs, and
+// http.NewRequestWithContext(nil, ...) fails with an opaque "nil Context"
+// error instead of panicking — which loadHelpContext's error handling then
+// silently swallowed, making tag descriptions and flag examples vanish with
+// no visible failure. fetchOpenAPISpec must fall back to context.Background().
+func TestFetchOpenAPISpecToleratesNilCommandContext(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("openapi: 3.0.1\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	previousTransport := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+
+	// A bare *cobra.Command, as loadHelpContext(&cobra.Command{}) or any
+	// caller invoked before cobra's Execute() dispatch would pass — ctx is
+	// nil, not context.Background().
+	response, err := fetchOpenAPISpec(&cobra.Command{}, server.URL)
+	if err != nil {
+		t.Fatalf("fetchOpenAPISpec with nil command context: %v", err)
+	}
+	response.Body.Close()
 }

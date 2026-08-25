@@ -1626,6 +1626,16 @@ func setupCompletion() {
 				cli.Root.AddCommand(sub)
 			}
 		}
+		// GroupID is only set on API operation commands (restish assigns it
+		// from the operation's OpenAPI tag) — skip the spec fetch entirely
+		// for local commands like "dci status --help".
+		if (cmd == cli.Root && hasAPICommands) || cmd.GroupID != "" {
+			context := loadHelpContext(cmd)
+			for _, g := range cli.Root.Groups() {
+				g.Title = groupTitleWithDescription(g.Title, g.ID, context.TagDescriptions)
+			}
+			appendFlagExamples(cmd, context.FlagExamples)
+		}
 		defaultHelp(cmd, args)
 		if cmd == cli.Root && !hasAPICommands {
 			hint := "\n! To get started, authenticate with: dci login (or set DCI_API_KEY)\n\n"
