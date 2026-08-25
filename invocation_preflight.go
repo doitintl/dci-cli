@@ -134,6 +134,12 @@ func unknownAPICommandPreflightError(api cli.API, name string) error {
 		message = fmt.Sprintf("unknown command %q (did you mean %q?)", name, suggestion)
 		hint = fmt.Sprintf("Did you mean %q? Run dci --help to list available commands", suggestion)
 	}
+	if tuiActive() {
+		// Humans only (agents never pass the gate): a mistyped command is the
+		// natural moment to learn the plain-English spelling — the error stays
+		// an error, never a silent AI fallback (AI-DEFAULT-SPEC §5).
+		message += "\nTo ask in plain English instead: dci ai \"<your question>\""
+	}
 	return invocationPreflightError{
 		detail:   structuredError{Code: "USAGE_ERROR", Message: message, Hint: hint, Retryable: false},
 		exitCode: exitUsage,

@@ -1414,3 +1414,25 @@ func TestAICompletionPopupScrollsPastVisibleRows(t *testing.T) {
 		t.Fatalf("tab accepted %q, want /list-i", got)
 	}
 }
+
+func TestAIDefaultVerb(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "/default help")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	if aiDefaultEnabled(m.configDir) {
+		t.Fatal("/default help not persisted")
+	}
+	m = aiType(m, "/default session")
+	updated, _ = aiPress(m, tea.KeyEnter)
+	m = updated
+	if !aiDefaultEnabled(m.configDir) {
+		t.Fatal("/default session not persisted")
+	}
+	m = aiType(m, "/default nonsense")
+	updated, _ = aiPress(m, tea.KeyEnter)
+	m = updated
+	if !strings.Contains(aiTranscriptText(m), "usage: /default") {
+		t.Fatal("invalid choice should print usage")
+	}
+}

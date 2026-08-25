@@ -66,6 +66,10 @@ type aiSettings struct {
 	// so an absent field keeps its default without a sentinel value.
 	Bell  *bool `json:"bell,omitempty"`
 	Mouse *bool `json:"mouse,omitempty"`
+	// Default is what bare `dci` opens at a human terminal: "session" (the
+	// AI session; the absent-field default) or "help" (the usage screen —
+	// the persisted opt-out, set with /default). AI-DEFAULT-SPEC §6.
+	Default string `json:"default,omitempty"`
 }
 
 func aiSettingsPath(configDir string) string {
@@ -107,6 +111,15 @@ func resolveAIModel(settings aiSettings) string {
 		return model
 	}
 	return aiDefaultModel
+}
+
+// aiDefaultEnabled reports whether bare `dci` opens the AI session for a
+// human terminal (AI-DEFAULT-SPEC §3); {"default": "help"} in
+// ai_settings.json is the persisted opt-out. Any other value — absent,
+// "session", or a typo — keeps the session default rather than silently
+// changing what a keystroke does over a misspelling.
+func aiDefaultEnabled(configDir string) bool {
+	return !strings.EqualFold(strings.TrimSpace(loadAISettings(configDir).Default), "help")
 }
 
 // resolveAIBell reports whether the session rings the terminal bell when a

@@ -306,3 +306,21 @@ func TestPreflightAPIInvocationRejectsColdCacheDestructiveWithoutCredentials(t *
 		t.Fatalf("error = %#v, loads = %d", err, *loadCount)
 	}
 }
+
+func TestUnknownCommandHintsAIOnlyForHumans(t *testing.T) {
+	oldTUI := tuiActive
+	t.Cleanup(func() { tuiActive = oldTUI })
+	api := cli.API{Operations: []cli.Operation{{Name: "list-budgets"}}}
+
+	tuiActive = func() bool { return true }
+	human := unknownAPICommandPreflightError(api, "list-budgts").Error()
+	if !strings.Contains(human, `dci ai "`) {
+		t.Fatalf("human unknown-command error lacks the AI hint: %q", human)
+	}
+
+	tuiActive = func() bool { return false }
+	agent := unknownAPICommandPreflightError(api, "list-budgts").Error()
+	if strings.Contains(agent, "dci ai") {
+		t.Fatalf("agent unknown-command error must stay bare: %q", agent)
+	}
+}

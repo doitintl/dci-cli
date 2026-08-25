@@ -36,6 +36,7 @@ var aiSessionVerbs = []aiSessionVerb{
 	{name: "export", usage: "/export [file]", summary: "Save the transcript to a file"},
 	{name: "mouse", usage: "/mouse", summary: "Toggle mouse capture (off = select/copy text)"},
 	{name: "bell", usage: "/bell", summary: "Toggle the end-of-turn terminal bell"},
+	{name: "default", usage: "/default [session|help]", summary: "What bare dci opens: this session or the help screen"},
 	{name: "clear", usage: "/clear", summary: "Clear the transcript and start a new conversation"},
 	{name: "help", usage: "/help", summary: "Show how the session works"},
 	{name: "quit", usage: "/quit", summary: "Leave the session"},

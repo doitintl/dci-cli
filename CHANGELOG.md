@@ -26,6 +26,25 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.7.0 — August 26, 2026
+
+### New
+
+- Running `dci` with no arguments at a terminal now opens the interactive AI
+  session — the same one `dci ai` opens: ask about your cloud costs in plain
+  English, or run any command with a `/` prefix. In pipes, scripts, and CI,
+  bare `dci` prints the help screen exactly as before, so nothing changes
+  for automation. Prefer the help screen at your terminal? Run
+  `/default help` once inside the session; `dci --help` always prints help.
+- Mistyping a command at a terminal now also suggests the plain-English
+  alternative (`dci ai "…"`) alongside the usual did-you-mean suggestion.
+
+### Improved
+
+- CI systems that allocate a terminal are now detected via the standard `CI`
+  environment variable and get the script behavior — a pipeline can never
+  hang on an interactive session.
+
 ## v2.6.3 — August 25, 2026
 
 ### Fixed

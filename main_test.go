@@ -34,9 +34,12 @@ func TestNormalizeArgs(t *testing.T) {
 		out  []string
 	}{
 		{
-			name: "no args becomes help",
+			// Bare dci must reach the root RunE, which routes on the TUI gate
+			// (AI session for humans, help everywhere else) — a --help rewrite
+			// here would bypass that routing (AI-DEFAULT-SPEC §3).
+			name: "no args passes through to the root RunE",
 			in:   []string{"dci"},
-			out:  []string{"dci", "--help"},
+			out:  []string{"dci"},
 		},
 		{
 			name: "help flag stays local",
@@ -217,7 +220,7 @@ func TestLockToDCI(t *testing.T) {
 		&cobra.Command{Use: "other-api", GroupID: "api"},
 	)
 
-	lockToDCI()
+	lockToDCI(t.TempDir())
 
 	got := make([]string, 0)
 	for _, cmd := range cli.Root.Commands() {
@@ -251,7 +254,7 @@ func TestLockToDCIDisablesGenericRootRequests(t *testing.T) {
 		cli.Root = oldRoot
 	})
 
-	lockToDCI()
+	lockToDCI(t.TempDir())
 
 	if root.Run != nil {
 		t.Fatal("generic root request handler remains installed")
@@ -565,6 +568,7 @@ func TestResolveAgentMode(t *testing.T) {
 		envMode   string
 		args      []string
 		agentEnv  string
+		ciEnv     bool
 		stdoutTTY bool
 		want      bool
 		wantMode  uaMode
@@ -586,7 +590,12 @@ func TestResolveAgentMode(t *testing.T) {
 		// 3. Agent env var heuristic.
 		{name: "agent env enables", agentEnv: "CURSOR_AGENT", stdoutTTY: true, want: true, wantMode: uaModeAgent},
 
-		// 4. Non-TTY soft signal — agent behavior, but classified noninteractive
+		// 4. CI heuristic: CI systems can allocate a PTY, which would open the
+		// bare-dci AI session and hang the job (AI-DEFAULT-SPEC §7).
+		{name: "CI env enables even with a tty", ciEnv: true, stdoutTTY: true, want: true, wantMode: uaModeNonInteractive},
+		{name: "env mode 0 wins over CI", envMode: "0", ciEnv: true, stdoutTTY: true, want: false, wantMode: uaModeInteractive},
+
+		// 5. Non-TTY soft signal — agent behavior, but classified noninteractive
 		// (covers CI/CD and piped/redirected use).
 		{name: "non-tty enables", stdoutTTY: false, want: true, wantMode: uaModeNonInteractive},
 		{name: "interactive tty stays human", stdoutTTY: true, want: false, wantMode: uaModeInteractive},
@@ -594,7 +603,7 @@ func TestResolveAgentMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveAgentMode(tt.envMode, tt.args, tt.agentEnv, tt.stdoutTTY)
+			got := resolveAgentMode(tt.envMode, tt.args, tt.agentEnv, tt.ciEnv, tt.stdoutTTY)
 			if got.enabled != tt.want {
 				t.Fatalf("resolveAgentMode() enabled = %v (reason %q), want %v", got.enabled, got.reason, tt.want)
 			}
@@ -3727,5 +3736,92 @@ func TestSessionRenderActive(t *testing.T) {
 	t.Setenv("DCI_SESSION_RENDER", "banana")
 	if sessionRenderActive() {
 		t.Fatal("unparseable DCI_SESSION_RENDER must be inactive")
+	}
+}
+
+func TestBareDCIRoutesOnTUIGate(t *testing.T) {
+	oldRoot := cli.Root
+	cli.Root = &cobra.Command{Use: "dci", SilenceUsage: true, SilenceErrors: true}
+	t.Cleanup(func() { cli.Root = oldRoot })
+	oldTUI := tuiActive
+	oldLaunch := launchAISession
+	t.Cleanup(func() { tuiActive = oldTUI; launchAISession = oldLaunch })
+
+	dir := t.TempDir()
+	lockToDCI(dir)
+	cli.Root.SetOut(io.Discard)
+	cli.Root.SetErr(io.Discard)
+
+	launched := false
+	launchAISession = func(configDir string) error { launched = true; return nil }
+
+	// Human at a terminal: bare dci opens the session.
+	tuiActive = func() bool { return true }
+	cli.Root.SetArgs(nil)
+	if err := cli.Root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !launched {
+		t.Fatal("bare dci at a terminal should open the AI session")
+	}
+
+	// --help wins even at a terminal: cobra resolves it before RunE.
+	launched = false
+	cli.Root.SetArgs([]string{"--help"})
+	if err := cli.Root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if launched {
+		t.Fatal("dci --help must print help, never open a session")
+	}
+
+	// Pipes/CI/agents (the gate is false): help, exactly as before.
+	tuiActive = func() bool { return false }
+	cli.Root.SetArgs(nil)
+	if err := cli.Root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if launched {
+		t.Fatal("non-TTY bare dci must print help, not open a session")
+	}
+
+	// The persisted opt-out: {"default": "help"} keeps help for humans too.
+	tuiActive = func() bool { return true }
+	if err := saveAISettings(dir, aiSettings{Default: "help"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cli.Root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if launched {
+		t.Fatal("default=help must fall back to the help screen")
+	}
+}
+
+func TestAIDefaultEnabled(t *testing.T) {
+	dir := t.TempDir()
+	if !aiDefaultEnabled(dir) {
+		t.Fatal("absent settings default to the session")
+	}
+	if err := saveAISettings(dir, aiSettings{Default: "help"}); err != nil {
+		t.Fatal(err)
+	}
+	if aiDefaultEnabled(dir) {
+		t.Fatal("default=help must disable the session default")
+	}
+	if err := saveAISettings(dir, aiSettings{Default: "sesion"}); err != nil { // typo stays session
+		t.Fatal(err)
+	}
+	if !aiDefaultEnabled(dir) {
+		t.Fatal("an unrecognized value must keep the session default")
+	}
+}
+
+func TestCIEnvDetected(t *testing.T) {
+	for value, want := range map[string]bool{"true": true, "1": true, "false": false, "": false, "woodpecker": false} {
+		t.Setenv("CI", value)
+		if got := ciEnvDetected(); got != want {
+			t.Errorf("ciEnvDetected() with CI=%q = %v, want %v", value, got, want)
+		}
 	}
 }
