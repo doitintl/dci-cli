@@ -438,11 +438,7 @@ func (m *aiModel) layout() {
 	m.view.Width = m.width
 	middle := len(m.completions) + 1 /*input*/
 	if m.picker != nil {
-		rows := len(m.picker.filtered(m.pickerFilter))
-		if rows > aiPickerVisibleRows {
-			rows = aiPickerVisibleRows
-		}
-		middle = rows + 2 // selection header + filter line
+		middle = m.pickerLines()
 	}
 	chrome := 2 /*rules around the input*/ + middle + 1 /*status*/
 	height := m.height - chrome
@@ -1701,22 +1697,46 @@ func (m aiModel) topRule() string {
 
 const aiPickerVisibleRows = 8
 
+// pickerWindow is the slice of candidates pickerView draws: a window of
+// aiPickerVisibleRows that follows the highlighted row.
+func (m aiModel) pickerWindow() (rows []nameCacheEntry, start, end int) {
+	rows = m.picker.filtered(m.pickerFilter)
+	if m.pickerIndex >= aiPickerVisibleRows {
+		start = m.pickerIndex - aiPickerVisibleRows + 1
+	}
+	end = start + aiPickerVisibleRows
+	if end > len(rows) {
+		end = len(rows)
+	}
+	if start > end {
+		start = end
+	}
+	return rows, start, end
+}
+
+// pickerLines is how many rows pickerView occupies. layout() must size the
+// viewport from the same count the view renders: a frame that comes out a row
+// long loses a transcript row off the top (aiFitFrame trims the overflow),
+// one that comes out short pads below the status line. An empty result is the
+// case that used to disagree — it draws the "no matches" note in place of the
+// candidate window, not alongside a window of zero rows.
+func (m aiModel) pickerLines() int {
+	rows, start, end := m.pickerWindow()
+	const headerAndFilter = 2
+	if len(rows) == 0 {
+		return headerAndFilter + 1
+	}
+	return headerAndFilter + end - start
+}
+
 // pickerView renders the name selection: a header with the count, a window
 // of candidates around the highlighted row, and the live filter line.
 func (m aiModel) pickerView() string {
-	rows := m.picker.filtered(m.pickerFilter)
+	rows, start, end := m.pickerWindow()
 	var b strings.Builder
 	b.WriteString(aiCardHeadStyle.Render(fmt.Sprintf("Select a %s", m.picker.resource)) +
 		aiEchoStyle.Render(fmt.Sprintf("  %d match(es) — type to filter", len(rows))))
 	b.WriteString("\n")
-	start := 0
-	if m.pickerIndex >= aiPickerVisibleRows {
-		start = m.pickerIndex - aiPickerVisibleRows + 1
-	}
-	end := start + aiPickerVisibleRows
-	if end > len(rows) {
-		end = len(rows)
-	}
 	for index := start; index < end; index++ {
 		entry := rows[index]
 		line := " " + entry.Name + "  " + aiEchoStyle.Render("("+entry.ID+")")
@@ -1734,58 +1754,103 @@ func (m aiModel) pickerView() string {
 	return b.String()
 }
 
-// statusBudget is the room left on the status row for one variable-length
-// part, once the fixed text around it is accounted for. The width falls back
-// to 80 when the terminal size is not known yet, so a status line is never
-// trimmed to nothing before the first WindowSizeMsg.
-func (m aiModel) statusBudget(fixed string) int {
+// statusWidth is the room on the status row, less any text already committed
+// to it (the spinner). It falls back to 80 columns before the first
+// WindowSizeMsg, so a status line is never trimmed to nothing at startup.
+func (m aiModel) statusWidth(committed string) int {
 	width := m.width
 	if width <= 0 {
 		width = 80
 	}
-	return width - lipgloss.Width(fixed)
+	return width - lipgloss.Width(committed)
+}
+
+// aiStatusRow assembles the status line from parts of decreasing importance,
+// so a narrow pane loses the least useful one instead of whatever happens to
+// sit at the right edge:
+//
+//	label   introduces the subject ("running", "fetching") — dropped with it
+//	subject the variable part: a command, a narration snippet, a resource —
+//	        trimmed before anything is dropped, since its tail words carry
+//	        the least, then dropped if not even a fragment fits
+//	detail  extras such as elapsed time or a command count
+//	afford  how to leave the state ("esc to cancel") — never dropped
+//
+// The affordance survives because these are the states where not knowing the
+// way out costs the most: a pending destructive command, an in-flight turn.
+func aiStatusRow(width int, label, subject, detail, afford string) string {
+	build := func(subject, detail string) string {
+		parts := make([]string, 0, 3)
+		if subject != "" {
+			if label != "" {
+				subject = label + " " + subject
+			}
+			parts = append(parts, subject)
+		}
+		if detail != "" {
+			parts = append(parts, detail)
+		}
+		if afford != "" {
+			parts = append(parts, afford)
+		}
+		return strings.Join(parts, " · ")
+	}
+	if full := build(subject, detail); lipgloss.Width(full) <= width {
+		return full
+	}
+	// What a one-cell subject costs beyond the rest of the row: the label and
+	// the separator it brings with it, whichever form build() chose.
+	withoutSubject := lipgloss.Width(build("", detail))
+	overhead := lipgloss.Width(build("X", detail)) - withoutSubject - 1
+	if trimmed := aiTrimTo(subject, width-withoutSubject-overhead); trimmed != "" {
+		return build(trimmed, detail)
+	}
+	if row := build("", detail); lipgloss.Width(row) <= width {
+		return row
+	}
+	return build("", "")
 }
 
 func (m aiModel) statusLine() string {
 	if m.picker != nil {
-		return aiEchoStyle.Render("↑/↓ select · enter run · esc cancel")
+		return aiEchoStyle.Render(aiStatusRow(m.statusWidth(""),
+			"", "↑/↓ select · enter run", "", "esc cancel"))
 	}
 	if m.approval != nil || m.dispatchApproval != nil {
-		return aiApproveStyle.Render("destructive command pending — y run · n decline")
+		return aiApproveStyle.Render(aiStatusRow(m.statusWidth(""),
+			"", "destructive command pending — y run", "", "n decline"))
 	}
 	if m.fetchIntent != nil {
-		return m.spin.View() + aiEchoStyle.Render(" fetching "+m.fetchIntent.resource+" names… · esc to cancel")
+		return m.spin.View() + " " + aiEchoStyle.Render(aiStatusRow(m.statusWidth(m.spin.View()+" "),
+			"fetching", m.fetchIntent.resource+" names…", "", "esc to cancel"))
 	}
 	if m.running != nil {
-		head := " running "
-		tail := fmt.Sprintf(" · %s · esc to cancel", time.Since(m.running.started).Round(time.Second))
-		command := aiTrimTo("/"+strings.Join(m.running.argv, " "), m.statusBudget(m.spin.View()+head+tail))
-		return m.spin.View() + aiEchoStyle.Render(head+command+tail)
+		return m.spin.View() + " " + aiEchoStyle.Render(aiStatusRow(m.statusWidth(m.spin.View()+" "),
+			"running", "/"+strings.Join(m.running.argv, " "),
+			time.Since(m.running.started).Round(time.Second).String(), "esc to cancel"))
 	}
 	if m.turnActive {
 		activity := m.turnActivity
 		if activity == "" {
 			activity = "thinking (" + m.modelName + ")"
 		}
-		tail := ""
+		detail := make([]string, 0, 2)
 		if !m.turnStarted.IsZero() {
-			tail += " · " + time.Since(m.turnStarted).Round(time.Second).String()
+			detail = append(detail, time.Since(m.turnStarted).Round(time.Second).String())
 		}
 		if m.turnCommands > 0 {
-			tail += fmt.Sprintf(" · %d command", m.turnCommands)
+			commands := fmt.Sprintf("%d command", m.turnCommands)
 			if m.turnCommands > 1 {
-				tail += "s"
+				commands += "s"
 			}
+			detail = append(detail, commands)
 		}
-		tail += " · esc to cancel"
-		// Trim the narration, never the tail: on a narrow pane the elapsed
-		// time and the cancel affordance matter more than the snippet's last
-		// words, and a blind right-edge clamp would drop exactly those.
-		activity = aiTrimTo(activity, m.statusBudget(m.spin.View()+" "+tail))
-		return m.spin.View() + aiEchoStyle.Render(" "+activity+tail)
+		return m.spin.View() + " " + aiEchoStyle.Render(aiStatusRow(m.statusWidth(m.spin.View()+" "),
+			"", activity, strings.Join(detail, " · "), "esc to cancel"))
 	}
 	if m.keyEntry {
-		return aiEchoStyle.Render("paste your key · enter save · esc cancel")
+		return aiEchoStyle.Render(aiStatusRow(m.statusWidth(""),
+			"", "paste your key · enter save", "", "esc cancel"))
 	}
 	var hint string
 	switch {
@@ -1796,13 +1861,14 @@ func (m aiModel) statusLine() string {
 	default:
 		hint = "ask a question to set up AI · / for commands"
 	}
+	// Idle inverts the priority: which tenant the session is pointed at
+	// outranks the prompt hint, so a narrow pane loses the hint rather than
+	// half the customer's name.
 	if m.identity == "" {
-		return aiEchoStyle.Render(aiTrimTo(hint, m.statusBudget("")))
+		return aiEchoStyle.Render(aiTrimTo(hint, m.statusWidth("")))
 	}
-	// Which tenant the session is pointed at outranks the prompt hint, so a
-	// narrow pane loses the hint rather than half the customer's name.
-	identity := aiTrimTo(m.identity, m.statusBudget(""))
-	hint = aiTrimTo(hint, m.statusBudget(identity+" · "))
+	identity := aiTrimTo(m.identity, m.statusWidth(""))
+	hint = aiTrimTo(hint, m.statusWidth(identity+" · "))
 	if hint == "" {
 		return aiEchoStyle.Render(identity)
 	}

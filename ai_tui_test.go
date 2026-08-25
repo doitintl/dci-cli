@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -1128,6 +1129,106 @@ func TestAITrimTo(t *testing.T) {
 	for _, c := range cases {
 		if got := aiTrimTo(c.text, c.width); got != c.want {
 			t.Errorf("aiTrimTo(%q, %d) = %q, want %q", c.text, c.width, got, c.want)
+		}
+	}
+}
+
+// layout() sizes the viewport from pickerLines(), so that count must be
+// exactly what pickerView() draws. An empty filter result is the case that
+// disagreed: the "no matches" note takes a row of its own.
+func TestAIPickerLinesMatchesPickerView(t *testing.T) {
+	candidates := make([]nameCacheEntry, 12)
+	for i := range candidates {
+		candidates[i] = nameCacheEntry{Name: fmt.Sprintf("Customer %02d", i), ID: fmt.Sprintf("id%02d", i)}
+	}
+	cases := []struct {
+		name   string
+		filter string
+		index  int
+	}{
+		{"no matches", "zzz-nothing-matches", 0},
+		{"one match", "Customer 07", 0},
+		{"full window", "", 0},
+		{"window scrolled to the end", "", 11},
+		{"stale index past a narrowed filter", "Customer 0", 11},
+	}
+	for _, c := range cases {
+		m := aiTestModel(t)
+		m.picker = &aiNameSelection{resource: "customer", candidates: candidates}
+		m.pickerFilter = c.filter
+		m.pickerIndex = c.index
+		want := len(strings.Split(m.pickerView(), "\n"))
+		if got := m.pickerLines(); got != want {
+			t.Errorf("%s: pickerLines() = %d, pickerView() draws %d lines", c.name, got, want)
+		}
+	}
+}
+
+// With the picker open the frame must still be exactly the terminal grid, and
+// the status line must still be its last row — no transcript row sliced off
+// the top, no padding below the status.
+func TestAIPickerFrameKeepsGrid(t *testing.T) {
+	for _, filter := range []string{"", "Acme", "zzz-nothing-matches"} {
+		m := aiTestModel(t)
+		m.append("a transcript line that must not be sliced away")
+		m.picker = &aiNameSelection{resource: "customer", candidates: []nameCacheEntry{
+			{Name: "Acme", ID: "abc"}, {Name: "Globex", ID: "def"},
+		}}
+		m.pickerFilter = filter
+		m, lines := aiFrameSized(t, m, 80, 20)
+		if len(lines) != 20 {
+			t.Errorf("filter %q: frame has %d lines, want 20", filter, len(lines))
+		}
+		if last := stripANSI(lines[len(lines)-1]); !strings.Contains(last, "esc cancel") {
+			t.Errorf("filter %q: last frame row is %q, want the status line", filter, last)
+		}
+		if !strings.Contains(stripANSI(strings.Join(lines, "\n")), "must not be sliced away") {
+			t.Errorf("filter %q: transcript row dropped from the frame", filter)
+		}
+	}
+}
+
+// Every status-line state keeps the affordance that gets the user out of it,
+// however narrow the pane.
+func TestAIStatusLineKeepsAffordanceWhenNarrow(t *testing.T) {
+	states := []struct {
+		name   string
+		want   string
+		mutate func(m *aiModel)
+	}{
+		{"picker", "esc cancel", func(m *aiModel) {
+			m.picker = &aiNameSelection{resource: "customer", candidates: []nameCacheEntry{{Name: "Acme", ID: "abc"}}}
+		}},
+		{"approval", "n decline", func(m *aiModel) { m.approval = &aiApprovalRequest{} }},
+		{"dispatch approval", "n decline", func(m *aiModel) {
+			m.dispatchApproval = &aiDispatchApproval{argv: []string{"delete-budget"}}
+		}},
+		{"fetching names", "esc to cancel", func(m *aiModel) {
+			m.fetchIntent = &aiPickerIntent{resource: "customer"}
+		}},
+		{"key entry", "esc cancel", func(m *aiModel) { m.keyEntry = true }},
+		{"running a command", "esc to cancel", func(m *aiModel) {
+			m.running = &aiRunState{argv: []string{"list-cloud-analytics-reports", "--limit", "50"}, started: time.Now()}
+		}},
+		{"turn in flight", "esc to cancel", func(m *aiModel) {
+			m.turnActive = true
+			m.turnStarted = time.Now()
+			m.turnActivity = strings.Repeat("narration ", 10)
+		}},
+	}
+	for _, width := range []int{80, 48, 30, 24} {
+		for _, state := range states {
+			m := aiTestModel(t)
+			state.mutate(&m)
+			sized, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+			m = sized.(aiModel)
+			status := stripANSI(m.statusLine())
+			if !strings.Contains(status, state.want) {
+				t.Errorf("%s at %d columns: status %q lost %q", state.name, width, status, state.want)
+			}
+			if got := lipgloss.Width(status); got > width {
+				t.Errorf("%s at %d columns: status is %d cells wide: %q", state.name, width, got, status)
+			}
 		}
 	}
 }
