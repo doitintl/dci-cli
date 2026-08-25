@@ -212,7 +212,7 @@ The invariant: **numbers on screen never come from model prose.** Commands retur
 
 - **Tool activity**: in the session, tool calls surface as status-line activity only (§3.2 quiet turn); one-shot mode prints per-call lines to stderr when stderr is a TTY. The tool-cards-in-transcript form of the first draft is superseded. Result tables/charts the *user* asked for (slash dispatches) render with the existing table renderer and charts chapter (charts.go — ntcharts/asciigraph are already direct dependencies, go.mod).
 - **View specs** (`render_view` and `tool_result.view`): declarative — `{type: table, columns, sort}` or `{type: bar|line, x, series}` — referencing result data by `call_id`. The terminal draws them with the stack above; the web client draws the identical spec with a real charting library (where a cost product will genuinely look better).
-- **Narration**: model text renders as markdown via glamour (in the tree at v0.6.0 via restish; the F8 version-skew caveat in TUI-SPEC.md §2.3 applies unchanged).
+- **Narration**: model text renders as markdown via glamour (pinned up to v1.0.0 directly, 2026-08-25: v0.6's table renderer hard-capped cells at 30 columns and printed CommonMark escapes literally — both fixed upstream, so the escape-unescaping workaround was removed with it; restish compiles clean against v1.0.0).
 - **`open in viewer`**: a card affordance to open that result in the F5 interactive table (tui_viewer.go) and return to the session.
 
 ## 10. Files and dependencies

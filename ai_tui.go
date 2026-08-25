@@ -1421,44 +1421,11 @@ func renderAIMarkdown(text string, width int, style string) string {
 	if err != nil {
 		return text
 	}
-	rendered, err := renderer.Render(aiUnescapeMarkdown(text))
+	rendered, err := renderer.Render(text)
 	if err != nil {
 		return text
 	}
 	return strings.Trim(rendered, "\n")
-}
-
-// aiUnescapeMarkdown resolves backslash-escaped markdown punctuation before
-// rendering: the glamour pinned in the tree (v0.6.0 via restish, the F8
-// version-skew caveat) prints CommonMark escapes literally — a model writing
-// "\*August is partial" to suppress emphasis reaches the screen with the
-// backslash. Fenced code blocks pass through untouched.
-func aiUnescapeMarkdown(text string) string {
-	var b strings.Builder
-	b.Grow(len(text))
-	inFence := false
-	for i, line := range strings.Split(text, "\n") {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			inFence = !inFence
-			b.WriteString(line)
-			continue
-		}
-		if inFence {
-			b.WriteString(line)
-			continue
-		}
-		for j := 0; j < len(line); j++ {
-			if line[j] == '\\' && j+1 < len(line) && strings.IndexByte("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", line[j+1]) >= 0 {
-				continue
-			}
-			b.WriteByte(line[j])
-		}
-	}
-	return b.String()
 }
 
 // renderAIRunCard renders one finished user dispatch for the transcript:

@@ -389,24 +389,6 @@ func TestAITurnLifecycleEvents(t *testing.T) {
 		t.Fatalf("usage not recorded: %+v", m.lastUsage)
 	}
 }
-
-func TestAIUnescapeMarkdown(t *testing.T) {
-	// The pinned glamour v0.6.0 prints CommonMark backslash escapes
-	// literally, so they are resolved before rendering.
-	got := aiUnescapeMarkdown(`\*August is partial\.`)
-	if got != "*August is partial." {
-		t.Fatalf("unescape = %q", got)
-	}
-	fenced := "```\nkeep \\* verbatim\n```\nbut \\_this\\_ unescapes"
-	got = aiUnescapeMarkdown(fenced)
-	if !strings.Contains(got, `keep \* verbatim`) || !strings.Contains(got, "but _this_ unescapes") {
-		t.Fatalf("fence handling wrong: %q", got)
-	}
-	if got := aiUnescapeMarkdown(`C:\path stays`); got != `C:\path stays` {
-		t.Fatalf("non-punctuation escape mangled: %q", got)
-	}
-}
-
 func TestAIRenderMarkdownFixedStyleAndEscapes(t *testing.T) {
 	rendered := stripANSI(renderAIMarkdown(`\*August is partial (through today).`, 80, "dark"))
 	if strings.Contains(rendered, `\*`) {
@@ -969,6 +951,14 @@ func TestRenderAIMarkdownUsesFullTerminalWidth(t *testing.T) {
 	}
 	if maxLine <= 100 {
 		t.Fatalf("table still wrapped at the old 100-col cap: widest line %d", maxLine)
+	}
+	// glamour v0.6's tablewriter hard-capped every cell at 30 characters —
+	// a 36-char label must now survive on one line when the width allows.
+	if !strings.Contains(stripANSI(wide), "Flexsave (AWS commitment automation)") {
+		wide = renderAIMarkdown("| Source | Savings |\n|---|---|\n| Flexsave (AWS commitment automation) | $1,807 |\n", 200, "dark")
+		if !strings.Contains(stripANSI(wide), "Flexsave (AWS commitment automation)") {
+			t.Fatal("36-char table cell still wraps (tablewriter 30-col cap)")
+		}
 	}
 	// Unknown width (first render, tests) keeps a sane default.
 	if got := renderAIMarkdown("plain text", 0, "dark"); got == "" {
