@@ -153,6 +153,63 @@ dci delete-budget <budget-id>
 dci invite-user email: user@example.com, organizationId: <org-id>, roleId: <role-id>
 ```
 
+## CloudFlow Export and Import
+
+Copy a flow between tenants. `export-cloudflow-flow` writes a portable bundle —
+the flow plus every subflow it references, with no credentials, tenant IDs,
+schedules, or execution state. It defaults to JSON output because the bundle is
+a document meant to be saved and replayed, so redirecting it to a file is safe:
+
+```bash
+dci export-cloudflow-flow <flow-id> > bundle.json
+
+# strip variable values; names, types, and required-ness always travel
+dci export-cloudflow-flow <flow-id> --include-variable-values=false > bundle.json
+```
+
+`export-cloudflow-flow` takes a literal flow ID, not a flow name — get it from
+`dci list-cloudflows`.
+
+Import is create-only: each call creates new **draft** flows with new IDs.
+Nothing is published and no schedule activates until the target tenant
+publishes. The bundle can be piped straight in — the CLI nests it under the
+request's `bundle` field for you. A real import needs `--idempotency-key`;
+generate a fresh one per import (a dry run gets one automatically):
+
+```bash
+# validate first — writes nothing, returns an import plan
+dci import-cloudflow-flow --dry-run < bundle.json
+
+# then import for real
+dci import-cloudflow-flow --idempotency-key "$(uuidgen)" < bundle.json
+```
+
+The import lands in the authenticated tenant. Doers targeting another tenant
+add `-D <customer-domain>` to both commands.
+
+Always dry-run first. The plan lists each requirement the bundle declares
+(connections, Datastore tables, global variables) with its resolution —
+`bound`, `suggested`, `willCreate`, or `unbound` — plus candidate IDs in the
+target tenant, the flows that would be created, and every validation error at
+once.
+
+Unbound connections and Datastore tables leave the referencing nodes flagged
+incomplete; unbound global variables are auto-created. Policy and Slack-channel
+references cannot travel between tenants at all — export records them as
+unsupported references and import flags those nodes incomplete. Fix incomplete
+nodes in the builder before publishing.
+
+To bind requirements to target-tenant resources, or to set import options, send
+the full request shape instead of a bare bundle:
+
+```bash
+jq '{bundle: ., bindings: {connections: {"<requirement-key>": "<connection-id>"}}, options: {createMissingTables: true, namePrefix: "Copy of "}}' \
+  bundle.json | dci import-cloudflow-flow --idempotency-key "$(uuidgen)"
+```
+
+Requirement keys come from the dry-run plan (or the bundle's own
+`requirements`); candidate IDs come from `dci list-cloudflow-connections`.
+
 ## Ava (AI Assistant)
 
 Agents should prefer `ask-ava-sync` over `ask-ava-streaming`. The sync endpoint returns clean JSON; streaming returns raw SSE chunks mixed with internal lifecycle events.

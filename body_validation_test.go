@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -102,6 +103,120 @@ func TestValidateRequestBodyRejectsUnknownPipedJSONAndPreservesInput(t *testing.
 	}
 	if string(bufferedInput) != `{"query":"SELECT * FROM billing"}` {
 		t.Fatalf("buffered input = %q", bufferedInput)
+	}
+}
+
+const importCloudflowFlowHelp = "Import a flow bundle.\n" +
+	"## Request Schema (application/json)\n\n" +
+	"```schema\n" +
+	"{\n" +
+	"  bindings: {\n" +
+	"    connections: {\n" +
+	"    }\n" +
+	"  }\n" +
+	"  bundle*: {\n" +
+	"    kind*: (string)\n" +
+	"  }\n" +
+	"  options: {\n" +
+	"    namePrefix: (string)\n" +
+	"  }\n" +
+	"}\n" +
+	"```\n"
+
+// pipeRequestBody points cli.Stdin at a temp file holding body, the way a pipe
+// or `< file.json` redirect reaches the CLI, and restores it afterwards.
+func pipeRequestBody(t *testing.T, body string) {
+	t.Helper()
+	inputFile, err := os.CreateTemp(t.TempDir(), "request-body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inputFile.WriteString(body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inputFile.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	previousInput := cli.Stdin
+	previousBody := bufferedRequestBody
+	cli.Stdin = inputFile
+	t.Cleanup(func() {
+		cli.Stdin = previousInput
+		bufferedRequestBody = previousBody
+		inputFile.Close()
+	})
+}
+
+const bareCloudflowBundle = `{"kind":"cloudflow.doit.com/FlowBundle","schemaVersion":1,` +
+	`"rootFlow":"flow-1","flows":[{"key":"flow-1","name":"Nightly report","firstNode":"n1",` +
+	`"nodes":[{"key":"n1","type":"action"}]}]}`
+
+// A bare bundle is what `dci export-cloudflow-flow` writes; import wants it
+// nested under `bundle`. The CLI wraps it so the two commands compose.
+func TestValidateRequestBodyWrapsBareCloudflowBundle(t *testing.T) {
+	pipeRequestBody(t, bareCloudflowBundle)
+
+	command := &cobra.Command{Use: "import-cloudflow-flow", Long: importCloudflowFlowHelp}
+	if err := validateRequestBody(command, nil); err != nil {
+		t.Fatalf("bare bundle rejected: %v", err)
+	}
+	forwardedBody, err := io.ReadAll(cli.Stdin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request struct {
+		Bundle struct {
+			Kind          string `json:"kind"`
+			SchemaVersion int    `json:"schemaVersion"`
+			RootFlow      string `json:"rootFlow"`
+			Flows         []struct {
+				Name string `json:"name"`
+			} `json:"flows"`
+		} `json:"bundle"`
+	}
+	if err := json.Unmarshal(forwardedBody, &request); err != nil {
+		t.Fatalf("wrapped body is not valid JSON (%v): %s", err, forwardedBody)
+	}
+	if request.Bundle.Kind != cloudflowBundleKind || request.Bundle.SchemaVersion != 1 {
+		t.Fatalf("bundle discriminator lost: %s", forwardedBody)
+	}
+	if request.Bundle.RootFlow != "flow-1" || len(request.Bundle.Flows) != 1 ||
+		request.Bundle.Flows[0].Name != "Nightly report" {
+		t.Fatalf("bundle contents lost: %s", forwardedBody)
+	}
+}
+
+// A request that already carries `bundle` — the shape needed to pass bindings
+// — must reach the API byte-for-byte.
+func TestValidateRequestBodyLeavesWrappedImportRequestAlone(t *testing.T) {
+	request := `{"bundle":` + bareCloudflowBundle + `,"bindings":{"connections":{"aws":"conn-1"}}}`
+	pipeRequestBody(t, request)
+
+	command := &cobra.Command{Use: "import-cloudflow-flow", Long: importCloudflowFlowHelp}
+	if err := validateRequestBody(command, nil); err != nil {
+		t.Fatalf("wrapped request rejected: %v", err)
+	}
+	forwardedBody, err := io.ReadAll(cli.Stdin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(forwardedBody) != request {
+		t.Fatalf("wrapped request was rewritten:\n got %s\nwant %s", forwardedBody, request)
+	}
+}
+
+// The wrap is scoped to the import command: a bundle piped anywhere else stays
+// an unknown-field error rather than being silently reshaped.
+func TestValidateRequestBodyDoesNotWrapBundleForOtherCommands(t *testing.T) {
+	pipeRequestBody(t, bareCloudflowBundle)
+
+	command := &cobra.Command{Use: "query-reports", Long: queryRequestHelp}
+	err := validateRequestBody(command, nil)
+	if err == nil {
+		t.Fatal("bare bundle accepted by an unrelated command")
+	}
+	if !strings.Contains(err.Error(), "kind") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

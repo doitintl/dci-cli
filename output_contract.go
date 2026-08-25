@@ -149,6 +149,39 @@ func installOutputGuard() {
 	}
 }
 
+// verbatimJSONResponseOperations answer with a document meant to be saved and
+// fed back to the API unchanged, so the body has to reach stdout as JSON in
+// every mode: TOON is not JSON, and the table renderer reduces a flow bundle
+// to its `flows` array, dropping the `kind`, `schemaVersion`, `rootFlow` and
+// `requirements` that make the bundle importable.
+var verbatimJSONResponseOperations = map[string]bool{
+	"export-cloudflow-flow": true,
+}
+
+// multiSectionResponseOperations answer with several sibling sections rather
+// than a row set. The table renderer keeps only the largest array of objects
+// and silently drops the rest, which for an import means losing the dry-run
+// plan's `valid` and `errors` — a rejected plan then renders as a clean
+// requirements list — or the result's `orphanedResources`, the side resources
+// a failed import leaked for the caller to clean up by hand. TOON encodes the
+// whole body, so agent mode keeps it.
+var multiSectionResponseOperations = map[string]bool{
+	"import-cloudflow-flow": true,
+}
+
+// defaultOutputFormatForCommand picks the output format for a command invoked
+// without --output.
+func defaultOutputFormatForCommand(commandName string) string {
+	if verbatimJSONResponseOperations[commandName] {
+		return "json"
+	}
+	format := defaultOutputFormat()
+	if format == "table" && multiSectionResponseOperations[commandName] {
+		return "json"
+	}
+	return format
+}
+
 func commaSeparatedValues(value string) []string {
 	seen := map[string]bool{}
 	result := make([]string, 0)
