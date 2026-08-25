@@ -50,8 +50,12 @@ human finishes them in the builder before publishing.
   the same models the CloudFlow builder UI uses to render parameter forms.
 - The public API spec already defines server-side NL endpoints: `buildCloudFlow`
   (`POST /cloudflow/v1/flows/actions/build`) and `refineCloudFlow`
-  (`POST /cloudflow/v1/flows/{flowId}/actions/refine`), both streaming build events. The CLI
-  does not expose them yet (§7).
+  (`POST /cloudflow/v1/flows/{flowId}/actions/refine`), both streaming build events — and the
+  CLI already surfaces them from the spec as `build-cloud-flow` / `refine-cloud-flow` (§7).
+- The platform's AI assistant already carries internal tools for this spec's retrieval layer —
+  operation search, operation detail, node + operation schema — and a platform epic
+  (CMP-43801) is building the public CloudFlow API + MCP surface they belong on, with a shared
+  flow validator (CMP-44169). See §5 and the decision log (§10).
 
 ## 3. The Firestore model store (as inspected)
 
@@ -119,7 +123,17 @@ New reference in the shipped skill, wired into `SKILL.md` the way `query-pattern
 ## 5. Retrieval layer: two read-only API endpoints
 
 Exposed through the DCI API, so they become locked-down CLI commands and MCP/Custom-GPT actions
-with no per-surface work.
+with no per-surface work. Available to both Doers and customers (D2, §10) — the store's content
+is provider API metadata, not tenant data.
+
+**Build on what already exists — do not build new retrieval machinery.** The platform's AI
+assistant already has internal tools implementing exactly this layer: operation search, single
+operation detail, and node + operation schema retrieval, alongside the NL flow builder itself.
+And an in-flight platform epic (the CloudFlow external API + remote MCP server, CMP-43801) is
+building the public surface these belong on, including direct-graph flow writes that run
+through a shared backend flow validator (CMP-44169) with a uniform `?dryRun=true` contract.
+The two endpoints below are therefore *exposure* work — thin public wrappers over the existing
+internal tools, landed as part of that epic's surface — not new services (D1, §10).
 
 **Operation search** — `dci list-cloudflow-operations --provider aws --search "upload file"`.
 Backed by vector search over `searchVector` (falling back to keyword over
@@ -168,10 +182,16 @@ service/provider context. Keyword-stuffing is unnecessary; the embeddings alread
   whatever the resource type is" operations) so the agent knows when to ask instead of filling
   silence.
 
-**Deep dry-run validation** (backend, same models): extend the import dry-run to validate each
-API node's filled parameters against the store — unknown field, missing required member, enum
-violation, type mismatch. Catches human-edited bundles too, and turns any residual guessing
-into an in-loop, actionable error instead of a runtime failure after publish.
+**Deep dry-run validation** (backend, same models) — **decided, D3 (§10)**: extend the import
+dry-run to validate each API node's filled parameters against the store — unknown field,
+missing required member, enum violation, type mismatch. Catches human-edited bundles too, and
+turns any residual guessing into an in-loop, actionable error instead of a runtime failure
+after publish. Rather than a bespoke import-path checker, this should ride the shared flow
+validator the external-API epic is standardizing on (CMP-44169) so import, direct-graph
+writes, and the NL builder all validate identically. Rollout posture: findings surface as
+dry-run *warnings* first; promote to import-blocking errors once a survey of real imports
+shows near-zero false positives (existing bundles that import fine today with silently
+ignored junk fields must not start failing without notice).
 
 ## 6. Discovery: from non-technical language to the right operation
 
@@ -192,9 +212,14 @@ The platform already has a server-side NL builder streaming build events. Two fr
 need:
 
 - **Server builder**: interactive Console UX, no local tooling, platform-controlled quality.
-  The CLI should expose both endpoints (`dci build-cloudflow`, `dci refine-cloudflow`) once the
-  operations are in the CLI's allowlist — SSE handling follows the `ask-ava-streaming`
-  precedent.
+  Both operations are already in the published OpenAPI spec, and the CLI surfaces them from it
+  with no repo change: `dci build-cloud-flow` and `dci refine-cloud-flow` (verified against the
+  live spec and a fresh build, 2026-08-25). SSE responses stream through the same path
+  `ask-ava-streaming` uses. Two follow-ups, neither blocking: the operationIds kebab-case to
+  `build-cloud-flow`/`refine-cloud-flow` while the rest of the family spells it
+  `-cloudflow-` (`import-cloudflow-flow`, `list-cloudflows`) — worth an operationId alignment
+  upstream or a CLI-side alias; and the skill should document both commands when
+  `cloudflow-authoring.md` lands (§4).
 - **Agent path (this spec)**: reviewable JSON artifacts, diffable in git, cross-tenant via
   export/import, composable into larger agent workflows, works in CI, and usable by any model
   the customer brings.
@@ -219,21 +244,37 @@ Extend the skill's eval convention (`references/evals.md`):
 ## 9. Sequencing
 
 1. **Skill reference** (`cloudflow-authoring.md`): anatomy, wiring, archetypes from real
-   exports, the hard rule, the pipeline. Ships value immediately — dry-run alone already closes
-   the loop for structure-level errors. (This repo.)
-2. **Schema endpoint**, AWS first (largest, most guess-prone), with scaffold + depth control.
-   (Backend; CLI picks it up via the OpenAPI surface + allowlist.)
-3. **Search endpoint** over the existing embeddings. (Backend.)
-4. **Deep dry-run validation** against the models. (Backend.)
-5. **Expose `build-cloudflow`/`refine-cloudflow`** in the CLI. (This repo, once allowlisted.)
-6. **Evals** once failure modes stabilize.
+   exports, the hard rule, the pipeline — including the two already-live builder commands and
+   interim guidance for the retrieval gap (clone a similar exported flow, `--help-full`,
+   dry-run; flag uncertain parameters for the builder). Ships value immediately. (This repo.)
+2. **Public exposure of the existing internal search + schema tools**, as part of the
+   CloudFlow external API epic's surface (CMP-43801), with the schema-endpoint response
+   contract from §5 (JSON Schema, docs stripped, depth control, scaffold, completeness hint).
+   (Backend epic; the CLI picks the operations up from the spec automatically.)
+3. **Deep dry-run validation** via the shared flow validator (CMP-44169), warnings-first
+   (D3). (Backend.)
+4. **Evals** once failure modes stabilize.
 
-## 10. Open questions
+~~Expose `build-cloudflow`/`refine-cloudflow` in the CLI~~ — already done by the published
+spec; only the skill documentation remains (folded into step 1).
 
-- Which embedding model produced `searchVector` (768-dim), and does the backend already have a
-  query path over these vectors (a Firestore vector index serving the Console builder or Ava)?
-  If so, the search endpoint (§5) is a thin wrapper over an existing pipeline. Either way the
-  endpoint embeds queries server-side with the same model; the CLI never embeds client-side.
+## 10. Decision log
+
+Decisions taken 2026-08-25 (maintainer):
+
+| # | Decision | Choice |
+|---|---|---|
+| D1 | Build new retrieval endpoints vs. reuse in-flight work | **Reuse**: the internal AI-assistant tools already implement operation search and node/operation schema retrieval, and the CloudFlow external API + MCP epic (CMP-43801) owns the public surface. This spec's §5 contract lands as exposure work inside that epic, not as new services. |
+| D2 | Endpoint audience | **Both Doers and customers.** The model store is provider API metadata, not tenant data. |
+| D3 | Deep dry-run validation | **Yes** — via the shared flow validator (CMP-44169); warnings-first, promoted to errors after a false-positive survey (§5). |
+| D4 | CLI exposure of the NL builder endpoints | **Now** — and verified already live: `build-cloud-flow` / `refine-cloud-flow` surface from the published spec with no repo change (§7). |
+
+## 11. Open questions
+
+- ~~Does the backend already have a query path over these vectors?~~ **Answered**: yes — the
+  AI assistant's internal operation-search tool (D1, §10). Remaining detail for the exposure
+  work: confirm the public wrapper reuses that tool's embedding model and index verbatim; the
+  CLI never embeds client-side.
 - How thin is the store on polymorphic payloads (GCP/Azure "resource as body" operations)? The
   §5 `completeness` hint needs a survey to calibrate.
 - Node envelope schema: is there a canonical machine-readable schema for node JSON (the
