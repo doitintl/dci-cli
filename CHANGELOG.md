@@ -26,6 +26,38 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.6.1 — August 25, 2026
+
+### New
+
+- The AI session rings the terminal bell when an answer that ran commands
+  finishes, so you can switch away during a long investigation and still
+  catch the result. `/bell` turns it off and remembers your choice.
+- One-shot mode can control how much of the investigation you see:
+  `dci ai -q "question"` prints just the answer, and `--verbose` keeps the
+  full narration even when output is piped to a file.
+
+### Improved
+
+- In the AI session's command popup, `Enter` now selects the highlighted
+  command, matching other CLIs (`Tab` still works too).
+- AI answers label their numbers: cost tables state the currency and usage
+  tables name the metric, with one consistent scale per column. Query
+  results always carry a currency on cost columns — US dollars when the
+  query doesn't choose one.
+- The `/mouse` choice is remembered across sessions.
+- Starting `dci ai` without an API key offers the guided key setup right
+  away — type a `/` command to skip past it, or press `Esc` to dismiss it.
+
+### Fixed
+
+- AI session rendering on wide terminals: answers and tables use the full
+  terminal width, and `Ctrl+L` reliably repaints a frame disturbed by
+  terminal scrolling.
+- `dci export-cloudflow-flow` writes the complete flow bundle as JSON, so
+  the exported file can actually be imported; import results report
+  validation errors instead of hiding them.
+
 ## v2.6.0 — August 24, 2026
 
 ### New
