@@ -27,6 +27,7 @@ var releasedSkillFileDigests = map[string]map[string]bool{
 		"67b73db41a4860739892c4a750cd1a82287f4df19915928e403adfe3509885bf": true,
 		"a95ba3373873770a705369f06ecacc94c4541dbaba5eaf869226ca22e84d50b6": true,
 		"4f56df34fb0683644de44185bd34d0cbd5a14dae59f57d2e195851d42754b8c6": true,
+		"6b479c1ecc4af1543d7eb6143a4a158ea5d817f5bffed23482d44dd7f6a13085": true,
 	},
 	"agents/openai.yaml": {
 		"71d2d01635821bea91a2db815e1699766423c2c1673b25536448f9e0f97ba31e": true,
