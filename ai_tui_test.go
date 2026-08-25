@@ -1369,3 +1369,48 @@ func TestAISessionWithKeySkipsStartupKeySetup(t *testing.T) {
 		t.Fatal("a keyed session must not open in key setup")
 	}
 }
+
+func TestAICompletionWindow(t *testing.T) {
+	cases := []struct{ index, total, size, want int }{
+		{0, 4, 6, 0},    // fits: no scroll
+		{3, 4, 6, 0},    // fits: no scroll
+		{5, 20, 6, 0},   // last row of the first page
+		{6, 20, 6, 1},   // one past the page: window slides
+		{19, 20, 6, 14}, // last match: window ends at the tail
+	}
+	for _, c := range cases {
+		if got := aiCompletionWindow(c.index, c.total, c.size); got != c.want {
+			t.Errorf("aiCompletionWindow(%d,%d,%d) = %d, want %d", c.index, c.total, c.size, got, c.want)
+		}
+	}
+}
+
+func TestAICompletionPopupScrollsPastVisibleRows(t *testing.T) {
+	m := aiTestModel(t)
+	catalog := make([]aiCatalogEntry, 0, 9)
+	for _, name := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"} {
+		catalog = append(catalog, aiCatalogEntry{Path: "list-" + name, Summary: "List " + name})
+	}
+	m.catalog = catalog
+	m = aiType(m, "/list-")
+	if len(m.completions) != 9 {
+		t.Fatalf("completions = %d, want all 9 matches behind the window", len(m.completions))
+	}
+	for range [8]int{} { // move to the last match, past the visible window
+		m, _ = aiPress(m, tea.KeyDown)
+	}
+	if m.completionIndex != 8 {
+		t.Fatalf("completionIndex = %d, want 8", m.completionIndex)
+	}
+	view := m.View()
+	if !strings.Contains(view, "list-i") || !strings.Contains(view, "9/9") {
+		t.Fatalf("view lacks the scrolled-to candidate or its counter:\n%s", view)
+	}
+	if strings.Contains(view, "list-a ") {
+		t.Fatal("first match should have scrolled out of the window")
+	}
+	m, _ = aiPress(m, tea.KeyTab)
+	if got := m.input.Value(); got != "/list-i " {
+		t.Fatalf("tab accepted %q, want /list-i", got)
+	}
+}
