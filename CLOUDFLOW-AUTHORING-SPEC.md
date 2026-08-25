@@ -7,8 +7,9 @@ specification — including one written by a non-technical user — into a corre
 `FlowBundle` JSON that imports cleanly through `dci import-cloudflow-flow`. Covers the knowledge
 layer (skill content), the retrieval layer (new read-only API endpoints backed by the existing
 Firestore API-model store), the verification layer (dry-run), and the end-to-end authoring
-pipeline. Grounded in a live inspection of the dev Firestore model store (2026-08-25,
-`doitintl-cmp-dev`, `(default)` database) — every claim about stored models cites what was read.
+pipeline. Grounded in a live inspection of the dev-environment Firestore model store
+(2026-08-25) — every claim about stored models cites what was read. Environment identifiers and
+the store's root collection path are deliberately omitted: this repo is public.
 
 Out of scope: implementing the API endpoints themselves (they live in the platform backend, not
 this repo — this spec is the coordination document); replacing the Console's own NL builder
@@ -54,9 +55,10 @@ human finishes them in the builder before publishing.
 
 ## 3. The Firestore model store (as inspected)
 
-Path: `cloudflowEngine/integrations/apis/{provider}/services/{service}/versions/{version}/`
-with subcollections `operations`, `models`, `waiters`. Note: the `apis` and `triggers` parents
-are virtual documents — enumerating them requires `showMissing=true`.
+Layout (root path omitted — public repo): a per-provider hierarchy
+`…/apis/{provider}/services/{service}/versions/{version}/` with subcollections `operations`,
+`models`, and `waiters`, plus a sibling `…/triggers/sources` hierarchy. Note: the `apis` and
+`triggers` parents are virtual documents — enumerating them requires `showMissing=true`.
 
 Seven providers, uniformly structured: **AWS, GCP, Azure, Oracle, Anthropic, OpenAI, DoiT**
 (the platform's own API is itself a node provider). AWS alone has 300+ services;
@@ -123,6 +125,31 @@ with no per-surface work.
 Backed by vector search over `searchVector` (falling back to keyword over
 name + `description`). Returns operation IDs, the curated one-line descriptions, and
 service/provider context. Keyword-stuffing is unnecessary; the embeddings already exist.
+
+*Is Firestore itself enough, or does this need a dedicated RAG/vector-search system?*
+**Firestore native KNN vector search is sufficient; no new retrieval infrastructure** —
+**decided**, revisit only if the §8 evals falsify it:
+
+- **Scale**: the corpus is on the order of 10⁵ operation documents (AWS alone has 300+
+  services), one 768-dim vector each. That is comfortably inside Firestore vector search's
+  design envelope; this is not a scale that justifies a separate vector database.
+- **Latency budget**: the caller is an agent loop, not interactive typeahead. Tens to a few
+  hundred ms per search is invisible next to the model's own token generation; recall is the
+  metric that matters, not speed.
+- **Recall bar**: hit-in-top-20, not top-1. The agent reads the returned descriptions, picks,
+  and reformulates on a miss — imperfect ranking is self-correcting in a way it would not be
+  for a human UI. The §8 evals assert exactly this (expected operation present in top-k);
+  only a measured failure there justifies heavier machinery.
+- **What Firestore needs configured**: a vector index over the operations collection group
+  with the provider (and optionally service) fields as prefilters, and query embeddings from
+  the same model that produced the stored vectors (open question, §10).
+- **Lexical path**: Firestore has no full-text search. Exact/prefix match on operation and
+  service names covers "the user typed the real name"; if genuine keyword search proves
+  necessary, ride the platform's existing search infrastructure rather than introducing a new
+  engine for this feature.
+- **Not RAG**: no chunking, no context-stuffing pipeline. The store is already one embedding
+  per structured record and retrieval is a targeted tool call returning a handful of small
+  results — classic RAG machinery would add moving parts without adding recall.
 
 **Operation schema** — `dci get-cloudflow-operation-schema aws s3 PutObject`. Returns:
 
@@ -203,9 +230,10 @@ Extend the skill's eval convention (`references/evals.md`):
 
 ## 10. Open questions
 
-- Which embedding model produced `searchVector` (768-dim)? The search endpoint must embed
-  queries with the same model; if it's an internal choice, the endpoint hides it — but the CLI
-  spec should not assume client-side embedding.
+- Which embedding model produced `searchVector` (768-dim), and does the backend already have a
+  query path over these vectors (a Firestore vector index serving the Console builder or Ava)?
+  If so, the search endpoint (§5) is a thin wrapper over an existing pipeline. Either way the
+  endpoint embeds queries server-side with the same model; the CLI never embeds client-side.
 - How thin is the store on polymorphic payloads (GCP/Azure "resource as body" operations)? The
   §5 `completeness` hint needs a survey to calibrate.
 - Node envelope schema: is there a canonical machine-readable schema for node JSON (the
