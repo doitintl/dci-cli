@@ -1572,7 +1572,12 @@ func aiExecutablePath() string {
 // glamour's WithAutoStyle queries the terminal background (OSC 11) on every
 // render, and inside the running program Bubble Tea's input reader swallows
 // the terminal's reply — the printable tail (";rgb:0000/0000/0000\") then
-// lands in the textarea as if the user typed it.
+// lands in the textarea as if the user typed it. This call is effectively
+// free: Bubble Tea v1's package init() already ran the terminal query and
+// cached the answer (tea_init.go upstream). That init is also where a mute
+// terminal (a pty harness that never answers OSC 11 / CSI 6n) pays termenv's
+// 5s OSCTimeout — before main() runs, so it is not fixable here; Bubble Tea
+// v2 removes the init. Real terminals answer in ~1ms.
 func aiMarkdownStyle() string {
 	if lipgloss.HasDarkBackground() {
 		return "dark"
