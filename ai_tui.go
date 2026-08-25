@@ -425,7 +425,7 @@ func (m *aiModel) append(block string) {
 // In-flight turn activity (narration, tool traffic) lives in the status line,
 // not here — the transcript only ever gains finished blocks.
 func (m *aiModel) refreshTranscript() {
-	m.view.SetContent(strings.Join(m.transcript, "\n"))
+	m.view.SetContent(strings.Join(m.transcript, "\n\n"))
 	if m.follow {
 		m.view.GotoBottom()
 	}
@@ -1238,7 +1238,7 @@ func aiExportTranscript(transcript []string, args []string, now time.Time) (stri
 	}
 	// stripANSI is the error contract chapter's helper; the transcript export
 	// wants the same plain text.
-	content := stripANSI(strings.Join(transcript, "\n")) + "\n"
+	content := stripANSI(strings.Join(transcript, "\n\n")) + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", err
 	}
@@ -1406,8 +1406,13 @@ func aiMarkdownStyle() string {
 // renderAIMarkdown renders committed answer text as markdown, falling back
 // to the raw text when the renderer objects (exotic terminals).
 func renderAIMarkdown(text string, width int, style string) string {
-	if width <= 0 || width > 100 {
-		width = 100
+	// Use the terminal width we've got: answers, and especially markdown
+	// tables, wrap at the viewport's real width instead of an arbitrary cap
+	// that squeezed tables into wrapped cells on wide terminals.
+	if width <= 0 {
+		width = 100 // size unknown (first render, tests)
+	} else if width < 20 {
+		width = 20 // keep glamour sane on absurdly narrow panes
 	}
 	if style == "" {
 		style = "dark"
