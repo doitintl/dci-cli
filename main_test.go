@@ -3083,6 +3083,7 @@ var expectedSkillFiles = []string{
 	"skills/dci-cli/SKILL.md",
 	"skills/dci-cli/agents/openai.yaml",
 	"skills/dci-cli/references/capabilities.md",
+	"skills/dci-cli/references/cloudflow-authoring.md",
 	"skills/dci-cli/references/cost-optimization.md",
 	"skills/dci-cli/references/csp-patterns.md",
 	"skills/dci-cli/references/evals.md",

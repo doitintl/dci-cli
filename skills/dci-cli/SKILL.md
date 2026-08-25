@@ -85,6 +85,15 @@ dci query < query.json
 
 Load [query-patterns.md](references/query-patterns.md) for payload examples.
 
+## CloudFlow Authoring
+
+To create or modify a CloudFlow flow from a natural-language request — via the server-side NL
+builder (`build-cloud-flow`/`refine-cloud-flow`), or by authoring a `FlowBundle` JSON through
+the export → edit → dry-run → import loop — load
+[cloudflow-authoring.md](references/cloudflow-authoring.md) first. It carries the hard rules
+(clone-and-edit over generation, never invent node parameters, always dry-run), the bundle
+anatomy, and the flow archetypes.
+
 ## Safety
 
 - Prefer env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context> dci ...` over `dci customer-context set` unless the user explicitly wants a persistent local change.
@@ -110,6 +119,7 @@ Load [query-patterns.md](references/query-patterns.md) for payload examples.
 - Load [capabilities.md](references/capabilities.md) for the capability tree, command families, and invocation patterns.
 - Load [examples.md](references/examples.md) for generalized install/auth, discovery, report, query, and mutation examples.
 - Load [query-patterns.md](references/query-patterns.md) for JSON query workflows.
+- Load [cloudflow-authoring.md](references/cloudflow-authoring.md) to create or modify CloudFlow flows from natural language — NL builder commands, FlowBundle anatomy, archetypes, and the dry-run import loop.
 - Load [cost-optimization.md](references/cost-optimization.md) for an anonymized 30-day cost analysis example.
 - Load [finops-baseline.md](references/finops-baseline.md) for the greenfield workflow: bring an account from unmanaged spend to budgets, alerts, and allocations in one session.
 - Load [evals.md](references/evals.md) to validate the skill against realistic user prompts.

@@ -111,6 +111,17 @@ the CLI guide.
   environment variable and get the script behavior — a pipeline can never
   hang on an interactive session.
 
+### New
+
+- The bundled agent skill now teaches
+  [CloudFlow](https://help.doit.com/docs/operate/cloudflow/intro) flow
+  authoring: agents can build or refine flows from a natural-language request
+  with `dci build-cloud-flow` and `dci refine-cloud-flow`, or author a flow
+  bundle by hand through the export → edit → dry-run → import loop, with
+  guardrails that keep generated flows honest (clone real flows instead of
+  guessing node parameters, validate with a dry run, land as drafts). Run
+  `dci skill update` to refresh installed copies.
+
 ### Fixed
 
 - The AI session's command popup scrolls: with more matches than fit (say
