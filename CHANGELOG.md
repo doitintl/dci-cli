@@ -26,6 +26,15 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.6.3 — August 25, 2026
+
+### Fixed
+
+- The AI session's command popup scrolls: with more matches than fit (say
+  `/list`), pressing `↓` now moves through all of them — a counter on the
+  highlighted row shows where you are in the list. Previously matches past
+  the sixth row were unreachable.
+
 ## v2.6.2 — August 25, 2026
 
 ### Fixed

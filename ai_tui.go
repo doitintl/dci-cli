@@ -44,8 +44,12 @@ var (
 )
 
 const (
-	aiCompletionLimit  = 6
-	aiTranscriptBlocks = 500 // frame memory cap; /export preserves everything typed before it
+	aiCompletionLimit = 6 // visible popup rows: a window over the match list
+	// aiCompletionMatchCap bounds the candidates behind the popup window. The
+	// window scrolls with ↑/↓, so this is a sanity cap, not the reachable set
+	// (v2.6.2 dogfood: matches past the visible rows were unreachable).
+	aiCompletionMatchCap = 500
+	aiTranscriptBlocks   = 500 // frame memory cap; /export preserves everything typed before it
 )
 
 // aiRunState tracks the one in-flight user slash dispatch; the session runs
@@ -453,7 +457,11 @@ func (m *aiModel) refreshTranscript() {
 func (m *aiModel) layout() {
 	m.input.SetWidth(m.width - 2)
 	m.view.Width = m.width
-	middle := len(m.completions) + 1 /*input*/
+	popup := len(m.completions)
+	if popup > aiCompletionLimit {
+		popup = aiCompletionLimit // the popup is a window; extra matches scroll
+	}
+	middle := popup + 1 /*input*/
 	if m.picker != nil {
 		middle = m.pickerLines()
 	}
@@ -915,7 +923,7 @@ func (m aiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionLimit))
+	m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionMatchCap))
 	return m, cmd
 }
 
@@ -946,6 +954,23 @@ func (m aiModel) answerApproval(approved bool) (tea.Model, tea.Cmd) {
 	}
 	m.append(aiEchoStyle.Render("↳ " + answer))
 	return m, nil
+}
+
+// aiCompletionWindow returns the first visible row of the completion popup:
+// a size-row window over total candidates that keeps the highlighted row
+// visible — pinned to the bottom row once the selection moves past the first
+// page (v2.6.2 dogfood: the popup used to truncate at the cap, leaving
+// matches past it unreachable). Stateless on purpose: derived from the index
+// alone, so wrap-around navigation needs no offset bookkeeping.
+func aiCompletionWindow(index, total, size int) int {
+	start := index - size + 1
+	if start < 0 {
+		start = 0
+	}
+	if max := total - size; start > max && max >= 0 {
+		start = max
+	}
+	return start
 }
 
 // acceptCompletion replaces the input with the highlighted completion, ready
@@ -1169,7 +1194,7 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// (mid-key paste) or after a question queued the setup stays key input.
 		m.keyEntry = false
 		m.input.SetValue(string(msg.Runes))
-		m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionLimit))
+		m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionMatchCap))
 		return m, nil
 	}
 	if msg.Type == tea.KeyRunes {
@@ -1695,12 +1720,21 @@ func (m aiModel) View() string {
 	case m.picker != nil:
 		b.WriteString(m.pickerView())
 	default:
-		for index, completion := range m.completions {
+		start := aiCompletionWindow(m.completionIndex, len(m.completions), aiCompletionLimit)
+		end := start + aiCompletionLimit
+		if end > len(m.completions) {
+			end = len(m.completions)
+		}
+		for index := start; index < end; index++ {
+			completion := m.completions[index]
 			line := fmt.Sprintf(" /%s  %s", completion.Value, aiEchoStyle.Render(completion.Summary))
 			if index == m.completionIndex {
 				line = aiSelectedStyle.Render(" /" + completion.Value + " ")
 				if completion.Summary != "" {
 					line += " " + aiEchoStyle.Render(completion.Summary)
+				}
+				if len(m.completions) > aiCompletionLimit {
+					line += aiEchoStyle.Render(fmt.Sprintf("  %d/%d", index+1, len(m.completions)))
 				}
 			}
 			b.WriteString(line)
