@@ -206,6 +206,31 @@ knowledge is abundant in training data); the risks are elsewhere, and each has a
 | Open-ended composition | Classify into an archetype (§4) first; discovery becomes "which template, what fills the slots". |
 | Wrong guess ships silently | **Confirm the plan in prose before generating JSON** — "Every Monday I'll run your cost report, upload the CSV to `finance-reports`, and post the link to #finops. Correct?" — the one party who knows the intent vets it at the cost of a sentence. |
 
+**Worked example** (verbatim early-tester prompt, IDs anonymized): *"generate a flow that takes
+the results of the report `<report-id>` from customer `<customer-id>` and push the data into a
+datahub dataset"*. Through the pipeline:
+
+- **Ground** — the prompt embeds a customer ID, so this is a Doer authoring on a customer's
+  behalf: the flow must land in *that* tenant (customer context / `-D`), and tenant targeting
+  belongs in the ground step, not as an afterthought. Literal IDs in a prompt are verified,
+  never trusted: `dci get-report <report-id>` under the target context confirms the report
+  exists before anything is generated.
+- **Classify** — the *fetch → transform → ingest* archetype.
+- **Resolve** — both API nodes resolve inside the **DoiT provider** of the model store: report
+  results retrieval and DataHub ingestion. The intent catalog (§6 table) must cover
+  DoiT-internal intents ("push to DataHub", "get report results"), not just cloud-provider
+  ones.
+- **Wire** — the interesting node is the Transform between them: mapping report-result rows
+  into DataHub's ingestion event shape. This is exactly why the schema endpoint serves
+  `outputModel` too (§5): the mapping needs the *output* schema of the report node and the
+  *input* schema of the ingest node in context at the same time. Row volume makes
+  batching/pagination part of the wiring guidance, not an edge case.
+- **Clarify/confirm** — the prompt names no trigger ("something like this"); one plain-language
+  question (scheduled or manual?) plus the prose plan closes it.
+
+This prompt is seed eval #1 (§8): it exercises Doer tenant targeting, DoiT-provider operation
+resolution, two-sided schema retrieval for a transform, and trigger clarification in one case.
+
 ## 7. Relationship to `buildCloudFlow` / `refineCloudFlow`
 
 The platform already has a server-side NL builder streaming build events. Two front doors, one
@@ -234,7 +259,8 @@ generator where available, then refine the exported JSON through the local loop.
 Extend the skill's eval convention (`references/evals.md`):
 
 - Prompts phrased as a **non-technical user** would ("make sure my team gets the cost report
-  every week"), not as an engineer would.
+  every week"), not as an engineer would. Seed the suite with real tester prompts as they
+  arrive — the report-to-DataHub prompt in §6 is seed eval #1.
 - Assert on: chosen operations (catch `s3:PutBucketAcl` for "share the file"), dry-run plan
   cleanliness, declared requirements, and — where deep validation lands — zero parameter
   errors.
