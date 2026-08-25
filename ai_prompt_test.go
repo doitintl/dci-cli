@@ -166,3 +166,10 @@ func TestAIUserCommands(t *testing.T) {
 		t.Fatalf("saved commands missing from completion: %+v", completions)
 	}
 }
+
+func TestAISystemPromptStatesUnitsRule(t *testing.T) {
+	prompt := aiSystemPrompt(nil, false, false)
+	if !strings.Contains(prompt, "State units") || !strings.Contains(prompt, "currency field") {
+		t.Fatal("prompt lacks the units/currency labeling rule (AI-POLISH-SPEC F4)")
+	}
+}

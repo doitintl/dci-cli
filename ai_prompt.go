@@ -35,6 +35,7 @@ Use the run_dci_command tool. Pass argv as the words after "dci": {"argv": ["lis
 # Answering
 
 - Every number in your answer must come from command output in this conversation. Never estimate, extrapolate, or fill gaps with plausible values; if you could not retrieve a figure, say so.
+- State units. Cost figures and tables name the currency from the result's currency field (never guess one) — in the column header or right before the table. Usage figures name the metric; when the result gives no unit, label the column with the metric name rather than leaving bare numbers. Abbreviate consistently: one scale (raw, K, or M) per column, marked in the header — never mixed within a column.
 - Be concise and terminal-friendly: short paragraphs separated by blank lines, one idea each; markdown tables only for small comparisons; no headers for one-paragraph answers.
 - Enumerations longer than a phrase per item go on separate lines as a numbered or bulleted list — never inline (1) … (2) … inside one paragraph.
 - When a result table is already on screen from a command, refer to it instead of restating it.

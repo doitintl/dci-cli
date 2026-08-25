@@ -35,6 +35,7 @@ var aiSessionVerbs = []aiSessionVerb{
 	{name: "model", usage: "/model [id]", summary: "Show or set the AI model"},
 	{name: "export", usage: "/export [file]", summary: "Save the transcript to a file"},
 	{name: "mouse", usage: "/mouse", summary: "Toggle mouse capture (off = select/copy text)"},
+	{name: "bell", usage: "/bell", summary: "Toggle the end-of-turn terminal bell"},
 	{name: "clear", usage: "/clear", summary: "Clear the transcript and start a new conversation"},
 	{name: "help", usage: "/help", summary: "Show how the session works"},
 	{name: "quit", usage: "/quit", summary: "Leave the session"},
@@ -413,6 +414,22 @@ func aiCompletionsFor(input string, catalog []aiCatalogEntry, userCommands map[s
 		merged = merged[:limit]
 	}
 	return merged
+}
+
+// aiCompletionExact reports whether the input already names one of the popup's
+// completions exactly (input = "/" + value). Enter then submits instead of
+// re-accepting what the user has fully typed (AI-POLISH-SPEC F1); with the
+// input still a partial token, Enter accepts the highlighted completion like
+// Tab does. Case-sensitive on purpose: "/QUIT" is not the verb, so Enter
+// corrects it to the completion's spelling rather than submitting it.
+func aiCompletionExact(input string, completions []aiCompletion) bool {
+	token := strings.TrimPrefix(strings.TrimSpace(input), "/")
+	for _, completion := range completions {
+		if token == completion.Value {
+			return true
+		}
+	}
+	return false
 }
 
 // --- History ----------------------------------------------------------------

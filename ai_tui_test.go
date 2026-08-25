@@ -19,6 +19,10 @@ func aiTestModel(t *testing.T) aiModel {
 	t.Helper()
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	model := newAIModel(t.TempDir())
+	// A keyless session opens in the guided key setup (F7); these tests
+	// exercise the normal session, so dismiss it the way a user would.
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(aiModel)
 	model.catalog = aiTestCatalog()
 	return model
 }
@@ -1230,5 +1234,108 @@ func TestAIStatusLineKeepsAffordanceWhenNarrow(t *testing.T) {
 				t.Errorf("%s at %d columns: status is %d cells wide: %q", state.name, width, got, status)
 			}
 		}
+	}
+}
+
+func TestAIEnterAcceptsCompletionLikeTab(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "/li")
+	m, _ = aiPress(m, tea.KeyEnter)
+	if got := m.input.Value(); got != "/list-anomalies " {
+		t.Fatalf("input after enter = %q, want the accepted completion", got)
+	}
+	if len(m.completions) != 0 {
+		t.Fatalf("popup still open after enter: %+v", m.completions)
+	}
+	if len(m.history) != 0 {
+		t.Fatalf("enter submitted the partial token: history = %v", m.history)
+	}
+}
+
+func TestAIEnterSubmitsExactCompletion(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "/help")
+	if len(m.completions) == 0 {
+		t.Fatal("expected the popup for /help")
+	}
+	m, _ = aiPress(m, tea.KeyEnter)
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input after enter = %q, want submitted (empty)", got)
+	}
+	if len(m.history) == 0 || m.history[len(m.history)-1] != "/help" {
+		t.Fatalf("exact command not submitted: history = %v", m.history)
+	}
+}
+
+func TestAIBellWorthy(t *testing.T) {
+	if aiBellWorthy(aiTurnDone{Wall: time.Second}) {
+		t.Fatal("a fast toolless turn must not ring")
+	}
+	if !aiBellWorthy(aiTurnDone{ToolCalls: 1, Wall: time.Second}) {
+		t.Fatal("a turn that ran commands rings")
+	}
+	if !aiBellWorthy(aiTurnDone{Wall: 5 * time.Second}) {
+		t.Fatal("a long thinking turn rings")
+	}
+}
+
+func TestAIBellToggleAndPersist(t *testing.T) {
+	m := aiTestModel(t)
+	if !m.bellOn {
+		t.Fatal("bell must default on")
+	}
+	m = aiType(m, "/bell")
+	m, _ = aiPress(m, tea.KeyEnter)
+	if m.bellOn {
+		t.Fatal("first /bell should turn the bell off")
+	}
+	if resolveAIBell(loadAISettings(m.configDir)) {
+		t.Fatal("bell off not persisted")
+	}
+	m = aiType(m, "/bell")
+	m, _ = aiPress(m, tea.KeyEnter)
+	if !m.bellOn || !resolveAIBell(loadAISettings(m.configDir)) {
+		t.Fatal("second /bell should restore and persist on")
+	}
+}
+
+func TestAIMouseTogglePersists(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "/mouse")
+	m, _ = aiPress(m, tea.KeyEnter)
+	if !resolveAIMouse(loadAISettings(m.configDir)) {
+		t.Fatal("mouse on not persisted")
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	if again := newAIModel(m.configDir); !again.mouseOn {
+		t.Fatal("a new session should restore the persisted mouse choice")
+	}
+}
+
+func TestAIKeylessSessionOpensKeySetup(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	m := newAIModel(t.TempDir())
+	if !m.keyEntry {
+		t.Fatal("a keyless session should open in the guided key setup")
+	}
+	if joined := strings.Join(m.transcript, "\n"); !strings.Contains(joined, "Esc skips this") {
+		t.Fatalf("startup setup lacks the skip hint: %q", joined)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(aiModel)
+	if m.keyEntry {
+		t.Fatal("esc should drop to a normal session")
+	}
+}
+
+func TestAISessionWithKeySkipsStartupKeySetup(t *testing.T) {
+	old := newAIConversationSession
+	newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
+		return newFakeAISession()
+	}
+	defer func() { newAIConversationSession = old }()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	if m := newAIModel(t.TempDir()); m.keyEntry {
+		t.Fatal("a keyed session must not open in key setup")
 	}
 }

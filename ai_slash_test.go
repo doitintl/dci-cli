@@ -236,3 +236,19 @@ func TestAIHistoryPathStaysInConfigDir(t *testing.T) {
 		t.Fatalf("history path = %q", got)
 	}
 }
+
+func TestAICompletionExact(t *testing.T) {
+	completions := []aiCompletion{{Value: "quit"}, {Value: "customer-context set"}}
+	if !aiCompletionExact("/quit", completions) {
+		t.Fatal("fully typed command should be exact")
+	}
+	if aiCompletionExact("/qui", completions) {
+		t.Fatal("partial token is not exact")
+	}
+	if aiCompletionExact("/QUIT", completions) {
+		t.Fatal("case-mismatched token is not exact — Enter should correct it")
+	}
+	if aiCompletionExact("", nil) {
+		t.Fatal("empty input is never exact")
+	}
+}
