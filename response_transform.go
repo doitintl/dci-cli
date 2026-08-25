@@ -53,14 +53,21 @@ func transformSuccessBody(body interface{}) interface{} {
 	// Currency context travels with the result: agents reading TOON/JSON get
 	// an explicit `currency` field, and the table renderer knows which
 	// symbol to print. Resolved from the query request config (the response
-	// itself carries no currency — an API gap tracked in the improvement
-	// plan).
-	if currency := requestCurrencyContext(); currency != "" {
+	// itself carries no currency — an API gap tracked in doiteng/omni#62101);
+	// when the request declared none AND the result has money-typed columns,
+	// the API's documented default (USD) applies. Usage-only results stay
+	// unstamped — a currency on unit metrics would mislabel them (F4).
+	currency := requestCurrencyContext()
+	moneyColumns := moneyMetricColumns(schema)
+	if currency == "" && len(moneyColumns) > 0 {
+		currency = "USD"
+	}
+	if currency != "" {
 		if _, present := container["currency"]; !present {
 			container["currency"] = currency
 		}
 		viper.Set("report-currency", currency)
-		viper.Set("money-columns", strings.Join(moneyMetricColumns(schema), ","))
+		viper.Set("money-columns", strings.Join(moneyColumns, ","))
 	}
 
 	sortReportRows(rows, schema)

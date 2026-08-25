@@ -1318,13 +1318,43 @@ func TestAIKeylessSessionOpensKeySetup(t *testing.T) {
 	if !m.keyEntry {
 		t.Fatal("a keyless session should open in the guided key setup")
 	}
-	if joined := strings.Join(m.transcript, "\n"); !strings.Contains(joined, "Esc skips this") {
+	if joined := strings.Join(m.transcript, "\n"); !strings.Contains(joined, "press Esc to skip") {
 		t.Fatalf("startup setup lacks the skip hint: %q", joined)
 	}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(aiModel)
 	if m.keyEntry {
 		t.Fatal("esc should drop to a normal session")
+	}
+}
+
+func TestAIKeySetupSlashDropsToCommandInput(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	m := newAIModel(t.TempDir())
+	m.catalog = aiTestCatalog()
+	// A slash on an empty key buffer is a command, as the startup hint
+	// promises — the setup yields to the normal input with the popup open.
+	m = aiType(m, "/li")
+	if m.keyEntry {
+		t.Fatal("typing / should leave the key setup")
+	}
+	if got := m.input.Value(); got != "/li" {
+		t.Fatalf("input = %q, want the typed command prefix", got)
+	}
+	if len(m.completions) == 0 {
+		t.Fatal("popup should open for the typed prefix")
+	}
+	// A slash into a non-empty buffer stays key input (mid-key paste).
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(aiModel)
+	m = aiType(m, "what changed?")
+	m, _ = aiPress(m, tea.KeyEnter) // keyless chat re-opens the setup, question queued
+	if !m.keyEntry {
+		t.Fatal("keyless chat should open the key setup")
+	}
+	m = aiType(m, "sk/")
+	if !m.keyEntry || m.keyBuf != "sk/" {
+		t.Fatalf("mid-key slash left setup: keyEntry=%v buf=%q", m.keyEntry, m.keyBuf)
 	}
 }
 
