@@ -384,3 +384,103 @@ func TestResponseGuardInspectsBodyBeforeProjection(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
+
+// exportedFlowBundle mirrors the shape of an export-cloudflow-flow response:
+// document metadata alongside the `flows` array.
+func exportedFlowBundle() map[string]interface{} {
+	return map[string]interface{}{
+		"kind":          cloudflowBundleKind,
+		"schemaVersion": 1,
+		"rootFlow":      "flow-1",
+		"flows": []interface{}{
+			map[string]interface{}{"key": "flow-1", "name": "Nightly report", "firstNode": "n1"},
+		},
+		"requirements": map[string]interface{}{
+			"connections": []interface{}{
+				map[string]interface{}{"key": "aws-1", "provider": "amazon-web-services", "name": "Prod"},
+			},
+		},
+	}
+}
+
+func TestCloudflowBundleCommandsDefaultToJSONOutput(t *testing.T) {
+	oldAgentMode := agentMode
+	t.Cleanup(func() { agentMode = oldAgentMode })
+
+	for _, agent := range []bool{false, true} {
+		agentMode = agent
+		// The bundle has to be JSON in both modes to stay importable.
+		if got := defaultOutputFormatForCommand("export-cloudflow-flow"); got != "json" {
+			t.Fatalf("export default output (agentMode=%v) = %q, want json", agent, got)
+		}
+		// The import plan only loses sections to the table renderer, so agent
+		// mode keeps TOON — it encodes the whole body.
+		wantImport := "json"
+		if agent {
+			wantImport = "toon"
+		}
+		if got := defaultOutputFormatForCommand("import-cloudflow-flow"); got != wantImport {
+			t.Fatalf("import default output (agentMode=%v) = %q, want %q", agent, got, wantImport)
+		}
+		// Every other command keeps the mode's default: table for humans,
+		// TOON for agents.
+		want := "table"
+		if agent {
+			want = "toon"
+		}
+		if got := defaultOutputFormatForCommand("list-cloudflows"); got != want {
+			t.Fatalf("list default output (agentMode=%v) = %q, want %q", agent, got, want)
+		}
+	}
+}
+
+// The reason export defaults to JSON: the table renderer treats a bundle as a
+// list wrapper around `flows` and drops the document fields that make the
+// bundle importable. If this ever stops being true the JSON default can be
+// revisited — until then it is load-bearing.
+func TestTableRenderingOfAFlowBundleLosesDocumentFields(t *testing.T) {
+	rows, err := toTableRows(exportedFlowBundle(), labelDisplay)
+	if err != nil {
+		t.Fatalf("toTableRows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want the flows array rendered as one row", len(rows))
+	}
+	for _, field := range []string{"kind", "schemaVersion", "rootFlow", "requirements"} {
+		if _, present := rows[0][field]; present {
+			t.Fatalf("table unexpectedly kept %q; re-check the export JSON default", field)
+		}
+	}
+}
+
+// The reason import defaults to JSON: a dry-run plan carries its verdict in
+// `valid`/`errors`, and the table renderer keeps only the longest array — here
+// `requirements` — so a rejected plan would render as a clean requirements
+// list with the errors nowhere in sight.
+func TestTableRenderingOfAnImportPlanLosesTheVerdict(t *testing.T) {
+	plan := map[string]interface{}{
+		"valid": false,
+		"requirements": []interface{}{
+			map[string]interface{}{"section": "connections", "key": "aws-1", "resolution": "unbound"},
+			map[string]interface{}{"section": "globalVariables", "key": "region", "resolution": "willCreate"},
+		},
+		"flowsToCreate": []interface{}{
+			map[string]interface{}{"key": "flow-1", "name": "Nightly report", "nodeCount": 3},
+		},
+		"errors": []interface{}{
+			map[string]interface{}{"code": "binding_not_found", "message": "no connection matches aws-1"},
+		},
+	}
+	rows, err := toTableRows(plan, labelDisplay)
+	if err != nil {
+		t.Fatalf("toTableRows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want the requirements array (the longest section)", len(rows))
+	}
+	for _, field := range []string{"valid", "errors"} {
+		if _, present := rows[0][field]; present {
+			t.Fatalf("table unexpectedly kept %q; re-check the import JSON default", field)
+		}
+	}
+}

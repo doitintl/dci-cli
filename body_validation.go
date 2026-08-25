@@ -61,6 +61,11 @@ func validateRequestBody(command *cobra.Command, args []string) error {
 		bodyArguments = args[pathParameterCount:]
 	}
 	stdinFields, stdinBuffered := bufferStdinTopLevelFields()
+	if stdinBuffered && len(bodyArguments) == 0 {
+		if wrappedFields, wrapped := wrapBareCloudflowBundle(command.Name()); wrapped {
+			stdinFields = wrappedFields
+		}
+	}
 	requestReportCurrency = extractRequestCurrency(validFields, bodyArguments, bufferedRequestBody)
 	if skip, _ := parseBoolish(os.Getenv("DCI_SKIP_BODY_VALIDATION")); skip {
 		return nil
@@ -162,6 +167,52 @@ func bufferStdinTopLevelFields() ([]string, bool) {
 		return nil, true
 	}
 	return jsonTopLevelFields(trimmedData), true
+}
+
+// cloudflowBundleKind is the discriminator every exported CloudFlow bundle
+// carries — a single-value enum in the API schema, so matching it is exact.
+const cloudflowBundleKind = "cloudflow.doit.com/FlowBundle"
+
+// wrapBareCloudflowBundle nests a bare bundle piped into import-cloudflow-flow
+// under the `bundle` field the operation's request schema expects, so what
+// export-cloudflow-flow writes can be imported without hand-editing:
+//
+//	dci export-cloudflow-flow FLOW > bundle.json
+//	dci import-cloudflow-flow --idempotency-key "$(uuidgen)" < bundle.json
+//
+// None of a bare bundle's top-level fields are in the import request schema,
+// so validateRequestBody would reject every one of them: this only rescues
+// input that would otherwise fail. A request that already carries `bundle`
+// (with `bindings` and `options` alongside it) passes through untouched —
+// callers who need bindings write the full request shape themselves.
+//
+// Returns the rewritten body's top-level fields when it wrapped.
+func wrapBareCloudflowBundle(commandName string) ([]string, bool) {
+	if commandName != "import-cloudflow-flow" {
+		return nil, false
+	}
+	body := bytes.TrimSpace(bufferedRequestBody)
+	var probe struct {
+		Kind   string          `json:"kind"`
+		Bundle json.RawMessage `json:"bundle"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return nil, false
+	}
+	if probe.Kind != cloudflowBundleKind || len(probe.Bundle) > 0 {
+		return nil, false
+	}
+	wrapped, err := json.Marshal(map[string]json.RawMessage{"bundle": body})
+	if err != nil {
+		return nil, false
+	}
+	info, err := cli.Stdin.Stat()
+	if err != nil {
+		return nil, false
+	}
+	bufferedRequestBody = wrapped
+	cli.Stdin = &bufferedBodyInput{Reader: bytes.NewReader(wrapped), info: info}
+	return []string{"bundle"}, true
 }
 
 func extractRequestCurrency(validFields map[string]bool, bodyArguments []string, stdinBody []byte) string {

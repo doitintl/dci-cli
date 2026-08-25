@@ -1666,7 +1666,7 @@ func addOutputFlag() {
 
 		outFlag := cmd.Flags().Lookup("output")
 		if outFlag == nil || !outFlag.Changed {
-			viper.Set("rsh-output-format", defaultOutputFormat())
+			viper.Set("rsh-output-format", defaultOutputFormatForCommand(cmd.Name()))
 		} else {
 			out := strings.TrimSpace(outFlag.Value.String())
 			switch out {
