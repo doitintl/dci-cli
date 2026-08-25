@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +108,11 @@ func loadCatalogAPI(command *cobra.Command) (cli.API, error) {
 	if err != nil {
 		return cli.API{}, err
 	}
+	response, err := fetchOpenAPISpec(command, base)
+	if err != nil {
+		return cli.API{}, err
+	}
+	defer response.Body.Close()
 	entrypoint, err := url.Parse(base + "/")
 	if err != nil {
 		return cli.API{}, err
@@ -115,19 +121,38 @@ func loadCatalogAPI(command *cobra.Command) (cli.API, error) {
 	if err != nil {
 		return cli.API{}, err
 	}
-	request, err := http.NewRequestWithContext(command.Context(), http.MethodGet, specURL.String(), nil)
+	return openapi.New().Load(*entrypoint, *specURL, response)
+}
+
+// fetchOpenAPISpec issues the GET request for the DCI OpenAPI spec that both
+// the command catalog and the help-context enrichment (help_context.go) need.
+// The caller owns closing the response body.
+func fetchOpenAPISpec(command *cobra.Command, base string) (*http.Response, error) {
+	specURL, err := url.Parse(base + "/openapi.yaml")
 	if err != nil {
-		return cli.API{}, err
+		return nil, err
+	}
+	ctx := command.Context()
+	if ctx == nil {
+		// cobra only populates Context() once Execute()/ExecuteContext() has
+		// run; a command built directly (tests, or a HelpFunc invoked before
+		// dispatch) can still have a nil ctx, and net/http rejects that with
+		// an opaque "nil Context" error instead of just using Background().
+		ctx = context.Background()
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, specURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return cli.API{}, err
+		return nil, err
 	}
-	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return cli.API{}, fmt.Errorf("OpenAPI endpoint returned HTTP %d", response.StatusCode)
+		response.Body.Close()
+		return nil, fmt.Errorf("OpenAPI endpoint returned HTTP %d", response.StatusCode)
 	}
-	return openapi.New().Load(*entrypoint, *specURL, response)
+	return response, nil
 }
 
 func buildCommandCatalog(api cli.API) commandCatalog {
