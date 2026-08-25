@@ -97,3 +97,27 @@ func TestAIOneShotVerbosity(t *testing.T) {
 		}
 	}
 }
+
+func TestAIFlagsDoNotCollideWithGlobalShorthands(t *testing.T) {
+	oldRoot := cli.Root
+	cli.Root = &cobra.Command{Use: "dci", SilenceUsage: true, SilenceErrors: true}
+	t.Cleanup(func() { cli.Root = oldRoot })
+	// restish's global --rsh-query owns the -q shorthand (AddGlobalFlag in
+	// its cli.go); a local ai flag reusing any global shorthand only blows up
+	// when the command parses at runtime — pflag panics, which broke every
+	// dci ai invocation in v2.6.1. Execute through a root carrying the global
+	// so the collision is caught here, not by users.
+	cli.Root.PersistentFlags().StringSliceP("rsh-query", "q", nil, "Add custom query param")
+	registerAICommand(t.TempDir())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("ai flag parsing panicked: %v", recovered)
+		}
+	}()
+	cli.Root.SetArgs([]string{"ai", "--quiet", "hello"})
+	err := cli.Root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "API key") {
+		t.Fatalf("err = %v, want the missing-key error (proof flag parsing succeeded)", err)
+	}
+}
