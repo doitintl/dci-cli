@@ -158,10 +158,18 @@ Ranked by real production frequency (30-day execution scan across customer tenan
 - **Data → LLM → route**: fetch → LLM node with a prompt → branch on the answer (rare in
   production so far).
 
-## Current limitation
+## Current limitations
 
-Operation search and per-operation parameter-schema retrieval are not yet public API — until
-they are, exported flows are the only ground truth for API-node parameters (hence the hard
-rules). When those endpoints land, resolve each API node by searching for the operation and
-fetching its schema instead of hunting for a clone; the hard rules relax to "never write
-parameters a schema didn't confirm".
+- **No operation search or parameter-schema retrieval yet.** Until those land as public API,
+  exported flows are the only ground truth for API-node parameters (hence the hard rules).
+  When they land, resolve each API node by searching for the operation and fetching its
+  schema instead of hunting for a clone; the hard rules relax to "never write parameters a
+  schema didn't confirm".
+- **No programmatic access to runtime node data.** Run history exposes per-node status and
+  timing only — the data a node actually consumed or produced is not retrievable through any
+  API surface today (verified 2026-08-26). The consequences: a draft that passes the import
+  dry-run is *structurally* valid, not *behaviorally* verified — never claim a generated flow
+  works, only that it validated and imported; behavior is confirmed by a human running it and
+  inspecting the run view in the Console. Until test-run endpoints exist, the best available
+  evidence of runtime data shapes is the `nodes["<node-name>"]` access paths inside `codeNode`
+  code in real exports — they show exactly how working flows navigate upstream output.
