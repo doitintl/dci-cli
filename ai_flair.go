@@ -11,6 +11,7 @@ package main
 import (
 	"image"
 	"image/color"
+	"os"
 	"strings"
 	"time"
 
@@ -117,6 +118,36 @@ const (
 	aiLogoKittyRows = 7
 	aiLogoKittyID   = 4443
 )
+
+// aiKittyPlaceholderTerminal reports whether the environment names a
+// terminal known to render Kitty Unicode placeholders — the virtual
+// placement the banner grid is made of. Deliberately stricter than the
+// capability probe the picture package gates on: iTerm2, for one, answers
+// the protocol query (so the probe resolves Supported) but draws the
+// placeholder cells as blanks, which would vanish the mark into an
+// invisible grid (dogfooded on macOS). Only terminals whose placeholder
+// support is known good get the upgrade; everyone else keeps the
+// half-blocks.
+func aiKittyPlaceholderTerminal() bool {
+	if os.Getenv("KITTY_WINDOW_ID") != "" || os.Getenv("KITTY_INSTALLATION_DIR") != "" {
+		return true
+	}
+	if os.Getenv("GHOSTTY_RESOURCES_DIR") != "" {
+		return true
+	}
+	if os.Getenv("WEZTERM_EXECUTABLE") != "" || os.Getenv("WEZTERM_PANE") != "" {
+		return true
+	}
+	switch os.Getenv("TERM") {
+	case "xterm-kitty", "xterm-ghostty":
+		return true
+	}
+	switch os.Getenv("TERM_PROGRAM") {
+	case "ghostty", "WezTerm", "kitty":
+		return true
+	}
+	return false
+}
 
 // aiLogoImage draws the DoiT mark — the round bowl with its circular
 // counter, the stem flush with the bowl's right edge, the detached dot at

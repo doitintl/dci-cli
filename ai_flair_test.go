@@ -137,6 +137,34 @@ func TestAILogoImageDrawsTheMark(t *testing.T) {
 	}
 }
 
+func TestAIKittyPlaceholderTerminalGate(t *testing.T) {
+	clear := func(t *testing.T) {
+		for _, name := range []string{"KITTY_WINDOW_ID", "KITTY_INSTALLATION_DIR",
+			"GHOSTTY_RESOURCES_DIR", "WEZTERM_EXECUTABLE", "WEZTERM_PANE", "TERM", "TERM_PROGRAM"} {
+			t.Setenv(name, "")
+		}
+	}
+	clear(t)
+	// Terminals that answer the protocol probe but draw placeholder cells
+	// blank must NOT get the upgrade — the mark would vanish.
+	for _, program := range []string{"iTerm.app", "WarpTerminal", "Apple_Terminal", ""} {
+		t.Setenv("TERM_PROGRAM", program)
+		if aiKittyPlaceholderTerminal() {
+			t.Fatalf("TERM_PROGRAM=%q must not pass the placeholder gate", program)
+		}
+	}
+	clear(t)
+	t.Setenv("GHOSTTY_RESOURCES_DIR", "/opt/ghostty")
+	if !aiKittyPlaceholderTerminal() {
+		t.Fatal("Ghostty must pass the placeholder gate")
+	}
+	clear(t)
+	t.Setenv("TERM", "xterm-kitty")
+	if !aiKittyPlaceholderTerminal() {
+		t.Fatal("Kitty must pass the placeholder gate")
+	}
+}
+
 func TestAIBannerUsesKittyGridWhenResolved(t *testing.T) {
 	m := aiTestModel(t)
 	if !strings.Contains(aiTranscriptText(m), "███") {
