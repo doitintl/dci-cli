@@ -293,6 +293,31 @@ type realDCIDirOverridesState struct {
 
 var realDCIDirOverrides *realDCIDirOverridesState
 
+// realCacheDir returns restish's REAL cache directory (dci.cbor, cache.json,
+// the OAuth token) regardless of any active DCI_API_BASE_URL override —
+// unlike restishCacheDir(), which just reads the current DCI_CACHE_DIR and
+// so returns applyAPIBaseOverride's throwaway temp dir once an override is
+// active. Callers that only ever consult local cache state rather than make
+// a routed API call — completion's cachedSpecAvailableForInvocation, `dci
+// ai`'s tool-call subprocess env — must use this one: the temp dir
+// deliberately never gets a copy of dci.cbor (to avoid ever serving a spec
+// cached from a different host), so asking it whether a spec is cached
+// always answers "no", silently breaking Tab completion for an entire
+// DCI_API_BASE_URL session even though a real, warm cache exists.
+func realCacheDir() string {
+	if realDCIDirOverrides != nil {
+		if realDCIDirOverrides.cacheDir.had {
+			return realDCIDirOverrides.cacheDir.value
+		}
+		userCacheDir, err := os.UserCacheDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(userCacheDir, "dci")
+	}
+	return restishCacheDir()
+}
+
 // detachedRefreshEnv returns the environment a detached refresh child
 // (__refresh-update-check, __refresh-names) should inherit: os.Environ(),
 // with DCI_CONFIG_DIR/DCI_CACHE_DIR forced back to what they were before any
@@ -396,6 +421,18 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 	if cacheData, err := os.ReadFile(filepath.Join(restishCacheDir(), "cache.json")); err == nil {
 		if err := os.WriteFile(filepath.Join(tempDir, "cache.json"), cacheData, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: unable to carry over the cached session for DCI_API_BASE_URL (%v); you may need to log in again\n", err)
+		}
+	}
+	// Preserve the persisted customer context: it's user/tenant selection
+	// data, not host-specific, so copying it carries none of the
+	// cross-host-leak risk dci.cbor is deliberately excluded to avoid.
+	// Without this, `dci ai` tool-call subprocesses (which re-exec this
+	// binary and so resolve their own dciConfigDir() — the temp dir, since
+	// they inherit DCI_CONFIG_DIR pointed at it) would silently lose the
+	// user's selected customer for the whole override session.
+	if ctxData, err := os.ReadFile(customerContextPath(realConfigDir)); err == nil {
+		if err := os.WriteFile(customerContextPath(tempDir), ctxData, 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: unable to carry over the customer context for DCI_API_BASE_URL (%v)\n", err)
 		}
 	}
 

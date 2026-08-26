@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -210,20 +211,53 @@ func credentialsAvailableForInvocation() bool {
 	return expiresAt.IsZero() || expiresAt.After(time.Now()) || cli.Cache.GetString("dci:default.refresh") != ""
 }
 
+// cachedSpecAvailableForInvocation reports whether a warm, unexpired
+// OpenAPI spec cache exists — checked against realCacheDir(), the REAL
+// cache directory, not whatever DCI_CACHE_DIR currently resolves to. An
+// active DCI_API_BASE_URL override points DCI_CACHE_DIR at
+// applyAPIBaseOverride's throwaway temp dir, which never gets a copy of
+// dci.cbor (so a stale spec from a different host can never leak in) — so
+// checking the current env var here would always report "not cached" and
+// permanently disable Tab completion for the whole override session, even
+// with a fully warm real cache for that same host. Completion only reads
+// local cache state; it makes no routed API call, so consulting the real
+// directory here carries none of the cross-host-leak risk the temp dir
+// exists to prevent elsewhere.
 func cachedSpecAvailableForInvocation() bool {
-	cacheDir := os.Getenv("DCI_CACHE_DIR")
+	cacheDir := realCacheDir()
 	if cacheDir == "" {
-		userCacheDir, err := os.UserCacheDir()
-		if err != nil {
-			return false
-		}
-		cacheDir = filepath.Join(userCacheDir, "dci")
-	}
-	if _, err := os.Stat(filepath.Join(cacheDir, "dci.cbor")); err != nil || cli.Cache == nil {
 		return false
 	}
-	expiresAt := cli.Cache.GetTime("dci.expires")
+	if _, err := os.Stat(filepath.Join(cacheDir, "dci.cbor")); err != nil {
+		return false
+	}
+	expiresAt := readCacheExpiry(cacheDir, "dci.expires")
 	return !expiresAt.IsZero() && expiresAt.After(time.Now())
+}
+
+// readCacheExpiry reads a viper-style timestamp key directly out of
+// cacheDir's cache.json, bypassing cli.Cache — which, during an active
+// DCI_API_BASE_URL override, is restish's in-memory view of the isolated
+// temp dir's copy, not necessarily the same file cachedSpecAvailableForInvocation
+// needs to check here (the real one).
+func readCacheExpiry(cacheDir, key string) time.Time {
+	data, err := os.ReadFile(filepath.Join(cacheDir, "cache.json"))
+	if err != nil {
+		return time.Time{}
+	}
+	var doc map[string]string
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return time.Time{}
+	}
+	value, ok := doc[key]
+	if !ok {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 func authenticationRequiredPreflightError() error {

@@ -656,6 +656,13 @@ func TestApplyAPIBaseOverrideIsolatesConfigAndCacheDirs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(realCacheDir, "dci.cbor"), []byte("stale-spec-bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// customer_context, unlike dci.cbor, must be copied in: it's user/tenant
+	// selection data, not host-specific, and `dci ai` tool-call subprocesses
+	// (which resolve their own dciConfigDir() to this same temp dir) need it
+	// to keep the user's selected customer for the whole override session.
+	if err := os.WriteFile(customerContextPath(realDir), []byte("acme.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("DCI_CACHE_DIR", realCacheDir)
 	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
 
@@ -697,6 +704,14 @@ func TestApplyAPIBaseOverrideIsolatesConfigAndCacheDirs(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(tempCacheDir, "dci.cbor")); !os.IsNotExist(err) {
 		t.Fatalf("dci.cbor should not exist in the isolated cache dir yet, err=%v", err)
+	}
+
+	ctxData, err := os.ReadFile(customerContextPath(tempConfigDir))
+	if err != nil {
+		t.Fatalf("isolated customer_context missing: %v", err)
+	}
+	if strings.TrimSpace(string(ctxData)) != "acme.com" {
+		t.Errorf("isolated customer_context = %q, want the real customer context carried over", ctxData)
 	}
 
 	realData, err := os.ReadFile(realConfig)
