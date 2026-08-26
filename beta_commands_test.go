@@ -284,3 +284,80 @@ func TestUnknownBetaCommandPreflightErrorWithoutSuggestion(t *testing.T) {
 		t.Errorf("hint %q does not point at dci beta --help", preflightError.StructuredError().Hint)
 	}
 }
+
+func TestRegisterBetaResolutionMetadata(t *testing.T) {
+	oldIndex := resolutionIndex
+	t.Cleanup(func() { resolutionIndex = oldIndex })
+
+	// Without a GA reports target there is nothing to derive from.
+	resolutionIndex = map[string]resolutionListTarget{}
+	registerBetaResolutionMetadata()
+	if len(resolutionIndex) != 0 {
+		t.Fatalf("index grew without a get-report target: %v", resolutionIndex)
+	}
+
+	target := resolutionListTarget{resource: "reports", listPath: "/analytics/v1/reports", listOperation: "list-reports"}
+	resolutionIndex = map[string]resolutionListTarget{"get-report": target}
+	registerBetaResolutionMetadata()
+	if got := resolutionIndex["beta run-report"]; got != target {
+		t.Fatalf("session key target = %+v", got)
+	}
+	if got := resolutionIndex["run-report"]; got != target {
+		t.Fatalf("cobra key target = %+v", got)
+	}
+
+	// A GA operation claiming run-report keeps its own target.
+	claimed := resolutionListTarget{resource: "runs", listPath: "/runs", listOperation: "list-runs"}
+	resolutionIndex = map[string]resolutionListTarget{"get-report": target, "run-report": claimed}
+	registerBetaResolutionMetadata()
+	if got := resolutionIndex["run-report"]; got != claimed {
+		t.Fatalf("GA claim overwritten: %+v", got)
+	}
+}
+
+func TestBetaResolvableArgsRelaxation(t *testing.T) {
+	oldRead, oldErr := destructiveMetadataRead, destructiveMetadataErr
+	oldIndex := resolutionIndex
+	oldTUI := tuiActive
+	t.Cleanup(func() {
+		destructiveMetadataRead, destructiveMetadataErr = oldRead, oldErr
+		resolutionIndex = oldIndex
+		tuiActive = oldTUI
+	})
+	destructiveMetadataRead, destructiveMetadataErr = true, nil
+	resolutionIndex = map[string]resolutionListTarget{
+		"get-report": {resource: "reports", listPath: "/analytics/v1/reports", listOperation: "list-reports"},
+	}
+	registerBetaResolutionMetadata()
+	t.Setenv("DCI_NO_RESOLVE", "")
+
+	runReport := betaOperationCommand(cli.Operation{
+		Name:        "run-report",
+		Method:      "POST",
+		URITemplate: "https://api.doit.com/analytics/v1/reports/{id}/actions/run",
+		PathParams:  []*cli.Param{{Name: "id", Type: "string"}},
+	})
+	tuiActive = func() bool { return true }
+	if err := runReport.Args(runReport, nil); err != nil {
+		t.Fatalf("zero args rejected although the picker applies: %v", err)
+	}
+	if err := runReport.Args(runReport, []string{"Monthly", "GCP", "Spend"}); err != nil {
+		t.Fatalf("unquoted multi-word name rejected: %v", err)
+	}
+	tuiActive = func() bool { return false }
+	if err := runReport.Args(runReport, nil); err == nil || !strings.Contains(err.Error(), "accepts") {
+		t.Fatalf("zero args without a terminal = %v, want the arity error", err)
+	}
+
+	// Beta commands without a resolution target keep the exact arity check.
+	results := betaOperationCommand(cli.Operation{
+		Name:        "get-report-results",
+		Method:      "GET",
+		URITemplate: "https://api.doit.com/analytics/v1/reports/operations/{operationId}/results",
+		PathParams:  []*cli.Param{{Name: "operationId", Type: "string"}},
+	})
+	tuiActive = func() bool { return true }
+	if err := results.Args(results, nil); err == nil || !strings.Contains(err.Error(), "accepts") {
+		t.Fatalf("non-resolvable zero args = %v, want the arity error", err)
+	}
+}

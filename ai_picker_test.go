@@ -16,8 +16,9 @@ func seedAIPickerFixtures(t *testing.T, configDir string) {
 	oldIndex := resolutionIndex
 	oldParams := operationPathParameters
 	resolutionIndex = map[string]resolutionListTarget{
-		"get-report":    {resource: "reports", listPath: "/reports", listOperation: "list-reports"},
-		"create-report": {resource: "reports", listPath: "/reports", listOperation: "list-reports", hasBody: true},
+		"get-report":      {resource: "reports", listPath: "/reports", listOperation: "list-reports"},
+		"create-report":   {resource: "reports", listPath: "/reports", listOperation: "list-reports", hasBody: true},
+		"beta run-report": {resource: "reports", listPath: "/reports", listOperation: "list-reports"},
 	}
 	operationPathParameters = map[string][]*cli.Param{
 		"get-report": {{Name: "id", Type: "string"}},
@@ -97,6 +98,38 @@ func TestAINameSelectionFor(t *testing.T) {
 	}
 }
 
+func TestAINameSelectionForBetaCommands(t *testing.T) {
+	dir := t.TempDir()
+	seedAIPickerFixtures(t, dir)
+
+	// Zero-argument /beta run-report: pick from every report, like the GA
+	// commands do.
+	selection := aiNameSelectionFor([]string{"beta", "run-report"}, dir, readCustomerContext(dir))
+	if selection == nil || len(selection.candidates) != 3 || len(selection.positionals) != 0 {
+		t.Fatalf("beta zero-arg selection = %+v", selection)
+	}
+	entry := nameCacheEntry{ID: "AAAAAAAAAAAAAAAAAAA3", Name: "Monthly AWS Spend"}
+	if got := strings.Join(selection.apply(entry), " "); got != "beta run-report AAAAAAAAAAAAAAAAAAA3" {
+		t.Fatalf("beta apply = %q", got)
+	}
+
+	// An ambiguous name argument picks among the matches — the subcommand
+	// word must not be misread as the name.
+	selection = aiNameSelectionFor([]string{"beta", "run-report", "bigquery"}, dir, readCustomerContext(dir))
+	if selection == nil || len(selection.candidates) != 2 {
+		t.Fatalf("beta ambiguous selection = %+v", selection)
+	}
+	if len(selection.positionals) != 1 || selection.positionals[0] != 2 {
+		t.Fatalf("beta positionals = %v", selection.positionals)
+	}
+
+	// Beta commands without a resolution target (operation IDs) dispatch
+	// as typed.
+	if s := aiNameSelectionFor([]string{"beta", "get-report-results"}, dir, readCustomerContext(dir)); s != nil {
+		t.Fatalf("non-resolvable beta command picked: %+v", s)
+	}
+}
+
 func TestAINameSelectionApply(t *testing.T) {
 	entry := nameCacheEntry{ID: "AAAAAAAAAAAAAAAAAAA2", Name: "BigQuery Storage type"}
 
@@ -135,14 +168,14 @@ func TestAINameSelectionFiltered(t *testing.T) {
 
 func TestAIPositionalIndexes(t *testing.T) {
 	// Without a flag set, long flags never consume the next word.
-	got := aiPositionalIndexes([]string{"get-report", "--chart", "bigquery"}, nil)
+	got := aiPositionalIndexes([]string{"get-report", "--chart", "bigquery"}, nil, 1)
 	if len(got) != 1 || got[0] != 2 {
 		t.Fatalf("indexes = %v", got)
 	}
-	if got := aiPositionalIndexes([]string{"get-report", "--", "--not-a-flag"}, nil); len(got) != 1 || got[0] != 2 {
+	if got := aiPositionalIndexes([]string{"get-report", "--", "--not-a-flag"}, nil, 1); len(got) != 1 || got[0] != 2 {
 		t.Fatalf("post -- indexes = %v", got)
 	}
-	if got := aiPositionalIndexes([]string{"get-report", "--output=json"}, nil); len(got) != 0 {
+	if got := aiPositionalIndexes([]string{"get-report", "--output=json"}, nil, 1); len(got) != 0 {
 		t.Fatalf("value-flag indexes = %v", got)
 	}
 }
@@ -303,4 +336,28 @@ func TestAIBareQueryGetsBuilderNotice(t *testing.T) {
 	if !strings.Contains(aiTranscriptText(m), "query builder needs a regular terminal") {
 		t.Fatal("builder notice missing")
 	}
+}
+
+func TestAIBetaPickerFlowInSession(t *testing.T) {
+	m := aiTestModel(t)
+	seedAIPickerFixtures(t, m.configDir)
+	m.catalog = append(m.catalog,
+		aiCatalogEntry{Path: "beta", Summary: "Early-access commands"},
+		aiCatalogEntry{Path: "beta run-report", Summary: "(beta) Run a saved report asynchronously"},
+	)
+
+	m = aiType(m, "/beta run-report")
+	m, _ = aiPress(m, tea.KeyEnter)
+	if m.picker == nil || m.running != nil {
+		t.Fatalf("beta zero-arg dispatch did not open the picker (picker=%v running=%v)", m.picker != nil, m.running != nil)
+	}
+	m = aiType(m, "monthly")
+	m, _ = aiPress(m, tea.KeyEnter)
+	if m.picker != nil || m.running == nil {
+		t.Fatal("selection did not dispatch")
+	}
+	if got := strings.Join(m.running.argv, " "); got != "beta run-report AAAAAAAAAAAAAAAAAAA3" {
+		t.Fatalf("dispatched argv = %q", got)
+	}
+	m.running.cancel()
 }
