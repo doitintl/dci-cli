@@ -56,11 +56,26 @@ func TestAugmentTableViewColumns(t *testing.T) {
 	if cell, _ := rows[0]["utilization"].(string); cell != "▓▓▓▓▓▓▓░░░ 66%" {
 		t.Fatalf("row 0 utilization = %q", cell)
 	}
-	if _, flagged := rows[0]["utilizationRisk"]; flagged {
-		t.Fatal("66% must not carry the risk accent")
+	if flag, _ := rows[0]["utilizationRisk"].(string); flag != "utilization-green" {
+		t.Fatalf("66%% must carry the green band, got %q", flag)
 	}
-	if flag, _ := rows[1]["utilizationRisk"].(string); flag != "accent-red" {
-		t.Fatalf("95%% must carry the red accent, got %q", flag)
+	if flag, _ := rows[1]["utilizationRisk"].(string); flag != "utilization-red" {
+		t.Fatalf("95%% must carry the red band, got %q", flag)
+	}
+	// The banded accent colors the bar cell by cell: filled cells green up
+	// to the amber and red deciles, empty cells dim, percent in the band.
+	colored := accentUtilizationCell("▓▓▓▓▓▓▓▓░░ 84%", "amber")
+	if stripANSI(colored) != "▓▓▓▓▓▓▓▓░░ 84%" {
+		t.Fatalf("banding must not change the text: %q", stripANSI(colored))
+	}
+	if !strings.Contains(colored, "\x1b[32m▓") || !strings.Contains(colored, "\x1b[33m▓") {
+		t.Fatalf("an 80%% bar must carry green and amber cells: %q", colored)
+	}
+	if strings.Contains(colored, "\x1b[31m▓") {
+		t.Fatalf("an 80%% bar must not reach the red decile: %q", colored)
+	}
+	if !strings.Contains(colored, "\x1b[1;33m8") {
+		t.Fatalf("the percent must take the row band: %q", colored)
 	}
 	if viper.GetString("table-accent-column") != "utilization" {
 		t.Fatal("accent column must be registered for the renderer")

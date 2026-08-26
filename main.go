@@ -3439,10 +3439,47 @@ func accentCell(row map[string]interface{}, flagKey, cellText string) string {
 	if flag == "" {
 		return cellText
 	}
+	if band, ok := strings.CutPrefix(flag, "utilization-"); ok {
+		return accentUtilizationCell(cellText, band)
+	}
 	if flag == "accent-red" {
 		return "\x1b[1;31m" + cellText + "\x1b[0m"
 	}
 	return "\x1b[1;32m" + cellText + "\x1b[0m"
+}
+
+// accentUtilizationCell colors a utilization bar in bands: the filled cells
+// run green through amber into red as the bar climbs (deciles 1–7, 8–9, 10 —
+// the thresholds the risk accent already used), the empty cells dim, and the
+// percent text takes the row's own band. Basic ANSI colors on purpose: cells
+// print raw to stdout with no downsampling writer in front of them.
+func accentUtilizationCell(cellText, band string) string {
+	percentColor, ok := map[string]string{"green": "32", "amber": "33", "red": "31"}[band]
+	if !ok {
+		return cellText
+	}
+	var b strings.Builder
+	filled := 0
+	for _, r := range cellText {
+		switch {
+		case r == '▓':
+			cellColor := "32"
+			if filled >= 9 {
+				cellColor = "31"
+			} else if filled >= 7 {
+				cellColor = "33"
+			}
+			b.WriteString("\x1b[" + cellColor + "m▓\x1b[0m")
+			filled++
+		case r == '░':
+			b.WriteString("\x1b[2m░\x1b[0m")
+		case r == ' ':
+			b.WriteRune(r)
+		default: // the percent text
+			b.WriteString("\x1b[1;" + percentColor + "m" + string(r) + "\x1b[0m")
+		}
+	}
+	return b.String()
 }
 
 // tableLinkConfig returns the view-designated hyperlink: the column whose
