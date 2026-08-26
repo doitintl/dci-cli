@@ -3109,15 +3109,17 @@ func TestDataCommandHonorsAPIBaseOverride(t *testing.T) {
 	}))
 	t.Cleanup(dev.Close)
 
-	// dciConfigDir() resolves against HOME via os.UserConfigDir() (on macOS,
-	// $HOME/Library/Application Support/dci) and does not honor
-	// XDG_CONFIG_HOME or DCI_CONFIG_DIR, unlike restish's own config-dir
-	// lookup. Seed apis.json at that real path under this test's HOME, with
-	// no DCI_CONFIG_DIR override, so restish's cli.Init resolves the same
-	// file dci-cli's own ensureConfig()/apiBase() use. apis.json is pinned
-	// to prod, as it always is on a real machine — the override must never
-	// need to be persisted to take effect.
-	configDir := filepath.Join(home, "Library", "Application Support", "dci")
+	// dciConfigDir() resolves against HOME via os.UserConfigDir() (macOS:
+	// $HOME/Library/Application Support/dci; Linux: $XDG_CONFIG_HOME/dci or
+	// $HOME/.config/dci) and does not honor DCI_CONFIG_DIR, unlike restish's
+	// own config-dir lookup. Compute the same path runCLIWithEnv's HOME (and
+	// XDG_CONFIG_HOME on Linux) will make dciConfigDir() resolve to, so
+	// restish's cli.Init reads the same file dci-cli's own ensureConfig()/
+	// apiBase() use. apis.json is pinned to prod, as it always is on a real
+	// machine — the override must never need to be persisted to take effect.
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	configDir := dciConfigDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
