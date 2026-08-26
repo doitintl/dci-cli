@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestSplitCommandLine(t *testing.T) {
@@ -250,5 +252,24 @@ func TestAICompletionExact(t *testing.T) {
 	}
 	if aiCompletionExact("", nil) {
 		t.Fatal("empty input is never exact")
+	}
+}
+
+func TestAIAPIOperationsHydrated(t *testing.T) {
+	apiCommand := &cobra.Command{Use: "dci"}
+	if aiAPIOperationsHydrated(apiCommand) {
+		t.Fatal("empty tree reported as hydrated")
+	}
+	// The beta subtree and cobra's help command mount unconditionally; they
+	// must not count as operations, or hydration never runs — the v2.7.0
+	// regression that left the session with only the custom root commands.
+	apiCommand.AddCommand(&cobra.Command{Use: "beta"})
+	apiCommand.AddCommand(&cobra.Command{Use: "help"})
+	if aiAPIOperationsHydrated(apiCommand) {
+		t.Fatal("beta/help alone reported as hydrated API operations")
+	}
+	apiCommand.AddCommand(&cobra.Command{Use: "list-budgets"})
+	if !aiAPIOperationsHydrated(apiCommand) {
+		t.Fatal("a real operation was not detected")
 	}
 }
