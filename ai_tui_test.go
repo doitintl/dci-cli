@@ -1102,6 +1102,27 @@ func TestAICtrlLRedrawsFromEveryState(t *testing.T) {
 	}
 }
 
+// ctrl+l is "repair and return": a viewport scrolled away from the bottom
+// snaps back to the latest content alongside the repaint.
+func TestAICtrlLSnapsToLatest(t *testing.T) {
+	m := aiTestModel(t)
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	m = sized.(aiModel)
+	for i := 0; i < 30; i++ {
+		m.append(fmt.Sprintf("block %d", i))
+	}
+	scrolled, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	m = scrolled.(aiModel)
+	if m.follow {
+		t.Fatal("PgUp must unstick the viewport from the bottom")
+	}
+	updated, _ := m.handleKey(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	m = updated.(aiModel)
+	if !m.follow || !m.view.AtBottom() {
+		t.Fatalf("ctrl+l must snap back to the latest content: follow=%v atBottom=%v", m.follow, m.view.AtBottom())
+	}
+}
+
 // The status line trims the narration, not the affordances: on a narrow pane
 // the elapsed time and "esc to cancel" survive a long snippet.
 func TestAIStatusLineTrimsNarrationNotAffordances(t *testing.T) {
