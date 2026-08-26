@@ -1472,6 +1472,16 @@ func cachedTokenClaims() (dciTokenClaims, bool) {
 	return parseTokenClaims(cli.Cache.GetString("dci:default.token"))
 }
 
+// reloadCredentialCache re-reads restish's cache file into the in-memory
+// copy. Login and logout run as child processes of the AI session and rewrite
+// the file; without a re-read the parent keeps answering identity checks
+// (cachedTokenClaims, cachedTokenIsDoer) from the stale token.
+func reloadCredentialCache() {
+	if cli.Cache != nil {
+		_ = cli.Cache.ReadInConfig()
+	}
+}
+
 func parseTokenClaims(token string) (dciTokenClaims, bool) {
 	if token == "" {
 		return dciTokenClaims{}, false

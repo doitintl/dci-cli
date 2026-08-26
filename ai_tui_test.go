@@ -1496,3 +1496,31 @@ func TestAIDefaultVerb(t *testing.T) {
 		t.Fatal("invalid choice should print usage")
 	}
 }
+
+func TestAILoginDispatchSuspendsForTerminal(t *testing.T) {
+	m := aiTestModel(t)
+	m.catalog = append(aiTestCatalog(), aiCatalogEntry{Path: "login", Summary: "Sign in via the DoiT Console"})
+	m = aiType(m, "/login")
+	updated, cmd := aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.running != nil {
+		t.Fatal("/login went through the piped dispatch path — it needs the real terminal")
+	}
+	if cmd == nil {
+		t.Fatal("/login produced no command")
+	}
+}
+
+func TestAILoginDoneRefreshesAndReports(t *testing.T) {
+	m := aiTestModel(t)
+	updated, _ := m.Update(aiLoginDoneMsg{})
+	m = updated.(aiModel)
+	if !strings.Contains(aiTranscriptText(m), "Logged in") {
+		t.Fatal("login success missing from the transcript")
+	}
+	updated, _ = m.Update(aiLoginDoneMsg{err: errors.New("exit status 1")})
+	m = updated.(aiModel)
+	if !strings.Contains(aiTranscriptText(m), "login failed") {
+		t.Fatal("login failure missing from the transcript")
+	}
+}
