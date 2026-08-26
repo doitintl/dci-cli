@@ -208,6 +208,22 @@ func swapConfiguredAPIBase(configFile, override string) (restore func(), err err
 	}, nil
 }
 
+// detachedRefreshCommands are the hidden subcommands a background refresher
+// re-execs the binary as (update.go's __refresh-update-check, name_completion.go's
+// __refresh-names). Each inherits the parent's full environment via
+// exec.Command(os.Args[0], ...) and runs this same run() concurrently with
+// whatever invoked it — including a apis.json swap it must never perform.
+var detachedRefreshCommands = map[string]bool{
+	"__refresh-update-check": true,
+	"__refresh-names":        true,
+}
+
+// isDetachedRefreshInvocation reports whether args is a detached background
+// refresher re-exec rather than a normal user invocation.
+func isDetachedRefreshInvocation(args []string) bool {
+	return len(args) > 1 && detachedRefreshCommands[args[1]]
+}
+
 func writeConfig(configFile, base string) error {
 	config := map[string]interface{}{
 		"$schema": "https://rest.sh/schemas/apis.json",
@@ -356,17 +372,35 @@ func run() (exitCode int) {
 	// pick the base URL for every data command. Swap the on-disk base to the
 	// DCI_API_BASE_URL override just for this read, then restore it
 	// immediately after so the override still never persists.
-	if envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL")); envBase != "" {
+	//
+	// Skipped for a detached refresh re-exec (isDetachedRefreshInvocation):
+	// startUpdateCheck/name_completion's cache refreshers inherit the parent's
+	// env — including DCI_API_BASE_URL — and run this same run() concurrently
+	// with the parent via exec.Command(os.Args[0], ...). Without this guard,
+	// two processes race read-swap-write-restore on the same apis.json; the
+	// loser's restore can overwrite the winner's, leaving the dev override
+	// stuck on disk for every future invocation — exactly what apis.json's
+	// swap is meant to prevent. Neither refresher ever talks to the DCI API,
+	// so neither needs the override at all.
+	//
+	// A write failure (e.g. a read-only config mount in CI) degrades to a
+	// warning and the persisted base rather than aborting: commands that
+	// never depended on apis.json's base (--help, --version, completion,
+	// `status`, which reads apiBase() directly) must keep working even when
+	// the override can't be applied.
+	if envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL")); envBase != "" && !isDetachedRefreshInvocation(os.Args) {
 		base, err := apiBase()
 		if err != nil {
 			return reportExecutionError(err, 0, configDir)
 		}
 		restore, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base)
 		if err != nil {
-			return reportExecutionError(fmt.Errorf("failed to apply DCI_API_BASE_URL: %w", err), 0, configDir)
+			fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
+			cli.Init("dci", version)
+		} else {
+			cli.Init("dci", version)
+			restore()
 		}
-		cli.Init("dci", version)
-		restore()
 	} else {
 		cli.Init("dci", version)
 	}

@@ -492,6 +492,69 @@ func TestEnsureConfigNeverPersistsEnvBase(t *testing.T) {
 	}
 }
 
+func TestIsDetachedRefreshInvocation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"update refresh child", []string{"dci", "__refresh-update-check"}, true},
+		{"name refresh child", []string{"dci", "__refresh-names"}, true},
+		{"normal data command", []string{"dci", "list-budgets"}, false},
+		{"status command", []string{"dci", "status"}, false},
+		{"no args", []string{"dci"}, false},
+		{"empty args", []string{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isDetachedRefreshInvocation(tt.args); got != tt.want {
+				t.Errorf("isDetachedRefreshInvocation(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSwapConfiguredAPIBaseWriteFailureDegradesGracefully guards the
+// Claude-review finding on PR #128: a swap write failure (e.g. a read-only
+// apis.json mount in CI) must not turn an unrelated command's invocation
+// into a hard failure. run() falls back to cli.Init with the persisted base
+// and a warning instead of aborting.
+func TestSwapConfiguredAPIBaseWriteFailureDegradesGracefully(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file write permissions")
+	}
+
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "apis.json")
+	original := []byte(`{"dci":{"base":"https://api.doit.com"}}`)
+	if err := os.WriteFile(configFile, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Make both the file and its directory read-only so the swap's
+	// truncate-and-rewrite fails regardless of platform semantics.
+	if err := os.Chmod(configFile, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(configFile, 0o600) })
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	_, err := swapConfiguredAPIBase(configFile, "https://dev.example.com")
+	if err == nil {
+		t.Fatal("expected swapConfiguredAPIBase to fail against a read-only directory")
+	}
+
+	data, readErr := os.ReadFile(configFile)
+	if readErr != nil {
+		t.Fatalf("read config after failed swap: %v", readErr)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("apis.json changed despite a failed swap: %s", data)
+	}
+}
+
 func assertConfigBase(t *testing.T, configPath, wantBase string) {
 	t.Helper()
 	data, err := os.ReadFile(configPath)
