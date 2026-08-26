@@ -1238,6 +1238,13 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 				aiEchoStyle.Render("In here: ask the AI to build and run the query for you, or pass shorthand body arguments to /query."))
 			return m, nil
 		}
+		// A bare /beta would dispatch a child whose help is shell-shaped
+		// ("dci beta <command>") — confusing inside the session, where the
+		// same commands run as /beta <command>. List them the session's way.
+		if len(route.argv) == 1 && route.argv[0] == "beta" {
+			m.append(aiBetaListText(m.catalog))
+			return m, nil
+		}
 		// /login needs the real terminal (the browser OAuth flow refuses to
 		// run headless), which a piped dispatch child never has: suspend the
 		// session and hand the child the tty instead of degrading to the
@@ -2004,6 +2011,25 @@ func renderAIApprovalRequest(request aiApprovalRequest) string {
 		lines = append(lines, aiEchoStyle.Render("  "+request.Summary))
 	}
 	lines = append(lines, aiApproveStyle.Render("y")+" run it · "+aiApproveStyle.Render("n")+" decline")
+	return strings.Join(lines, "\n")
+}
+
+// aiBetaListText renders the beta subcommands spelled the way the session
+// runs them (/beta <command>) — the child's own help spells them shell-style
+// ("dci beta <command>"), which reads like it belongs outside the session.
+func aiBetaListText(catalog []aiCatalogEntry) string {
+	lines := []string{aiCardHeadStyle.Render("Beta commands") + aiEchoStyle.Render("  early access; may change or be removed")}
+	found := false
+	for _, entry := range catalog {
+		if strings.HasPrefix(entry.Path, "beta ") {
+			found = true
+			lines = append(lines, "  /"+entry.Path+"  "+aiEchoStyle.Render(strings.TrimPrefix(entry.Summary, "(beta) ")))
+		}
+	}
+	if !found {
+		return aiNoticeStyle.Render("No beta commands are available in this build.")
+	}
+	lines = append(lines, aiEchoStyle.Render("Run one with /beta <command> — add --help to see its flags."))
 	return strings.Join(lines, "\n")
 }
 
