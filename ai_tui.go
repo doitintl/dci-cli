@@ -345,7 +345,14 @@ func aiBannerBlock(m *aiModel) string {
 	if m.identity != "" {
 		info = append(info, aiEchoStyle.Render("Tenant: "+m.identity))
 	}
-	info = append(info, aiEchoStyle.Render(fmt.Sprintf("%d commands · /help for how this works", len(m.catalog))))
+	commandsLine := fmt.Sprintf("%d commands · /help for how this works", len(m.catalog))
+	if aiCatalogMissingAPIOperations() {
+		// Only the custom root commands are present: the spec cache is absent
+		// (never logged in, or cleared). Say so — a bare small count reads as
+		// the API commands having vanished.
+		commandsLine = fmt.Sprintf("%d commands · API commands appear after /login", len(m.catalog))
+	}
+	info = append(info, aiEchoStyle.Render(commandsLine))
 
 	return lipgloss.JoinHorizontal(lipgloss.Center, logo, "  ", strings.Join(info, "\n")) + "\n"
 }

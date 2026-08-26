@@ -303,7 +303,7 @@ func hydrateAPICommandsForAI() {
 	if _, err := os.Stat(cacheFile); err != nil {
 		return
 	}
-	if apiCommand := findDCICommand(); apiCommand != nil && len(apiCommand.Commands()) == 0 {
+	if apiCommand := findDCICommand(); apiCommand != nil && !aiAPIOperationsHydrated(apiCommand) {
 		if base, err := apiBase(); err == nil {
 			cli.Load(base, apiCommand)
 		}
@@ -311,6 +311,32 @@ func hydrateAPICommandsForAI() {
 	// The resolution metadata (resolutionIndex, path parameters) powers the
 	// session's name picker (ai_picker.go) — same cached spec, still offline.
 	aiEnsureResolutionMetadata()
+}
+
+// aiAPIOperationsHydrated reports whether the hidden API command already
+// carries spec operations. Not len(...)==0: the `beta` subtree (and cobra's
+// own help command) mount there unconditionally at startup, and counting them
+// as operations made hydration a no-op — the v2.7.0 regression that left the
+// session with only the custom root commands ("21 commands").
+func aiAPIOperationsHydrated(apiCommand *cobra.Command) bool {
+	for _, operation := range apiCommand.Commands() {
+		if operation.Name() != "beta" && operation.Name() != "help" {
+			return true
+		}
+	}
+	return false
+}
+
+// aiCatalogMissingAPIOperations reports whether the session is running
+// without the API half of the catalog — no cached spec (never logged in, or
+// the cache was cleared). The banner uses it to say so instead of presenting
+// a mysteriously small command count.
+func aiCatalogMissingAPIOperations() bool {
+	if cli.Root == nil {
+		return false
+	}
+	apiCommand := findDCICommand()
+	return apiCommand != nil && !aiAPIOperationsHydrated(apiCommand)
 }
 
 func aiCatalogHasCommand(catalog []aiCatalogEntry, first string) bool {
