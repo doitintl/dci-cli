@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -323,4 +324,49 @@ func TestUnknownCommandHintsAIOnlyForHumans(t *testing.T) {
 	if strings.Contains(agent, "dci ai") {
 		t.Fatalf("agent unknown-command error must stay bare: %q", agent)
 	}
+}
+
+// TestCachedSpecAvailableForInvocationUsesRealCacheDirDuringOverride guards
+// a Claude-review finding on PR #128: cachedSpecAvailableForInvocation used
+// to read os.Getenv("DCI_CACHE_DIR") directly, which during an active
+// DCI_API_BASE_URL override is applyAPIBaseOverride's throwaway temp dir —
+// one that deliberately never gets a copy of dci.cbor. That meant Tab
+// completion (which gates on this check) always saw "no cache" and stayed
+// permanently disabled for the whole override session, even with a fully
+// warm real cache for that same host. It must consult realCacheDir()
+// instead.
+func TestCachedSpecAvailableForInvocationUsesRealCacheDirDuringOverride(t *testing.T) {
+	t.Cleanup(func() { realDCIDirOverrides = nil })
+
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "dci.cbor"), []byte("spec-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	cacheJSON, err := json.Marshal(map[string]string{"dci.expires": future})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realDir, "cache.json"), cacheJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("no active override: reads DCI_CACHE_DIR directly", func(t *testing.T) {
+		realDCIDirOverrides = nil
+		t.Setenv("DCI_CACHE_DIR", realDir)
+		if !cachedSpecAvailableForInvocation() {
+			t.Error("expected the warm real cache to be reported available")
+		}
+	})
+
+	t.Run("active override: still finds the real cache, not the empty temp dir", func(t *testing.T) {
+		tempDir := t.TempDir() // stands in for applyAPIBaseOverride's temp dir: no dci.cbor here
+		t.Setenv("DCI_CACHE_DIR", tempDir)
+		realDCIDirOverrides = &realDCIDirOverridesState{
+			cacheDir: dciDirOverride{value: realDir, had: true},
+		}
+		if !cachedSpecAvailableForInvocation() {
+			t.Error("expected the real cache to still be found via realCacheDir(), not the empty override temp dir")
+		}
+	})
 }
