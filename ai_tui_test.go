@@ -1645,3 +1645,28 @@ func TestAIFirstSessionShowsHelp(t *testing.T) {
 		t.Fatal("help block re-shown despite existing history")
 	}
 }
+
+func TestAIBareBetaListsSessionSpelledCommands(t *testing.T) {
+	m := aiTestModel(t)
+	m.catalog = append(aiTestCatalog(),
+		aiCatalogEntry{Path: "beta", Summary: "Early-access commands"},
+		aiCatalogEntry{Path: "beta list-widgets", Summary: "(beta) List widgets"},
+	)
+	m = aiType(m, "/beta")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.running != nil {
+		t.Fatal("bare /beta dispatched a child instead of listing in-session")
+	}
+	transcript := aiTranscriptText(m)
+	if !strings.Contains(transcript, "/beta list-widgets") {
+		t.Fatalf("beta listing missing the session spelling:\n%s", transcript)
+	}
+	// With arguments it dispatches like any other command.
+	m = aiType(m, "/beta list-widgets")
+	updated, cmd := aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.running == nil || cmd == nil {
+		t.Fatal("/beta list-widgets did not dispatch")
+	}
+}

@@ -257,6 +257,19 @@ func aiSessionCatalog() []aiCatalogEntry {
 			if operation.Hidden || operation.Name() == "help" {
 				continue
 			}
+			if operation.Name() == "beta" {
+				// The beta subtree hydrates lazily elsewhere (the embedded
+				// spec only parses when the invocation mentions beta, which
+				// `dci ai` does not) — hydrate it here so /beta subcommands
+				// complete and dispatch like every other catalog entry.
+				// Best-effort: on failure the bare "beta" entry still stands
+				// and dispatches to the child's own help.
+				if len(operation.Commands()) == 0 {
+					_ = hydrateBetaCommands(operation)
+				}
+				entries = append(entries, aiCatalogWalk(operation, "")...)
+				continue
+			}
 			entries = append(entries, aiCatalogEntry{Path: operation.Name(), Summary: operation.Short})
 		}
 	}
