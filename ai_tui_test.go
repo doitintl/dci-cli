@@ -1286,6 +1286,38 @@ func TestAIBellWorthy(t *testing.T) {
 	}
 }
 
+func TestAITurnDoneSignalEscalatesWhenUnfocused(t *testing.T) {
+	raw, ok := aiTurnDoneSignal(true)().(tea.RawMsg)
+	if !ok || raw.Msg != "\a" {
+		t.Fatalf("focused signal = %#v, want the bare bell", raw)
+	}
+	raw, ok = aiTurnDoneSignal(false)().(tea.RawMsg)
+	signal := fmt.Sprint(raw.Msg)
+	if !ok || !strings.Contains(signal, "\a") || !strings.Contains(signal, "\x1b]9;") {
+		t.Fatalf("unfocused signal = %q, want the bell plus an OSC 9 notification", signal)
+	}
+}
+
+func TestAIFocusTracking(t *testing.T) {
+	m := aiTestModel(t)
+	if !m.focused {
+		t.Fatal("the session must assume focus until the terminal reports otherwise")
+	}
+	if !m.View().ReportFocus {
+		t.Fatal("the view must request focus reporting")
+	}
+	updated, _ := m.Update(tea.BlurMsg{})
+	m = updated.(aiModel)
+	if m.focused {
+		t.Fatal("BlurMsg must mark the session unfocused")
+	}
+	updated, _ = m.Update(tea.FocusMsg{})
+	m = updated.(aiModel)
+	if !m.focused {
+		t.Fatal("FocusMsg must mark the session focused again")
+	}
+}
+
 func TestAIBellToggleAndPersist(t *testing.T) {
 	m := aiTestModel(t)
 	if !m.bellOn {

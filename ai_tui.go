@@ -114,6 +114,11 @@ type aiModel struct {
 	customerName    string // resolved display name for an ID-shaped context
 	mouseOn         bool
 	bellOn          bool // ring the terminal bell when a turn finishes (F2)
+	// focused mirrors the terminal's focus reports (view.ReportFocus): a turn
+	// finishing while the terminal is unfocused escalates the bell to a
+	// desktop notification. Terminals that never report focus leave it true,
+	// which degrades to the plain bell.
+	focused bool
 
 	// Async name fetch backing the picker when the cache is empty.
 	fetchedNames map[string][]nameCacheEntry
@@ -235,6 +240,7 @@ func newAIModel(configDir string) aiModel {
 		modelName:    modelName,
 		mouseOn:      resolveAIMouse(settings),
 		bellOn:       resolveAIBell(settings),
+		focused:      true,
 		fetchedNames: map[string][]nameCacheEntry{},
 		// Resolved here — before the program owns stdin — so no render ever
 		// queries the terminal mid-session (see aiMarkdownStyle).
@@ -558,6 +564,14 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case aiSessionClosedMsg:
 		return m, nil
 
+	case tea.FocusMsg:
+		m.focused = true
+		return m, nil
+
+	case tea.BlurMsg:
+		m.focused = false
+		return m, nil
+
 	case tea.PasteMsg:
 		return m.handlePaste(msg)
 
@@ -703,7 +717,7 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		m.turnActivity = ""
 		m.approval = nil
 		if m.bellOn && aiBellWorthy(usage) {
-			commands = append(commands, aiRingBell)
+			commands = append(commands, aiTurnDoneSignal(m.focused))
 		}
 	}
 	return m, tea.Batch(commands...)
@@ -716,13 +730,21 @@ func aiBellWorthy(done aiTurnDone) bool {
 	return done.ToolCalls > 0 || done.Wall >= 3*time.Second
 }
 
-// aiRingBell writes BEL to stderr — stdout belongs to the renderer, and both
-// point at the same terminal — which maps it to its own notification (sound,
-// dock bounce, tab highlight). Never in one-shot mode: a piped stream must
-// stay byte-clean (ai_command.go).
-func aiRingBell() tea.Msg {
-	fmt.Fprint(os.Stderr, "\a")
-	return nil
+// aiTurnDoneSignal announces a finished turn. The terminal bell always rings
+// (the terminal maps BEL to its own sound/badge — the app cannot choose the
+// waveform); when the terminal reported itself unfocused, the user looked
+// away, so the bell escalates to an OSC 9 desktop notification — the harder-
+// to-miss signal Claude Code-style tools send. Terminals without OSC 9
+// support consume and ignore the sequence. Routed through tea.Raw so the
+// bytes serialize with the renderer's own writes instead of racing a frame
+// flush. Never in one-shot mode: a piped stream must stay byte-clean
+// (ai_command.go).
+func aiTurnDoneSignal(focused bool) tea.Cmd {
+	signal := "\a"
+	if !focused {
+		signal += "\x1b]9;dci ai — response ready\x07"
+	}
+	return tea.Raw(signal)
 }
 
 // commitStream moves the accumulated assistant text into the transcript,
@@ -815,6 +837,10 @@ func (m aiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// session forces that, and the banner (static by definition) is exactly
 	// what stays broken.
 	if key == "ctrl+l" {
+		// Belt and braces: rebuild the frame content too, so the repaint that
+		// follows the erase carries a freshly composed frame — banner
+		// included — whatever state the terminal left the cell grid in.
+		m.layout()
 		return m, tea.ClearScreen
 	}
 
@@ -1379,7 +1405,7 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		m.bellOn = !m.bellOn
 		m.persistToggle(func(settings *aiSettings) { settings.Bell = boolPointer(m.bellOn) })
 		if m.bellOn {
-			m.append(aiEchoStyle.Render("bell on — the terminal bell rings when a turn finishes; /bell to disable"))
+			m.append(aiEchoStyle.Render("bell on — the terminal bell rings when a turn finishes (plus a desktop notification if you've switched away); /bell to disable"))
 		} else {
 			m.append(aiEchoStyle.Render("bell off — turns finish silently; /bell to re-enable"))
 		}
@@ -1835,6 +1861,7 @@ func (m aiModel) View() tea.View {
 	b.WriteString(m.statusLine())
 	view := tea.NewView(aiFitFrame(b.String(), m.width, m.height))
 	view.AltScreen = true
+	view.ReportFocus = true // focus gates the end-of-turn desktop notification
 	if m.mouseOn {
 		view.MouseMode = tea.MouseModeCellMotion
 	}
