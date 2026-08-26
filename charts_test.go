@@ -186,6 +186,79 @@ func TestSetChartSeriesFoldsGroupsIntoOther(t *testing.T) {
 	}
 }
 
+func TestSparklineChartRendering(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Cleanup(resetChartState)
+	viper.Set("chart-requested", true)
+	viper.Set("chart-mode", "sparkline")
+
+	chartSeries = &chartSeriesData{
+		metric:  "cost",
+		periods: []string{"W1", "W2", "W3", "W4"},
+		values:  []float64{0, 25, -5, 100},
+	}
+	out := stripANSI(captureStderr(t, func() { maybeRenderChart(0) }))
+	if !strings.Contains(out, "cost by period — W1 → W4") {
+		t.Fatalf("sparkline caption missing: %q", out)
+	}
+	spark := strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[0])
+	if got := len([]rune(spark)); got != 4 {
+		t.Fatalf("sparkline = %q (%d cells), want one cell per period", spark, got)
+	}
+	// Zero and negative periods sit on the baseline; the peak tops out.
+	if runes := []rune(spark); runes[0] != '▁' || runes[2] != '▁' || runes[3] != '█' {
+		t.Fatalf("sparkline shape = %q, want baseline/low/baseline/peak", spark)
+	}
+
+	// A series wider than the render width keeps the most recent periods.
+	wide := &chartSeriesData{metric: "cost", periods: make([]string, 300), values: make([]float64, 300)}
+	for i := range wide.periods {
+		wide.periods[i] = fmt.Sprintf("P%d", i)
+		wide.values[i] = float64(i)
+	}
+	narrow := stripANSI(renderSparklineChart(wide, 50))
+	if !strings.Contains(narrow, "P250 → P299") {
+		t.Fatalf("wide sparkline must keep the most recent periods: %q", narrow)
+	}
+}
+
+func TestHeatmapChartRenderingAndFallback(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Cleanup(resetChartState)
+	viper.Set("chart-requested", true)
+	viper.Set("chart-mode", "heatmap")
+	viper.Set("table-color", true)
+	forceChartColor(t, true)
+
+	series := &chartSeriesData{
+		metric:  "cost",
+		periods: []string{"W1", "W2"},
+		values:  []float64{30, 60},
+		groups: []chartGroupSeries{
+			{name: "svc-a", values: []float64{20, 40}},
+			{name: "a-service-with-a-very-long-name-indeed", values: []float64{10, 20}},
+		},
+	}
+	chartSeries = series
+	out := stripANSI(captureStderr(t, func() { maybeRenderChart(0) }))
+	if !strings.Contains(out, "svc-a") || !strings.Contains(out, "…") {
+		t.Fatalf("heatmap rows missing or label unbounded: %q", out)
+	}
+	if !strings.Contains(out, "low ") || !strings.Contains(out, " high — cost by period") {
+		t.Fatalf("heatmap scale legend missing: %q", out)
+	}
+
+	// One group or a colorless terminal falls back to the line chart.
+	forceChartColor(t, false)
+	chartSeries = series
+	out = captureStderr(t, func() { maybeRenderChart(0) })
+	if !strings.Contains(out, "┤") && !strings.Contains(out, "┼") {
+		t.Fatalf("colorless heatmap must fall back to the line chart: %q", out)
+	}
+}
+
 func forceChartColor(t *testing.T, capable bool) {
 	t.Helper()
 	original := chartColorCapable
