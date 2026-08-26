@@ -168,6 +168,46 @@ func ensureConfig(configDir string) (bool, error) {
 	return true, nil
 }
 
+// swapConfiguredAPIBase temporarily rewrites apis.json's "dci.base" field to
+// override for the duration of restish's cli.Init() read (which is where
+// restish loads apis.json into its in-process API config map, the map
+// cli.Run() later consults to pick a data command's base URL). It edits
+// only that one field — auth, TLS, and any other config already on disk are
+// preserved untouched — and returns a restore func that puts the original
+// file content back so the on-disk config, and every later invocation
+// without DCI_API_BASE_URL set, is left exactly as it was.
+func swapConfiguredAPIBase(configFile, override string) (restore func(), err error) {
+	original, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil, err
+	}
+
+	var doc map[string]interface{}
+	if err := json.Unmarshal(original, &doc); err != nil {
+		return nil, fmt.Errorf("unable to parse %s: %w", configFile, err)
+	}
+	dci, ok := doc["dci"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("%s is missing a \"dci\" section", configFile)
+	}
+	dci["base"] = override
+	doc["dci"] = dci
+
+	swapped, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(configFile, swapped, 0o600); err != nil {
+		return nil, err
+	}
+
+	return func() {
+		if err := os.WriteFile(configFile, original, 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: unable to restore %s: %v\n", configFile, err)
+		}
+	}, nil
+}
+
 func writeConfig(configFile, base string) error {
 	config := map[string]interface{}{
 		"$schema": "https://rest.sh/schemas/apis.json",
@@ -310,7 +350,26 @@ func run() (exitCode int) {
 	startUpdateCheck(configDir)
 	defer maybeNotifyUpdate(configDir)
 
-	cli.Init("dci", version)
+	// cli.Init reads apis.json into restish's in-process API config map right
+	// away (not cli.Defaults(), despite the name suggesting setup-time
+	// config), and that map — not apiBase() — is what cli.Run() consults to
+	// pick the base URL for every data command. Swap the on-disk base to the
+	// DCI_API_BASE_URL override just for this read, then restore it
+	// immediately after so the override still never persists.
+	if envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL")); envBase != "" {
+		base, err := apiBase()
+		if err != nil {
+			return reportExecutionError(err, 0, configDir)
+		}
+		restore, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base)
+		if err != nil {
+			return reportExecutionError(fmt.Errorf("failed to apply DCI_API_BASE_URL: %w", err), 0, configDir)
+		}
+		cli.Init("dci", version)
+		restore()
+	} else {
+		cli.Init("dci", version)
+	}
 	cli.Defaults()
 	overrideTableOutput()
 	installOutputGuard()
