@@ -36,16 +36,41 @@ the CLI guide.
   bare `dci` prints the help screen exactly as before, so nothing changes
   for automation. Prefer the help screen at your terminal? Run
   `/default help` once inside the session; `dci --help` always prints help.
-- Mistyping a command at a terminal now also suggests the plain-English
-  alternative (`dci ai "…"`) alongside the usual did-you-mean suggestion.
+- `dci beta` opens the early-access command surface, starting with
+  asynchronous report execution: `dci beta run-report`,
+  `run-report-config`, `get-report-operation`, `get-report-results`, and
+  `cancel-report-operation`. Beta commands use your existing sign-in,
+  customer context, and output formats; idempotency keys are generated for
+  you unless you pass your own. `dci commands --beta` lists the surface,
+  and accounts not yet enrolled in the early-access program get a clear
+  hint instead of a bare error.
+- Two new chart styles: `--chart sparkline` draws period totals as a
+  one-line sparkline for the quickest look at the shape, and
+  `--chart heatmap` draws one row per group and one cell per period,
+  colored by each value's share of the maximum — spot the hot service and
+  the hot month in one glance.
+- When a long AI answer finishes while you're in another window, the
+  session now sends a desktop notification in addition to the terminal
+  bell (in terminals that support notifications and focus reporting), so
+  you can safely switch away during an investigation.
 
 ### Improved
 
+- Budget utilization bars are color-graded: green through amber (past 70%)
+  into red (past 90%), so `dci list-budgets` shows at-risk budgets at a
+  glance.
+- The AI session got a visual polish: the banner draws the DoiT mark in
+  high resolution (and as a full logo on Kitty, Ghostty, and WezTerm),
+  identity lines are labeled by role and tenant, the spinner is the DoiT
+  mark with a status shimmer, and long waits rotate through the CLI's
+  waiting quips and shift color as they age.
+- `Ctrl+L` in the session now also jumps back to the latest content along
+  with repainting the frame — one press returns a known-good live view.
+- Mistyping a command at a terminal now also suggests the plain-English
+  alternative (`dci ai "…"`) alongside the usual did-you-mean suggestion.
 - CI systems that allocate a terminal are now detected via the standard `CI`
   environment variable and get the script behavior — a pipeline can never
   hang on an interactive session.
-
-## v2.6.3 — August 25, 2026
 
 ### Fixed
 
