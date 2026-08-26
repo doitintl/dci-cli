@@ -61,7 +61,15 @@ func aiPickerIntentFor(argv []string) *aiPickerIntent {
 	if len(argv) == 0 {
 		return nil
 	}
-	target, ok := resolutionIndex[argv[0]]
+	// Beta subcommands key the resolution metadata as "beta <name>", and
+	// their operation arguments start one word later.
+	name := argv[0]
+	start := 1
+	if name == "beta" && len(argv) > 1 {
+		name = "beta " + argv[1]
+		start = 2
+	}
+	target, ok := resolutionIndex[name]
 	if !ok {
 		return nil
 	}
@@ -71,7 +79,7 @@ func aiPickerIntentFor(argv []string) *aiPickerIntent {
 	if aiArgvHasBoolFlag(argv, "id") {
 		return nil
 	}
-	positionals := aiPositionalIndexes(argv, aiOperationFlagSet(argv[0]))
+	positionals := aiPositionalIndexes(argv, aiOperationFlagSet(name), start)
 	resource := singularResourceName(target.resource)
 
 	if len(positionals) == 0 {
@@ -87,7 +95,7 @@ func aiPickerIntentFor(argv []string) *aiPickerIntent {
 	// Several positionals are a shell-split multi-word name only when the
 	// operation takes a single path parameter (resolvePathArguments' joinable
 	// rule); with more path parameters, stay out of the way.
-	if len(positionals) > 1 && len(operationPathParameters[argv[0]]) > 1 {
+	if len(positionals) > 1 && len(operationPathParameters[name]) > 1 {
 		return nil
 	}
 	words := make([]string, len(positionals))
@@ -174,13 +182,27 @@ func (s *aiNameSelection) filtered(filter string) []nameCacheEntry {
 	return matchNameCandidates(filter, s.candidates)
 }
 
-// aiOperationFlagSet finds the flag set for a command name so the positional
+// aiOperationFlagSet finds the flag set for a command name — a GA operation,
+// a "beta <name>" subcommand, or a custom root command — so the positional
 // scan knows which flags consume values.
 func aiOperationFlagSet(name string) *pflag.FlagSet {
 	if cli.Root == nil {
 		return nil
 	}
 	if apiCommand := findDCICommand(); apiCommand != nil {
+		if sub, isBeta := strings.CutPrefix(name, "beta "); isBeta {
+			for _, betaCommand := range apiCommand.Commands() {
+				if betaCommand.Name() != "beta" {
+					continue
+				}
+				for _, operation := range betaCommand.Commands() {
+					if operation.Name() == sub || operation.HasAlias(sub) {
+						return operation.Flags()
+					}
+				}
+			}
+			return nil
+		}
 		for _, operation := range apiCommand.Commands() {
 			if operation.Name() == name || operation.HasAlias(name) {
 				return operation.Flags()
@@ -198,9 +220,11 @@ func aiOperationFlagSet(name string) *pflag.FlagSet {
 // aiPositionalIndexes returns the argv indexes of positional arguments,
 // mirroring commandArg's flag-value skipping — plus the NoOptDefVal rule:
 // a flag with an optional value (--chart) never consumes the next word.
-func aiPositionalIndexes(argv []string, flags *pflag.FlagSet) []int {
+// start is the index of the first operation argument: 1 after a top-level
+// command word, 2 after a "beta <name>" pair.
+func aiPositionalIndexes(argv []string, flags *pflag.FlagSet, start int) []int {
 	var indexes []int
-	for i := 1; i < len(argv); i++ {
+	for i := start; i < len(argv); i++ {
 		arg := argv[i]
 		if arg == "--" {
 			for j := i + 1; j < len(argv); j++ {

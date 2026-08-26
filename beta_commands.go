@@ -171,6 +171,36 @@ func hydrateBetaCommands(betaCommand *cobra.Command) error {
 	return nil
 }
 
+// registerBetaResolutionMetadata wires the resolvable beta operations into
+// the name-resolution metadata after the GA index is built (called from
+// setOperationMetadata, so every rebuild carries the keys). Only run-report
+// resolves: its path parameter is a saved report ID, and reports have names
+// and a GA list endpoint — reusing get-report's target keeps the list path
+// spec-derived instead of hardcoded. The other beta operations take ephemeral
+// operation IDs, which have no name source. Two keys per command: the AI
+// session routes and dispatches on the "beta run-report" spelling, while the
+// in-process hooks (resolvePathArguments, the zero-argument picker) look up
+// the cobra command name — registered only while no GA operation claims it.
+func registerBetaResolutionMetadata() {
+	target, ok := resolutionIndex["get-report"]
+	if !ok {
+		return
+	}
+	resolutionIndex["beta run-report"] = target
+	if _, claimed := resolutionIndex["run-report"]; !claimed {
+		resolutionIndex["run-report"] = target
+	}
+}
+
+// betaResolutionReady loads the operation metadata behind name resolution
+// (offline, from the cached GA spec — registerBetaResolutionMetadata rides
+// setOperationMetadata). False, never an error, when the metadata is
+// unavailable (no cached spec yet): resolution and the picker simply stay
+// off, exactly like the GA surface before first login.
+func betaResolutionReady() bool {
+	return ensureDestructiveOperations() == nil
+}
+
 // betaOperationCommand builds the cobra command for one beta operation. It
 // mirrors restish's unexported Operation.command() — path params as
 // positionals, query/header params as flags, body via stdin or shorthand
@@ -191,16 +221,38 @@ func betaOperationCommand(operation cli.Operation) *cobra.Command {
 	}
 
 	command := &cobra.Command{
-		Use:        use,
-		GroupID:    operation.Group,
-		Aliases:    operation.Aliases,
-		Short:      "(beta) " + operation.Short,
-		Long:       betaOperationLong(operation),
-		Args:       argSpec,
+		Use:     use,
+		GroupID: operation.Group,
+		Aliases: operation.Aliases,
+		Short:   "(beta) " + operation.Short,
+		Long:    betaOperationLong(operation),
+		// Args is assigned below the literal: the relaxed validator needs the
+		// command value itself for the GA-parity resolution gates.
 		Hidden:     operation.Hidden,
 		Deprecated: operation.Deprecated,
 		RunE: func(command *cobra.Command, args []string) error {
 			printBetaNotice(command.Name())
+
+			// GA-parity name resolution before the URI substitution below
+			// consumes the arguments: a name-shaped path argument resolves to
+			// its resource ID, and a zero-argument interactive invocation of a
+			// resolvable command (run-report) opens the picker. Both no-op for
+			// commands without a resolution target.
+			if betaResolutionReady() {
+				if err := resolvePathArguments(command, args); err != nil {
+					return err
+				}
+				if len(args) == 0 && pickedPathArgument != "" {
+					args = []string{pickedPathArgument}
+				}
+			}
+			if len(args) < len(operation.PathParams) {
+				// The relaxed Args validator admits a zero-argument resolvable
+				// invocation for the picker's sake; with no selection made the
+				// original arity error stands ("accepts " keeps exit 2 via
+				// isUsageError).
+				return fmt.Errorf("accepts %d arg(s), received %d", len(operation.PathParams), len(args))
+			}
 
 			uri := operation.URITemplate
 			for index, parameter := range operation.PathParams {
@@ -274,6 +326,24 @@ func betaOperationCommand(operation cli.Operation) *cobra.Command {
 	}
 	for _, parameter := range operation.HeaderParams {
 		flagValues[parameter.Name] = parameter.AddFlag(command.Flags())
+	}
+
+	// GA-parity relaxation of the arity check (relaxResolvableArgsValidation
+	// only walks the GA operations): a resolvable beta command accepts zero
+	// arguments when the picker can supply one, and surplus positionals when
+	// they are the shell-split words of an unquoted name. Metadata loads
+	// lazily here because the gates need the resolution index, which does not
+	// exist at mount time.
+	command.Args = func(command *cobra.Command, args []string) error {
+		if betaResolutionReady() {
+			if len(args) == 0 && zeroArgPickerApplies(command) {
+				return nil
+			}
+			if joinableNameArguments(command, args) {
+				return nil
+			}
+		}
+		return argSpec(command, args)
 	}
 
 	return command
