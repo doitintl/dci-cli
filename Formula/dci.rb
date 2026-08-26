@@ -1,25 +1,25 @@
 class Dci < Formula
   desc "Cloud Intelligence™ CLI"
   homepage "https://github.com/doitintl/dci-cli"
-  version "2.7.0"
+  version "2.7.1"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/doitintl/dci-cli/releases/download/v2.7.0/dci_2.7.0_darwin_arm64.tar.gz"
-      sha256 "16a0dd9d2d2391ddb3f469a09f2a3425a2424e54687a3b20d636f17522f797a6"
+      url "https://github.com/doitintl/dci-cli/releases/download/v2.7.1/dci_2.7.1_darwin_arm64.tar.gz"
+      sha256 "900f06d16640cc4717971d3d64ec1866e9338f75663038b44dd6bbe47b6396fc"
     else
-      url "https://github.com/doitintl/dci-cli/releases/download/v2.7.0/dci_2.7.0_darwin_amd64.tar.gz"
-      sha256 "0a16e7090ce5dbfdaf25d155bea56107c763dc96faf1558342e4595c94eb3fd9"
+      url "https://github.com/doitintl/dci-cli/releases/download/v2.7.1/dci_2.7.1_darwin_amd64.tar.gz"
+      sha256 "f0c5f4a6d4e21ef90506871dcd76bc2e2dcf0a10b4a3c59caebac7ddba63f63f"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/doitintl/dci-cli/releases/download/v2.7.0/dci_2.7.0_linux_arm64.tar.gz"
-      sha256 "fe5180b98cc67a3e87de809c23ea9f1c8aacb13981e49e1532ddbe2286d6406c"
+      url "https://github.com/doitintl/dci-cli/releases/download/v2.7.1/dci_2.7.1_linux_arm64.tar.gz"
+      sha256 "57f99812b9c158eb6efbdc5ce1c65fbf3f6227839d217305d762c76913a3704a"
     else
-      url "https://github.com/doitintl/dci-cli/releases/download/v2.7.0/dci_2.7.0_linux_amd64.tar.gz"
-      sha256 "e2ce079de20b01f187c9b00725d2c8ff493a9b7a442c13c815045b9d5824d626"
+      url "https://github.com/doitintl/dci-cli/releases/download/v2.7.1/dci_2.7.1_linux_amd64.tar.gz"
+      sha256 "5b7a8d2a66ae1ea7d5f7951b07f955989135949a116d82079a6ce9ca9aebe910"
     end
   end
 
