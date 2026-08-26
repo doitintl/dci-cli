@@ -557,6 +557,86 @@ func TestSwapConfiguredAPIBaseWriteFailureDegradesGracefully(t *testing.T) {
 	}
 }
 
+// TestRestoreConfiguredAPIBaseSucceedsAfterTransientFailure guards a
+// Claude-review finding on PR #128: a single failed write-back used to leave
+// apis.json permanently pinned to the override with only a stderr warning.
+// restoreConfiguredAPIBase now retries, so a transient hiccup (simulated
+// here by making the file briefly read-only) still ends with the original
+// content restored and no warning printed.
+func TestRestoreConfiguredAPIBaseSucceedsAfterTransientFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file write permissions")
+	}
+
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "apis.json")
+	original := []byte(`{"dci":{"base":"https://api.doit.com"}}`)
+	if err := os.WriteFile(configFile, []byte(`{"dci":{"base":"https://dev.example.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(configFile, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	// Lift the read-only bit shortly after the first attempt so a retry
+	// succeeds — simulating a transient hiccup rather than a permanent one.
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		_ = os.Chmod(configFile, 0o600)
+	}()
+
+	r, w, _ := os.Pipe()
+	oldStderr := os.Stderr
+	os.Stderr = w
+	restoreConfiguredAPIBase(configFile, original)
+	w.Close()
+	os.Stderr = oldStderr
+	captured, _ := io.ReadAll(r)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("apis.json = %s, want the retried restore to have applied %s", data, original)
+	}
+	if strings.Contains(string(captured), "warning") {
+		t.Fatalf("expected no warning once the retry succeeded, got: %s", captured)
+	}
+}
+
+// TestRestoreConfiguredAPIBaseWarnsWithCurrentBaseOnPermanentFailure guards
+// the same finding for the case where every retry fails: the warning must
+// name the actual base still on disk (read back from the file), not assume
+// it's the hardcoded production default.
+func TestRestoreConfiguredAPIBaseWarnsWithCurrentBaseOnPermanentFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file write permissions")
+	}
+
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "apis.json")
+	original := []byte(`{"dci":{"base":"https://staging.doit.com"}}`)
+	if err := os.WriteFile(configFile, []byte(`{"dci":{"base":"https://dev.example.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(configFile, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(configFile, 0o600) })
+
+	r, w, _ := os.Pipe()
+	oldStderr := os.Stderr
+	os.Stderr = w
+	restoreConfiguredAPIBase(configFile, original)
+	w.Close()
+	os.Stderr = oldStderr
+	captured, _ := io.ReadAll(r)
+
+	if !strings.Contains(string(captured), "https://staging.doit.com") {
+		t.Fatalf("expected the warning to name the original staging base, got: %s", captured)
+	}
+}
+
 // TestAcquireAPIBaseSwapLockFailsFastOnPermissionError guards a
 // Claude-review finding on PR #128: a genuine permission failure (e.g. a
 // read-only config directory in CI) must return immediately, not be
@@ -581,6 +661,47 @@ func TestAcquireAPIBaseSwapLockFailsFastOnPermissionError(t *testing.T) {
 	}
 	if elapsed >= apiBaseSwapLockWait {
 		t.Fatalf("acquireAPIBaseSwapLock took %v, want a fast failure well under the %v contention wait", elapsed, apiBaseSwapLockWait)
+	}
+}
+
+// TestAcquireAPIBaseSwapLockTimesOutOnUndeletableStaleLock guards a
+// Claude-review finding on PR #128: when a stale lock file can't actually be
+// removed (owned by another user, or a directory that permits create but
+// not delete), the loop must still respect apiBaseSwapLockWait instead of
+// busy-looping forever — a failed os.Remove used to `continue` straight back
+// to OpenFile with no deadline check and no sleep.
+func TestAcquireAPIBaseSwapLockTimesOutOnUndeletableStaleLock(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file/directory permissions")
+	}
+
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "api_base_swap.lock")
+	if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Age it past apiBaseSwapLockStaleAfter so the reclaim branch fires.
+	stale := time.Now().Add(-apiBaseSwapLockStaleAfter - time.Second)
+	if err := os.Chtimes(lockPath, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	// A read-only directory lets OpenFile/Stat succeed (the lock file itself
+	// stays readable) but makes os.Remove(lockPath) fail with EACCES/EPERM.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	start := time.Now()
+	_, err := acquireAPIBaseSwapLock(dir)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected acquireAPIBaseSwapLock to fail: the stale lock can never be removed")
+	}
+	// Generous upper bound: must respect the deadline, not spin well past it.
+	if elapsed > apiBaseSwapLockWait+2*time.Second {
+		t.Fatalf("acquireAPIBaseSwapLock took %v, want it to give up at roughly the %v deadline (a busy-loop would spin far longer or never return)", elapsed, apiBaseSwapLockWait)
 	}
 }
 

@@ -203,8 +203,15 @@ func acquireAPIBaseSwapLock(configDir string) (release func(), err error) {
 			return nil, openErr
 		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > apiBaseSwapLockStaleAfter {
-			_ = os.Remove(path)
-			continue
+			// A failed Remove (e.g. the lock is owned by another user, or
+			// this directory permits create but not delete) must still fall
+			// through to the deadline/sleep below — otherwise a stale lock
+			// that can't be reclaimed spins this loop at 100% CPU forever,
+			// since the next OpenFile would just find the same untouched
+			// file and this branch would fire again immediately.
+			if err := os.Remove(path); err == nil {
+				continue
+			}
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("timed out waiting for %s", path)
@@ -251,10 +258,55 @@ func swapConfiguredAPIBase(configFile, override string) (restore func(), err err
 	}
 
 	return func() {
-		if err := os.WriteFile(configFile, original, 0o600); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: unable to restore %s: %v\n", configFile, err)
-		}
+		restoreConfiguredAPIBase(configFile, original)
 	}, nil
+}
+
+// restoreConfiguredAPIBaseRetries bounds how many times restoreConfiguredAPIBase
+// retries a failed write-back before giving up: enough to ride out a
+// transient hiccup (a brief network-mount stall, a momentary permission
+// flip), not so many that a persistently broken filesystem blocks the
+// command that's otherwise done.
+const restoreConfiguredAPIBaseRetries = 3
+
+// restoreConfiguredAPIBase writes original back to configFile, retrying a
+// failed write a few times (a single unretried failure here is exactly what
+// leaves apis.json permanently pinned to the override on disk — silently,
+// with only a stderr line most invocations don't watch for). If every
+// attempt fails, it re-reads the file first: another process may have
+// already restored it (or it may already hold the override, worth knowing),
+// and only warns loudly, naming the exact remediation, when the content on
+// disk still isn't what it should be.
+func restoreConfiguredAPIBase(configFile string, original []byte) {
+	var lastErr error
+	for range restoreConfiguredAPIBaseRetries {
+		if err := os.WriteFile(configFile, original, 0o600); err == nil {
+			return
+		} else {
+			lastErr = err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if current, readErr := os.ReadFile(configFile); readErr == nil && string(current) == string(original) {
+		// Another invocation (or a delayed retry above) already restored
+		// the exact content we wanted; nothing left to warn about.
+		return
+	}
+
+	wantBase := defaultAPIBase
+	var doc map[string]interface{}
+	if err := json.Unmarshal(original, &doc); err == nil {
+		if dci, ok := doc["dci"].(map[string]interface{}); ok {
+			if base, ok := dci["base"].(string); ok && base != "" {
+				wantBase = base
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr,
+		"warning: unable to restore %s after %d attempts (%v) — it may still hold the DCI_API_BASE_URL override; edit its \"dci\".\"base\" field back to %q if later commands start hitting the wrong host\n",
+		configFile, restoreConfiguredAPIBaseRetries, lastErr, wantBase)
 }
 
 // restishCacheDir mirrors restish's own getCacheDir("dci"): honors
