@@ -3069,6 +3069,90 @@ func TestCustomerContextFlag(t *testing.T) {
 	})
 }
 
+// TestDataCommandHonorsAPIBaseOverride guards against CMP-50503: with
+// apis.json's persisted base pinned to one host (as it always is — the
+// env override is deliberately never persisted, see ensureConfig) and
+// DCI_API_BASE_URL pointing at a different host, a real data command must
+// still route its request to the override, not the persisted base.
+func TestDataCommandHonorsAPIBaseOverride(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+
+	prodHit := false
+	prod := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		prodHit = true
+		http.NotFound(writer, request)
+	}))
+	t.Cleanup(prod.Close)
+
+	devRequestPath := ""
+	dev := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/openapi.json" {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer, `{
+				"openapi": "3.0.0",
+				"info": {"title": "DCI test", "version": "1.0.0"},
+				"paths": {
+					"/budgets": {
+						"get": {
+							"operationId": "list-budgets",
+							"responses": {"200": {"description": "OK"}}
+						}
+					}
+				}
+			}`)
+			return
+		}
+		devRequestPath = request.URL.Path
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `[]`)
+	}))
+	t.Cleanup(dev.Close)
+
+	// dciConfigDir() resolves against HOME via os.UserConfigDir() (on macOS,
+	// $HOME/Library/Application Support/dci) and does not honor
+	// XDG_CONFIG_HOME or DCI_CONFIG_DIR, unlike restish's own config-dir
+	// lookup. Seed apis.json at that real path under this test's HOME, with
+	// no DCI_CONFIG_DIR override, so restish's cli.Init resolves the same
+	// file dci-cli's own ensureConfig()/apiBase() use. apis.json is pinned
+	// to prod, as it always is on a real machine — the override must never
+	// need to be persisted to take effect.
+	configDir := filepath.Join(home, "Library", "Application Support", "dci")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config, err := json.Marshal(map[string]interface{}{
+		"dci": map[string]interface{}{
+			"base":     prod.URL,
+			"profiles": map[string]interface{}{"default": map[string]interface{}{}},
+			"tls":      map[string]interface{}{"insecure": true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environment := []string{
+		"DCI_API_BASE_URL=" + dev.URL,
+		"DCI_API_KEY=test-key",
+		"DCI_CACHE_DIR=" + filepath.Join(home, "cache"),
+		"DCI_NO_UPDATE_CHECK=1",
+	}
+
+	res := runCLIWithEnv(t, bin, home, environment, "list-budgets")
+	if res.timedOut {
+		t.Fatalf("command timed out; output:\n%s", res.output)
+	}
+	if prodHit {
+		t.Fatalf("list-budgets hit the persisted prod base instead of DCI_API_BASE_URL; output:\n%s", res.output)
+	}
+	if devRequestPath != "/budgets" {
+		t.Fatalf("dev server saw path %q, want /budgets; output:\n%s", devRequestPath, res.output)
+	}
+}
+
 func TestIsHTMLErrorPage(t *testing.T) {
 	tests := []struct {
 		name string
