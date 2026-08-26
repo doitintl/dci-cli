@@ -914,6 +914,25 @@ func TestCLIIntegrationBehavior(t *testing.T) {
 		}
 	})
 
+	t.Run("malformed DCI_API_BASE_URL degrades gracefully instead of aborting", func(t *testing.T) {
+		// Guards a Claude-review finding on PR #128: apiBase() rejecting a
+		// malformed override (missing https://, here) must not hard-abort
+		// commands that never depended on the override, the same way a
+		// swapConfiguredAPIBase write failure already degrades gracefully.
+		// No warning is expected here (unlike the write-failure case) since
+		// `status` calls apiBase() itself and reports this exact error on
+		// its own terms — printing it a second time from run() would be
+		// redundant noise for the one command that actually cares.
+		home := t.TempDir()
+		res := runCLIWithEnv(t, bin, home, []string{"DCI_API_BASE_URL=http://not-https.example.com"}, "--version")
+		if res.timedOut {
+			t.Fatalf("command timed out; output:\n%s", res.output)
+		}
+		if res.exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
+		}
+	})
+
 	t.Run("status repairs unusable API config", func(t *testing.T) {
 		cases := map[string]string{
 			"missing base": `{"$schema":"x","dci":{"profiles":{}}}`,
