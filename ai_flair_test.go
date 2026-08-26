@@ -107,6 +107,52 @@ func TestAIDockProgressDeclaredWhileBusy(t *testing.T) {
 	}
 }
 
+func TestAILogoImageDrawsTheMark(t *testing.T) {
+	img := aiLogoImage()
+	bounds := img.Bounds()
+	if bounds.Dy() != 224 || bounds.Dx() <= bounds.Dy() {
+		t.Fatalf("logo bounds = %v, want 224 tall and wider than tall (the dot extends right)", bounds)
+	}
+	opaque, tinted := 0, 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, a := img.At(x, y).RGBA()
+			switch {
+			case a == 0xFFFF:
+				opaque++
+			case a > 0:
+				tinted++
+			}
+		}
+	}
+	if opaque < 5000 {
+		t.Fatalf("logo has %d opaque pixels, want a solid mark", opaque)
+	}
+	if tinted == 0 {
+		t.Fatal("logo has no partially covered pixels — anti-aliasing missing")
+	}
+	// The counter: the bowl's center must be transparent.
+	if _, _, _, a := img.At(90, 148).RGBA(); a != 0 {
+		t.Fatal("the bowl's counter must be transparent")
+	}
+}
+
+func TestAIBannerUsesKittyGridWhenResolved(t *testing.T) {
+	m := aiTestModel(t)
+	if !strings.Contains(aiTranscriptText(m), "███") {
+		t.Fatal("without Kitty support the half-block mark stands")
+	}
+	m.logoGrid = "KITTY-GRID-PLACEHOLDERS"
+	m.refreshBanner()
+	banner := m.transcript[0]
+	if !strings.Contains(banner, "KITTY-GRID-PLACEHOLDERS") {
+		t.Fatalf("banner must embed the resolved grid: %q", banner)
+	}
+	if strings.Contains(banner, "███") {
+		t.Fatal("the half-block mark must step aside for the raster")
+	}
+}
+
 func TestAIRuleGradientKeepsWidth(t *testing.T) {
 	for _, width := range []int{4, 24, 80} {
 		rule := aiRule(width, "")
