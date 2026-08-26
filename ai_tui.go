@@ -278,6 +278,13 @@ func newAIModel(configDir string) aiModel {
 		m.sessionNote = "AI needs an Anthropic API key — ask a question to set one up, or export ANTHROPIC_API_KEY"
 	}
 	m.append(aiBannerBlock(&m))
+	if len(history) == 0 {
+		// First session ever (nothing in the persisted input history): show
+		// the /help block up front. The banner's "/help for how this works"
+		// pointer assumes the user knows slash commands exist — first-timers
+		// don't, so give them the map instead of a reference to it.
+		m.append(aiHelpText(len(m.catalog), m.session != nil))
+	}
 	if m.session == nil {
 		// A keyless session offers the guided key setup up front instead of
 		// waiting for the first question (F7 — dogfood tested one-shot first

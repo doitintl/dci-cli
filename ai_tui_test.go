@@ -1630,3 +1630,18 @@ func TestAIMaskAPIKey(t *testing.T) {
 		t.Fatalf("short key mask = %q", got)
 	}
 }
+
+func TestAIFirstSessionShowsHelp(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	dir := t.TempDir()
+	m := newAIModel(dir)
+	if !strings.Contains(aiTranscriptText(m), "How this session works") {
+		t.Fatal("first session did not show the help block")
+	}
+	// A returning user (any persisted history) gets the banner pointer only.
+	appendAIHistory(dir, nil, "/status")
+	m = newAIModel(dir)
+	if strings.Contains(aiTranscriptText(m), "How this session works") {
+		t.Fatal("help block re-shown despite existing history")
+	}
+}
