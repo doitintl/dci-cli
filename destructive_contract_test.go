@@ -16,6 +16,10 @@ import (
 	"github.com/spf13/viper"
 )
 
+// TestDestructiveMetadataReusesWarmRestishDiskCacheOffline covers the
+// no-override case: apis.json's persisted base matches DCI_API_BASE_URL, so
+// applyAPIBaseOverride's isolated temp dir never kicks in and the real,
+// shared restish disk cache is what gets warmed and reused offline.
 func TestDestructiveMetadataReusesWarmRestishDiskCacheOffline(t *testing.T) {
 	bin := buildBinary(t)
 	var requests atomic.Int64
@@ -46,10 +50,20 @@ func TestDestructiveMetadataReusesWarmRestishDiskCacheOffline(t *testing.T) {
 
 	home := t.TempDir()
 	cacheDir := filepath.Join(home, "cache")
-	environment := append(seedHermeticAPIConfig(t, home, server.URL),
+	environment := seedHermeticAPIConfig(t, home, server.URL)
+	environment = append(environment,
 		"DCI_AGENT_MODE=1",
 		"DCI_API_KEY=test-token",
 	)
+	// No DCI_API_BASE_URL here: seedHermeticAPIConfig's helper env sets it
+	// to the same server.URL apis.json is already pinned to, which would
+	// make applyAPIBaseOverride isolate this invocation into a fresh temp
+	// dir every time (correct for an actual override, but it would defeat
+	// the disk-cache-reuse behavior this test exists to cover). Filter it
+	// out so this exercises the plain, no-override path against the real
+	// shared cache dir.
+	environment = filterOutEnvPrefix(environment, "DCI_API_BASE_URL=")
+
 	first := runCLIWithEnv(t, bin, home, environment, "delete-budget", "budget-1")
 	if first.timedOut || first.exitCode != 30 || !strings.Contains(first.output, "requires confirmation") {
 		t.Fatalf("cold-cache command = %+v", first)
@@ -66,6 +80,69 @@ func TestDestructiveMetadataReusesWarmRestishDiskCacheOffline(t *testing.T) {
 	if second.timedOut || second.exitCode != 30 || !strings.Contains(second.output, "requires confirmation") {
 		t.Fatalf("warm-cache offline command = %+v", second)
 	}
+}
+
+// TestDestructiveMetadataWithOverrideAlwaysRefetches documents the deliberate
+// tradeoff applyAPIBaseOverride makes: an invocation with DCI_API_BASE_URL
+// set gets a fresh, isolated temp config/cache dir every time (so it can
+// never serve a spec cached from a different host), which means it never
+// reuses the disk cache across invocations either, even against the same
+// override host. A second invocation with the server down must fail cleanly
+// rather than silently serving stale metadata.
+func TestDestructiveMetadataWithOverrideAlwaysRefetches(t *testing.T) {
+	bin := buildBinary(t)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/openapi.json" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{
+			"openapi": "3.0.0",
+			"info": {"title": "DCI test", "version": "1.0.0"},
+			"paths": {
+				"/budgets/{id}": {
+					"delete": {
+						"operationId": "delete-budget",
+						"parameters": [
+							{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+						],
+						"responses": {"204": {"description": "Deleted"}}
+					}
+				}
+			}
+		}`)
+	}))
+	t.Cleanup(server.Close)
+
+	home := t.TempDir()
+	environment := append(seedHermeticAPIConfig(t, home, server.URL),
+		"DCI_AGENT_MODE=1",
+		"DCI_API_KEY=test-token",
+	)
+
+	first := runCLIWithEnv(t, bin, home, environment, "delete-budget", "budget-1")
+	if first.timedOut || first.exitCode != 30 || !strings.Contains(first.output, "requires confirmation") {
+		t.Fatalf("first override command = %+v", first)
+	}
+
+	server.Close()
+	second := runCLIWithEnv(t, bin, home, environment, "delete-budget", "budget-1")
+	if second.timedOut || second.exitCode == 30 {
+		t.Fatalf("expected the second override invocation to fail cleanly once its isolated temp dir forces a refetch against a dead server, got: %+v", second)
+	}
+}
+
+// filterOutEnvPrefix drops every entry starting with prefix from env,
+// preserving order.
+func filterOutEnvPrefix(env []string, prefix string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
 }
 
 func TestDestructiveMetadataDoesNotReloadEmptyOperationSet(t *testing.T) {

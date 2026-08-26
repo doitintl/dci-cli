@@ -14,10 +14,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -516,330 +515,280 @@ func TestIsDetachedRefreshInvocation(t *testing.T) {
 	}
 }
 
-// TestSwapConfiguredAPIBaseWriteFailureDegradesGracefully guards the
-// Claude-review finding on PR #128: a swap write failure (e.g. a read-only
-// apis.json mount in CI) must not turn an unrelated command's invocation
-// into a hard failure. run() falls back to cli.Init with the persisted base
-// and a warning instead of aborting.
-func TestSwapConfiguredAPIBaseWriteFailureDegradesGracefully(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores file write permissions")
-	}
-
+// TestWriteOverriddenAPIsConfigPreservesEverythingButBase verifies
+// writeOverriddenAPIsConfig only patches "dci.base" — auth, TLS, and any
+// other field already in the real apis.json are copied through untouched
+// into the isolated temp-dir copy.
+func TestWriteOverriddenAPIsConfigPreservesEverythingButBase(t *testing.T) {
 	dir := t.TempDir()
-	configFile := filepath.Join(dir, "apis.json")
-	original := []byte(`{"dci":{"base":"https://api.doit.com"}}`)
-	if err := os.WriteFile(configFile, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Make both the file and its directory read-only so the swap's
-	// truncate-and-rewrite fails regardless of platform semantics.
-	if err := os.Chmod(configFile, 0o400); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(configFile, 0o600) })
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-
-	_, err := swapConfiguredAPIBase(configFile, "https://dev.example.com")
-	if err == nil {
-		t.Fatal("expected swapConfiguredAPIBase to fail against a read-only directory")
-	}
-
-	data, readErr := os.ReadFile(configFile)
-	if readErr != nil {
-		t.Fatalf("read config after failed swap: %v", readErr)
-	}
-	if string(data) != string(original) {
-		t.Fatalf("apis.json changed despite a failed swap: %s", data)
-	}
-}
-
-// TestRestoreConfiguredAPIBaseSucceedsAfterTransientFailure guards a
-// Claude-review finding on PR #128: a single failed write-back used to leave
-// apis.json permanently pinned to the override with only a stderr warning.
-// restoreConfiguredAPIBase now retries, so a transient hiccup (simulated
-// here by making the file briefly read-only) still ends with the original
-// content restored and no warning printed.
-func TestRestoreConfiguredAPIBaseSucceedsAfterTransientFailure(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores file write permissions")
-	}
-
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "apis.json")
-	original := []byte(`{"dci":{"base":"https://api.doit.com"}}`)
-	if err := os.WriteFile(configFile, []byte(`{"dci":{"base":"https://dev.example.com"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(configFile, 0o400); err != nil {
-		t.Fatal(err)
-	}
-	// Lift the read-only bit shortly after the first attempt so a retry
-	// succeeds — simulating a transient hiccup rather than a permanent one.
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		_ = os.Chmod(configFile, 0o600)
-	}()
-
-	r, w, _ := os.Pipe()
-	oldStderr := os.Stderr
-	os.Stderr = w
-	restoreConfiguredAPIBase(configFile, original)
-	w.Close()
-	os.Stderr = oldStderr
-	captured, _ := io.ReadAll(r)
-
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(original) {
-		t.Fatalf("apis.json = %s, want the retried restore to have applied %s", data, original)
-	}
-	if strings.Contains(string(captured), "warning") {
-		t.Fatalf("expected no warning once the retry succeeded, got: %s", captured)
-	}
-}
-
-// TestRestoreConfiguredAPIBaseWarnsWithCurrentBaseOnPermanentFailure guards
-// the same finding for the case where every retry fails: the warning must
-// name the actual base still on disk (read back from the file), not assume
-// it's the hardcoded production default.
-func TestRestoreConfiguredAPIBaseWarnsWithCurrentBaseOnPermanentFailure(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores file write permissions")
-	}
-
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "apis.json")
-	original := []byte(`{"dci":{"base":"https://staging.doit.com"}}`)
-	if err := os.WriteFile(configFile, []byte(`{"dci":{"base":"https://dev.example.com"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(configFile, 0o400); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(configFile, 0o600) })
-
-	r, w, _ := os.Pipe()
-	oldStderr := os.Stderr
-	os.Stderr = w
-	restoreConfiguredAPIBase(configFile, original)
-	w.Close()
-	os.Stderr = oldStderr
-	captured, _ := io.ReadAll(r)
-
-	if !strings.Contains(string(captured), "https://staging.doit.com") {
-		t.Fatalf("expected the warning to name the original staging base, got: %s", captured)
-	}
-}
-
-// TestAcquireAPIBaseSwapLockFailsFastOnPermissionError guards a
-// Claude-review finding on PR #128: a genuine permission failure (e.g. a
-// read-only config directory in CI) must return immediately, not be
-// mistaken for lock contention and spun on for the full apiBaseSwapLockWait.
-func TestAcquireAPIBaseSwapLockFailsFastOnPermissionError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory write permissions")
-	}
-
-	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-
-	start := time.Now()
-	_, err := acquireAPIBaseSwapLock(dir)
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected acquireAPIBaseSwapLock to fail against a read-only directory")
-	}
-	if elapsed >= apiBaseSwapLockWait {
-		t.Fatalf("acquireAPIBaseSwapLock took %v, want a fast failure well under the %v contention wait", elapsed, apiBaseSwapLockWait)
-	}
-}
-
-// TestAcquireAPIBaseSwapLockTimesOutOnUndeletableStaleLock guards a
-// Claude-review finding on PR #128: when a stale lock file can't actually be
-// removed (owned by another user, or a directory that permits create but
-// not delete), the loop must still respect apiBaseSwapLockWait instead of
-// busy-looping forever — a failed os.Remove used to `continue` straight back
-// to OpenFile with no deadline check and no sleep.
-func TestAcquireAPIBaseSwapLockTimesOutOnUndeletableStaleLock(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores file/directory permissions")
-	}
-
-	dir := t.TempDir()
-	lockPath := filepath.Join(dir, "api_base_swap.lock")
-	if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Age it past apiBaseSwapLockStaleAfter so the reclaim branch fires.
-	stale := time.Now().Add(-apiBaseSwapLockStaleAfter - time.Second)
-	if err := os.Chtimes(lockPath, stale, stale); err != nil {
-		t.Fatal(err)
-	}
-	// A read-only directory lets OpenFile/Stat succeed (the lock file itself
-	// stays readable) but makes os.Remove(lockPath) fail with EACCES/EPERM.
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-
-	start := time.Now()
-	_, err := acquireAPIBaseSwapLock(dir)
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected acquireAPIBaseSwapLock to fail: the stale lock can never be removed")
-	}
-	// Generous upper bound: must respect the deadline, not spin well past it.
-	if elapsed > apiBaseSwapLockWait+2*time.Second {
-		t.Fatalf("acquireAPIBaseSwapLock took %v, want it to give up at roughly the %v deadline (a busy-loop would spin far longer or never return)", elapsed, apiBaseSwapLockWait)
-	}
-}
-
-// TestAcquireAPIBaseSwapLockSerializesConcurrentCallers guards a
-// Claude-review finding on PR #128: two concurrent holders of the lock (as
-// two ordinary `dci` invocations with DCI_API_BASE_URL set would produce
-// around swapConfiguredAPIBase) must never be inside the critical section at
-// the same time.
-func TestAcquireAPIBaseSwapLockSerializesConcurrentCallers(t *testing.T) {
-	dir := t.TempDir()
-
-	const n = 8
-	var wg sync.WaitGroup
-	var inCriticalSection atomic.Int32
-	var maxObserved atomic.Int32
-	errs := make([]error, n)
-	for i := range n {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			release, err := acquireAPIBaseSwapLock(dir)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			defer release()
-			cur := inCriticalSection.Add(1)
-			for {
-				max := maxObserved.Load()
-				if cur <= max || maxObserved.CompareAndSwap(max, cur) {
-					break
-				}
-			}
-			// Hold briefly to widen the window a non-serialized
-			// implementation would fall into.
-			time.Sleep(2 * time.Millisecond)
-			inCriticalSection.Add(-1)
-		}(i)
-	}
-	wg.Wait()
-
-	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("caller %d: acquireAPIBaseSwapLock error: %v", i, err)
+	src := filepath.Join(dir, "apis.json")
+	original := `{
+		"dci": {
+			"base": "https://api.doit.com",
+			"profiles": {"default": {"auth": {"name": "oauth-authorization-code"}}},
+			"tls": {"insecure": true}
 		}
-	}
-	if got := maxObserved.Load(); got != 1 {
-		t.Fatalf("max concurrent holders in critical section = %d, want 1", got)
-	}
-}
-
-// TestApplyAPIBaseOverrideSerializesConcurrentInvocations guards the same
-// finding at the level run() actually calls: concurrent applyAPIBaseOverride
-// calls (simulating concurrent `dci` invocations, some with the override set
-// and some without) must not race read-swap-write on the same apis.json —
-// a racing restore must never leave a mid-swap value on disk, including for
-// callers that never set DCI_API_BASE_URL themselves.
-func TestApplyAPIBaseOverrideSerializesConcurrentInvocations(t *testing.T) {
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "apis.json")
-	original := `{"dci":{"base":"https://api.doit.com"}}`
-	if err := os.WriteFile(configFile, []byte(original), 0o600); err != nil {
+	}`
+	if err := os.WriteFile(src, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// t.Setenv panics if called concurrently, so set the override once,
-	// outside the goroutines below — every concurrent call still exercises
-	// its own full read-swap-write-restore, which is what the race is about.
-	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
 
-	const n = 8
-	var wg sync.WaitGroup
-	for i := range n {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			release := applyAPIBaseOverride(dir, []string{"dci", "list-budgets"})
-			time.Sleep(2 * time.Millisecond)
-			release()
-		}(i)
+	dst := filepath.Join(dir, "override.json")
+	if err := writeOverriddenAPIsConfig(src, dst, "https://dev.example.com"); err != nil {
+		t.Fatal(err)
 	}
-	wg.Wait()
 
-	data, err := os.ReadFile(configFile)
+	data, err := os.ReadFile(dst)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var doc map[string]interface{}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("apis.json is not valid JSON after concurrent access: %s", data)
+		t.Fatal(err)
 	}
-	dci, _ := doc["dci"].(map[string]interface{})
-	if base, _ := dci["base"].(string); base != "https://api.doit.com" {
-		t.Fatalf("apis.json base = %q, want the original https://api.doit.com (a racing restore corrupted it)", base)
+	dci := doc["dci"].(map[string]interface{})
+	if dci["base"] != "https://dev.example.com" {
+		t.Errorf("base = %v, want the override", dci["base"])
+	}
+	tls := dci["tls"].(map[string]interface{})
+	if tls["insecure"] != true {
+		t.Errorf("tls.insecure = %v, want true (must survive the patch)", tls["insecure"])
+	}
+	profiles := dci["profiles"].(map[string]interface{})
+	profile := profiles["default"].(map[string]interface{})
+	auth := profile["auth"].(map[string]interface{})
+	if auth["name"] != "oauth-authorization-code" {
+		t.Errorf("auth.name = %v, want it preserved", auth["name"])
+	}
+
+	// The real file must be untouched.
+	realData, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(realData) != original {
+		t.Fatalf("the real apis.json changed:\n%s", realData)
 	}
 }
 
-func TestInvalidateSpecCacheOnHostChange(t *testing.T) {
-	cacheDir := t.TempDir()
-	t.Setenv("DCI_CACHE_DIR", cacheDir)
+// TestApplyAPIBaseOverrideIsolatesConfigAndCacheDirs is the core unit test
+// for the redesigned fix: instead of mutating the real apis.json (and
+// needing a lock, stale-lock reclamation, and cache-invalidation machinery
+// to make that safe across processes), DCI_API_BASE_URL now gets its own
+// private temp config+cache dir that no other invocation ever sees — so
+// there is nothing left to race.
+// TestDetachedRefreshEnvRestoresRealDirsDuringOverride guards a finding
+// from the adversarial review of this redesign: __refresh-update-check and
+// __refresh-names are spawned via exec.Command, which inherits os.Environ()
+// at Start() time. If applyAPIBaseOverride's active override has already
+// pointed DCI_CONFIG_DIR/DCI_CACHE_DIR at its throwaway temp dir when one
+// of these children is spawned (completionPreflight's name-refresh spawn
+// happens well after applyAPIBaseOverride runs), the child would otherwise
+// do real network I/O and write into a directory the parent deletes on
+// exit — silently breaking the persisted name/update cache it exists to
+// refresh. detachedRefreshEnv must give the child the real directories.
+func TestDetachedRefreshEnvRestoresRealDirsDuringOverride(t *testing.T) {
+	t.Cleanup(func() { realDCIDirOverrides = nil })
 
-	specFile := filepath.Join(cacheDir, "dci.cbor")
-	if err := os.WriteFile(specFile, []byte("prod-spec"), 0o600); err != nil {
+	t.Run("no active override: passes environ through unchanged", func(t *testing.T) {
+		realDCIDirOverrides = nil
+		t.Setenv("DCI_CONFIG_DIR", "/real/config")
+		t.Setenv("DCI_CACHE_DIR", "/real/cache")
+
+		env := detachedRefreshEnv()
+		if !slices.Contains(env, "DCI_CONFIG_DIR=/real/config") {
+			t.Errorf("env missing DCI_CONFIG_DIR=/real/config: %v", env)
+		}
+		if !slices.Contains(env, "DCI_CACHE_DIR=/real/cache") {
+			t.Errorf("env missing DCI_CACHE_DIR=/real/cache: %v", env)
+		}
+	})
+
+	t.Run("active override: restores the real dirs, not the temp ones", func(t *testing.T) {
+		t.Setenv("DCI_CONFIG_DIR", "/temp/override")
+		t.Setenv("DCI_CACHE_DIR", "/temp/override")
+		realDCIDirOverrides = &realDCIDirOverridesState{
+			configDir: dciDirOverride{value: "/real/config", had: true},
+			cacheDir:  dciDirOverride{value: "/real/cache", had: true},
+		}
+
+		env := detachedRefreshEnv()
+		if slices.Contains(env, "DCI_CONFIG_DIR=/temp/override") {
+			t.Errorf("env leaked the temp override dir: %v", env)
+		}
+		if !slices.Contains(env, "DCI_CONFIG_DIR=/real/config") {
+			t.Errorf("env missing the restored real DCI_CONFIG_DIR: %v", env)
+		}
+		if !slices.Contains(env, "DCI_CACHE_DIR=/real/cache") {
+			t.Errorf("env missing the restored real DCI_CACHE_DIR: %v", env)
+		}
+	})
+
+	t.Run("active override, real dirs were unset: child gets them unset too", func(t *testing.T) {
+		t.Setenv("DCI_CONFIG_DIR", "/temp/override")
+		t.Setenv("DCI_CACHE_DIR", "/temp/override")
+		realDCIDirOverrides = &realDCIDirOverridesState{
+			configDir: dciDirOverride{had: false},
+			cacheDir:  dciDirOverride{had: false},
+		}
+
+		env := detachedRefreshEnv()
+		for _, e := range env {
+			if strings.HasPrefix(e, "DCI_CONFIG_DIR=") || strings.HasPrefix(e, "DCI_CACHE_DIR=") {
+				t.Errorf("env should not set DCI_CONFIG_DIR/DCI_CACHE_DIR when the real invocation never had them, got: %s", e)
+			}
+		}
+	})
+}
+
+func TestApplyAPIBaseOverrideIsolatesConfigAndCacheDirs(t *testing.T) {
+	realDir := t.TempDir()
+	realConfig := filepath.Join(realDir, "apis.json")
+	if err := os.WriteFile(realConfig, []byte(`{"dci":{"base":"https://api.doit.com","tls":{"insecure":true}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	realCacheDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realCacheDir, "cache.json"), []byte(`{"dci:default.token":"real-token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// dci.cbor must never be copied into the isolated dir — a stale spec
+	// from a different host must never be served under the override.
+	if err := os.WriteFile(filepath.Join(realCacheDir, "dci.cbor"), []byte("stale-spec-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DCI_CACHE_DIR", realCacheDir)
+	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
+
+	cleanup := applyAPIBaseOverride(realDir, []string{"dci", "list-budgets"})
+	t.Cleanup(cleanup)
+
+	tempConfigDir := os.Getenv("DCI_CONFIG_DIR")
+	tempCacheDir := os.Getenv("DCI_CACHE_DIR")
+	if tempConfigDir == "" || tempConfigDir == realDir {
+		t.Fatalf("DCI_CONFIG_DIR = %q, want a fresh isolated dir", tempConfigDir)
+	}
+	if tempCacheDir == "" || tempCacheDir == realCacheDir {
+		t.Fatalf("DCI_CACHE_DIR = %q, want a fresh isolated dir", tempCacheDir)
+	}
+	if tempConfigDir != tempCacheDir {
+		t.Fatalf("config dir %q and cache dir %q should be the same temp dir", tempConfigDir, tempCacheDir)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tempConfigDir, "apis.json"))
+	if err != nil {
+		t.Fatalf("isolated apis.json missing: %v", err)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	dci := doc["dci"].(map[string]interface{})
+	if dci["base"] != "https://dev.example.com" {
+		t.Errorf("isolated base = %v, want the override", dci["base"])
+	}
+
+	cacheData, err := os.ReadFile(filepath.Join(tempCacheDir, "cache.json"))
+	if err != nil {
+		t.Fatalf("isolated cache.json missing: %v", err)
+	}
+	if !strings.Contains(string(cacheData), "real-token") {
+		t.Errorf("isolated cache.json = %s, want the real OAuth session carried over", cacheData)
+	}
+
+	if _, err := os.Stat(filepath.Join(tempCacheDir, "dci.cbor")); !os.IsNotExist(err) {
+		t.Fatalf("dci.cbor should not exist in the isolated cache dir yet, err=%v", err)
+	}
+
+	realData, err := os.ReadFile(realConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(realData), "https://api.doit.com") || strings.Contains(string(realData), "dev.example.com") {
+		t.Fatalf("the real apis.json was mutated: %s", realData)
+	}
+	if _, err := os.Stat(filepath.Join(realCacheDir, "dci.cbor")); err != nil {
+		t.Fatalf("the real cache dir's dci.cbor should be untouched, err=%v", err)
+	}
+
+	cleanup()
+	if _, err := os.Stat(tempConfigDir); !os.IsNotExist(err) {
+		t.Fatalf("temp dir %q should be removed after cleanup, err=%v", tempConfigDir, err)
+	}
+	if got := os.Getenv("DCI_CONFIG_DIR"); got != "" {
+		t.Errorf("DCI_CONFIG_DIR after cleanup = %q, want unset", got)
+	}
+	if got := os.Getenv("DCI_CACHE_DIR"); got != realCacheDir {
+		t.Errorf("DCI_CACHE_DIR after cleanup = %q, want restored to %q", got, realCacheDir)
+	}
+}
+
+// TestDCIConfigDirMemoizesAcrossOverride guards a finding from the
+// adversarial review of this redesign: name_completion.go and
+// tui_picker.go call dciConfigDir() fresh, after applyAPIBaseOverride has
+// already pointed DCI_CONFIG_DIR at its throwaway per-invocation temp dir.
+// Without memoizing the first (real) resolution, every completion/picker
+// call during an active override would see an empty temp dir instead of
+// the real, persisted name cache and customer context — a silent feature
+// regression for exactly the workflow (a dev session against a staging
+// host) the override exists to serve.
+func TestDCIConfigDirMemoizesAcrossOverride(t *testing.T) {
+	resetDCIConfigDirCache()
+	t.Cleanup(resetDCIConfigDirCache)
+
+	realDir := t.TempDir()
+	t.Setenv("DCI_CONFIG_DIR", realDir)
+
+	first := dciConfigDir()
+	if first != realDir {
+		t.Fatalf("dciConfigDir() = %q, want the real dir %q", first, realDir)
+	}
+
+	// Simulate what applyAPIBaseOverride does: point DCI_CONFIG_DIR at a
+	// different, throwaway directory mid-invocation.
+	tempDir := t.TempDir()
+	t.Setenv("DCI_CONFIG_DIR", tempDir)
+
+	if got := dciConfigDir(); got != realDir {
+		t.Fatalf("dciConfigDir() after the env var changed = %q, want the memoized real dir %q (this is what protects completion/the picker from seeing the isolated override dir)", got, realDir)
+	}
+}
+
+// TestApplyAPIBaseOverrideNoopsWithoutOverride guards the common case: with
+// no DCI_API_BASE_URL set, applyAPIBaseOverride must not touch the env or
+// create anything.
+func TestApplyAPIBaseOverrideNoopsWithoutOverride(t *testing.T) {
+	t.Setenv("DCI_API_BASE_URL", "")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "apis.json"), []byte(`{"dci":{"base":"https://api.doit.com"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := lastCachedSpecHost(); got != "" {
-		t.Fatalf("lastCachedSpecHost() = %q before any tracking, want empty", got)
-	}
+	oldConfigDir := os.Getenv("DCI_CONFIG_DIR")
+	cleanup := applyAPIBaseOverride(dir, []string{"dci", "list-budgets"})
+	defer cleanup()
 
-	// First call with a new host: no prior source recorded, so the existing
-	// cache (never tracked) is invalidated defensively and the host is now
-	// recorded.
-	invalidateSpecCacheOnHostChange("https://dev.example.com")
-	if _, err := os.Stat(specFile); !os.IsNotExist(err) {
-		t.Fatalf("dci.cbor should have been removed on the first host record, err=%v", err)
+	if got := os.Getenv("DCI_CONFIG_DIR"); got != oldConfigDir {
+		t.Errorf("DCI_CONFIG_DIR = %q, want unchanged %q", got, oldConfigDir)
 	}
-	if got := lastCachedSpecHost(); got != "https://dev.example.com" {
-		t.Fatalf("lastCachedSpecHost() = %q, want the dev host", got)
-	}
+}
 
-	// Simulate restish re-populating the cache after the (now empty) refetch.
-	if err := os.WriteFile(specFile, []byte("dev-spec"), 0o600); err != nil {
+// TestApplyAPIBaseOverrideSkipsDetachedRefresh guards the parent/child
+// refresher race this whole mechanism used to need a lock to avoid: the
+// detached update-check/name-completion children inherit DCI_API_BASE_URL
+// but never talk to the DCI API, so they must be a pure no-op here.
+func TestApplyAPIBaseOverrideSkipsDetachedRefresh(t *testing.T) {
+	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "apis.json"), []byte(`{"dci":{"base":"https://api.doit.com"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	// Same host again: cache must survive (the whole point of tracking).
-	invalidateSpecCacheOnHostChange("https://dev.example.com")
-	if _, err := os.Stat(specFile); err != nil {
-		t.Fatalf("dci.cbor should survive a same-host call, err=%v", err)
-	}
+	oldConfigDir := os.Getenv("DCI_CONFIG_DIR")
+	cleanup := applyAPIBaseOverride(dir, []string{"dci", "__refresh-update-check"})
+	defer cleanup()
 
-	// Different host: must invalidate.
-	invalidateSpecCacheOnHostChange("https://api.doit.com")
-	if _, err := os.Stat(specFile); !os.IsNotExist(err) {
-		t.Fatalf("dci.cbor should have been removed on a host change, err=%v", err)
-	}
-	if got := lastCachedSpecHost(); got != "https://api.doit.com" {
-		t.Fatalf("lastCachedSpecHost() = %q, want the new host", got)
+	if got := os.Getenv("DCI_CONFIG_DIR"); got != oldConfigDir {
+		t.Errorf("DCI_CONFIG_DIR = %q, want unchanged %q for a detached refresh invocation", got, oldConfigDir)
 	}
 }
 

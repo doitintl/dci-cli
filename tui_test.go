@@ -73,6 +73,10 @@ func TestZeroArgPickerApplies(t *testing.T) {
 func TestPickPathArgumentSelection(t *testing.T) {
 	resetNameResolutionState()
 	t.Cleanup(resetNameResolutionState)
+	// dciConfigDir() memoizes its resolution per process; reset it so an
+	// earlier test's HOME/config dir doesn't leak a stale name cache in.
+	resetDCIConfigDirCache()
+	t.Cleanup(resetDCIConfigDirCache)
 	target := resolutionListTarget{listPath: "/reports", resource: "reports", listOperation: "list-reports"}
 	resolutionIndex = map[string]resolutionListTarget{"get-report": target}
 	cmd := &cobra.Command{Use: "get-report"}
@@ -108,6 +112,11 @@ func TestPickPathArgumentSelection(t *testing.T) {
 func TestPickPathArgumentCancel(t *testing.T) {
 	resetNameResolutionState()
 	t.Cleanup(resetNameResolutionState)
+	// dciConfigDir() memoizes its resolution per process; reset it so an
+	// earlier test's HOME/config dir doesn't leak in (see
+	// TestPickPathArgumentSelection for the same reasoning).
+	resetDCIConfigDirCache()
+	t.Cleanup(resetDCIConfigDirCache)
 	target := resolutionListTarget{listPath: "/reports", resource: "reports", listOperation: "list-reports"}
 	resolutionIndex = map[string]resolutionListTarget{"get-report": target}
 	cmd := &cobra.Command{Use: "get-report"}
