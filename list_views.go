@@ -167,6 +167,10 @@ var listViews = map[string]listView{
 		itemsKey: "items",
 		columns: []viewColumn{
 			{title: "name"},
+			// id is in the default view: export-cloudflow-flow and
+			// refine-cloud-flow take the literal flow ID, and no
+			// name-resolution path covers flows.
+			{title: "id"},
 			{title: "published"},
 			{title: "trigger", source: "triggerType"},
 			{title: "run status", source: "lastExecutionStatus"},

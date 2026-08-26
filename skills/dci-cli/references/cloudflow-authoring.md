@@ -6,9 +6,15 @@ publishes in the builder, so authoring never needs to be perfect to be useful. T
 complementary paths; pick per task:
 
 - **Server-side NL builder** — `dci build-cloud-flow` creates a new draft flow from a prompt;
-  `dci refine-cloud-flow <flow-id>` modifies an existing one. Body: `question` (required),
-  `conversationId` (optional, to continue iterating). Both stream raw build events (SSE).
-  Fastest first draft when the flow can live in the authenticated tenant directly.
+  `dci refine-cloud-flow <flow-id>` modifies an existing one (`build-cloudflow` /
+  `refine-cloudflow` also work). Body: `question` (required), `conversationId` (optional).
+  The CLI returns a parsed result: `flowId`, `conversationId`, the builder's `answer`, and the
+  build `steps` that ran. **Send the body as JSON on stdin**
+  (`printf '%s' '{"question":"..."}' | dci build-cloud-flow`) — shorthand `question: ...`
+  breaks on commas in free text. **Specify every slot in the prompt** (trigger, destination
+  names, field mapping): a fully specified prompt builds in one shot, while an underspecified
+  one costs a 1–2 minute clarify round each (answer via `refine-cloud-flow` with the same
+  `conversationId`) and drifts. Always export and inspect what it built before trusting it.
 - **Local bundle authoring** — export → edit → import (workflow in
   [examples.md](examples.md), "CloudFlow Export and Import"). Produces reviewable, diffable
   JSON; the only path when the change must be inspected before it exists, or when copying

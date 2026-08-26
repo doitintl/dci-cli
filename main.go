@@ -502,12 +502,31 @@ func terseHelpText(long string) (string, bool) {
 	return head + "\n\nSchemas and examples: add --help-full", true
 }
 
+// commandSpellingAliases maps the family-consistent spellings of the NL flow
+// builder commands onto the operationId-derived ones: the spec's operationIds
+// kebab-case to build-cloud-flow/refine-cloud-flow while every other CloudFlow
+// command spells it -cloudflow- (import-cloudflow-flow, list-cloudflows).
+var commandSpellingAliases = map[string]string{
+	"build-cloudflow":  "build-cloud-flow",
+	"refine-cloudflow": "refine-cloud-flow",
+}
+
 func normalizeArgs(args []string) []string {
 	if len(args) <= 1 {
 		return []string{args[0], "--help"}
 	}
 
 	cmd := firstCommandArg(args)
+	if canonical, ok := commandSpellingAliases[cmd]; ok {
+		args = append([]string(nil), args...)
+		for i, arg := range args[1:] {
+			if arg == cmd {
+				args[i+1] = canonical
+				break
+			}
+		}
+		cmd = canonical
+	}
 	if cmd == "" || cmd == "help" || cmd == "version" || cmd == "completion" || isRootCommand(cmd) {
 		return args
 	}

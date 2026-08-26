@@ -256,6 +256,16 @@ both paths; findings, all folded into the skill reference:
 Conclusion: the clone-and-edit loop is currently the stronger path, and the builder's
 observed failure modes are exactly the eval assertions §8 prescribes.
 
+**Retest after CLI improvements (same day).** With the builder's SSE parsed by the CLI into
+`{flowId, conversationId, answer, steps}` and the prompt carrying *all* slot values up front
+(dataset name, trigger, per-row event mapping), `build-cloud-flow` succeeded in one shot: a
+real 4-node flow (manualTrigger → getReport → codeNode row-to-event mapping → datahubEvents)
+with a console edit link in the answer. Two conclusions sharpened: the builder's earlier
+failure was under-specification plus multi-round drift — the pipeline's clarify-then-confirm
+step belongs *before* the build call, which then works well — and free-text `question` values
+containing commas must be passed as JSON on stdin (restish shorthand parses commas
+structurally).
+
 ## 7. Relationship to `buildCloudFlow` / `refineCloudFlow`
 
 The platform already has a server-side NL builder streaming build events. Two front doors, one
