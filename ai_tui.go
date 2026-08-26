@@ -1368,6 +1368,11 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.keyEntry = false
 		m.keyBuf = ""
+		if m.session != nil {
+			// /key set over a live session: the replacement key takes over,
+			// and the old session (built on the old key) goes with it.
+			_ = m.session.Close()
+		}
 		m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
 		m.sessionNote = ""
 		m.append(tuiSuccessStyle.Render("Key saved — AI is ready."))
@@ -1540,6 +1545,8 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "model":
 		return m.runModelVerb(route.args)
+	case "key":
+		return m.runKeyVerb(route.args)
 	case "export":
 		path, err := aiExportTranscript(m.transcript, route.args, time.Now())
 		if err != nil {
@@ -1650,6 +1657,76 @@ func (m aiModel) runModelVerb(args []string) (tea.Model, tea.Cmd) {
 		m.append(aiErrorStyle.Render("usage: /model [id]"))
 		return m, nil
 	}
+}
+
+// runKeyVerb implements /key: no argument shows where the session's Anthropic
+// API key comes from, "set" reopens the guided entry, "clear" removes the
+// saved key. Before this verb, changing or clearing a saved key meant finding
+// and editing ai_settings.json by hand.
+func (m aiModel) runKeyVerb(args []string) (tea.Model, tea.Cmd) {
+	switch {
+	case len(args) == 0:
+		m.append(m.keyInfoText())
+		return m, nil
+	case len(args) == 1 && args[0] == "set":
+		m.keyEntry = true
+		m.keyBuf = ""
+		m.pendingQuestion = ""
+		m.append(renderAIKeyOnboarding())
+		return m, nil
+	case len(args) == 1 && args[0] == "clear":
+		settings := loadAISettings(m.configDir)
+		if settings.APIKey == "" {
+			m.append(aiEchoStyle.Render("no key saved in " + aiSettingsFileName + " — nothing to clear"))
+			return m, nil
+		}
+		settings.APIKey = ""
+		if err := saveAISettings(m.configDir, settings); err != nil {
+			m.append(aiErrorStyle.Render("could not save: " + err.Error()))
+			return m, nil
+		}
+		if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
+			// The env var was already winning over the cleared key, so the
+			// live session keeps working — but say which key that leaves.
+			m.append(tuiSuccessStyle.Render("Saved key cleared.") + "\n" +
+				aiEchoStyle.Render("ANTHROPIC_API_KEY is set, so AI keeps using the environment's key."))
+			return m, nil
+		}
+		if m.session != nil {
+			_ = m.session.Close()
+			m.session = nil
+		}
+		m.sessionNote = "AI needs an Anthropic API key — ask a question to set one up, or export ANTHROPIC_API_KEY"
+		m.append(tuiSuccessStyle.Render("Saved key cleared — AI is off.") + "\n" +
+			aiEchoStyle.Render("/key set adds a new one; / commands keep working without a key."))
+		return m, nil
+	default:
+		m.append(aiErrorStyle.Render("usage: /key [set|clear]"))
+		return m, nil
+	}
+}
+
+// keyInfoText reports which key the session resolved and where it came from —
+// the environment silently overriding a saved key is exactly what a user
+// cannot see from a 401 alone.
+func (m aiModel) keyInfoText() string {
+	settings := loadAISettings(m.configDir)
+	envKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	savedKey := strings.TrimSpace(settings.APIKey)
+	lines := make([]string, 0, 4)
+	switch {
+	case envKey != "":
+		lines = append(lines, aiCardHeadStyle.Render("API key: ")+aiMaskAPIKey(envKey)+aiEchoStyle.Render("  (from ANTHROPIC_API_KEY)"))
+		if savedKey != "" {
+			lines = append(lines, aiEchoStyle.Render("A key is also saved in "+aiSettingsFileName+" ("+aiMaskAPIKey(savedKey)+") — the environment wins."))
+		}
+	case savedKey != "":
+		lines = append(lines, aiCardHeadStyle.Render("API key: ")+aiMaskAPIKey(savedKey)+aiEchoStyle.Render("  (saved in "+aiSettingsFileName+")"))
+	default:
+		lines = append(lines, aiNoticeStyle.Render("No API key configured — AI is off."))
+	}
+	lines = append(lines, aiEchoStyle.Render("/key set replaces the saved key · /key clear removes it"))
+	return strings.Join(lines, "\n")
 }
 
 func (m aiModel) modelInfoText() string {

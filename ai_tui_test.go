@@ -1524,3 +1524,109 @@ func TestAILoginDoneRefreshesAndReports(t *testing.T) {
 		t.Fatal("login failure missing from the transcript")
 	}
 }
+
+func TestAIKeyVerbShowsSourceMasked(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "/key")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	if !strings.Contains(aiTranscriptText(m), "No API key configured") {
+		t.Fatal("keyless /key should say no key is configured")
+	}
+
+	settings := loadAISettings(m.configDir)
+	settings.APIKey = "sk-ant-test-0123456789"
+	if err := saveAISettings(m.configDir, settings); err != nil {
+		t.Fatal(err)
+	}
+	m = aiType(m, "/key")
+	updated, _ = aiPress(m, tea.KeyEnter)
+	m = updated
+	transcript := aiTranscriptText(m)
+	if strings.Contains(transcript, "sk-ant-test-0123456789") {
+		t.Fatal("/key rendered the full key")
+	}
+	if !strings.Contains(transcript, aiMaskAPIKey("sk-ant-test-0123456789")) ||
+		!strings.Contains(transcript, aiSettingsFileName) {
+		t.Fatalf("/key output missing masked key or source:\n%s", transcript)
+	}
+}
+
+func TestAIKeyVerbSetOpensGuidedEntry(t *testing.T) {
+	m := aiTestModel(t)
+	m = aiType(m, "/key set")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	if !m.keyEntry {
+		t.Fatal("/key set did not open the guided entry")
+	}
+	if m.pendingQuestion != "" {
+		t.Fatalf("pendingQuestion = %q, want empty", m.pendingQuestion)
+	}
+}
+
+func TestAIKeyVerbClearDropsSessionAndKey(t *testing.T) {
+	m := aiTestModel(t)
+	settings := loadAISettings(m.configDir)
+	settings.APIKey = "sk-ant-test-0123456789"
+	if err := saveAISettings(m.configDir, settings); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeAISession()
+	m.session = fake
+
+	m = aiType(m, "/key clear")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	if got := loadAISettings(m.configDir).APIKey; got != "" {
+		t.Fatalf("key still persisted after clear: %q", got)
+	}
+	if m.session != nil {
+		t.Fatal("session survived /key clear with no env key")
+	}
+	if m.sessionNote == "" {
+		t.Fatal("sessionNote empty after clear")
+	}
+	if !strings.Contains(aiTranscriptText(m), "Saved key cleared") {
+		t.Fatal("clear confirmation missing")
+	}
+
+	// Nothing left to clear: say so instead of pretending.
+	m = aiType(m, "/key clear")
+	updated, _ = aiPress(m, tea.KeyEnter)
+	m = updated
+	if !strings.Contains(aiTranscriptText(m), "nothing to clear") {
+		t.Fatal("second clear should report nothing to clear")
+	}
+}
+
+func TestAIKeyVerbClearKeepsSessionWithEnvKey(t *testing.T) {
+	m := aiTestModel(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-env-0123456789")
+	settings := loadAISettings(m.configDir)
+	settings.APIKey = "sk-ant-test-0123456789"
+	if err := saveAISettings(m.configDir, settings); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeAISession()
+	m.session = fake
+
+	m = aiType(m, "/key clear")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.session == nil {
+		t.Fatal("session dropped although ANTHROPIC_API_KEY still provides a key")
+	}
+	if !strings.Contains(aiTranscriptText(m), "ANTHROPIC_API_KEY is set") {
+		t.Fatal("clear should say the environment key keeps AI on")
+	}
+}
+
+func TestAIMaskAPIKey(t *testing.T) {
+	if got := aiMaskAPIKey("sk-ant-api03-abcdefgh1234"); got != "sk-…1234" {
+		t.Fatalf("masked key = %q", got)
+	}
+	if got := aiMaskAPIKey("short"); got != "•••" {
+		t.Fatalf("short key mask = %q", got)
+	}
+}
