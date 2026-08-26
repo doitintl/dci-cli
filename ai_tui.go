@@ -110,7 +110,7 @@ type aiModel struct {
 	// persisted context file stays untouched until the user runs /customer.
 	sessionCustomer string
 	identity        string // the tenant line, cached (rebuilt on switches/lookups)
-	userLine        string // "email · role", from the cached token
+	userLine        string // "role · email", from the cached token
 	customerName    string // resolved display name for an ID-shaped context
 	mouseOn         bool
 	bellOn          bool // ring the terminal bell when a turn finishes (F2)
@@ -288,7 +288,7 @@ func aiBannerBlock(m *aiModel) string {
 
 	versionLabel := "v" + version
 	if version == "dev" {
-		versionLabel = "dev build"
+		versionLabel = "(dev build)"
 	}
 
 	modelLine := m.modelName
@@ -305,11 +305,13 @@ func aiBannerBlock(m *aiModel) string {
 		aiCardHeadStyle.Render("Cloud Intelligence™ CLI") + aiEchoStyle.Render(" "+versionLabel),
 		aiEchoStyle.Render(modelLine),
 	}
+	// The banner spells out what the identity values are; the status line
+	// keeps the compact unlabeled forms (statusLine).
 	if m.userLine != "" {
-		info = append(info, aiEchoStyle.Render(m.userLine))
+		info = append(info, aiEchoStyle.Render("Role: "+m.userLine))
 	}
 	if m.identity != "" {
-		info = append(info, aiEchoStyle.Render(m.identity))
+		info = append(info, aiEchoStyle.Render("Tenant: "+m.identity))
 	}
 	info = append(info, aiEchoStyle.Render(fmt.Sprintf("%d commands · /help for how this works", len(m.catalog))))
 
@@ -365,9 +367,10 @@ func aiCustomerNameFromJSON(data []byte) string {
 	return ""
 }
 
-// aiUserLine is the signed-in identity: email and role from the cached
-// token. Partner detection needs a claim the token does not carry yet, so
-// non-doers read as Customer.
+// aiUserLine is the signed-in identity: role and email from the cached
+// token, role first so the banner's "Role:" label reads truthfully. Partner
+// detection needs a claim the token does not carry yet, so non-doers read as
+// Customer.
 func aiUserLine() string {
 	claims, ok := cachedTokenClaims()
 	if !ok {
@@ -380,7 +383,7 @@ func aiUserLine() string {
 	if claims.Email == "" {
 		return role
 	}
-	return claims.Email + " · " + role
+	return role + " · " + claims.Email
 }
 
 // contextLabel is the tenant line: the customer display name when resolved,
