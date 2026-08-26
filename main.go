@@ -446,6 +446,29 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 	os.Setenv("DCI_CACHE_DIR", tempDir)
 
 	return func() {
+		// Copy the temp dir's cache.json back to the real cache dir before
+		// it's deleted: restish writes a refreshed/new OAuth token there on
+		// an access-token refresh or a `dci login` run under the override
+		// (DCI_CACHE_DIR points at the temp dir for the whole invocation),
+		// and without this that session is silently discarded — the next
+		// invocation, override or not, finds the same stale real cache.json
+		// and has to re-authenticate despite the login/refresh having
+		// appeared to succeed.
+		if cacheData, err := os.ReadFile(filepath.Join(tempDir, "cache.json")); err == nil {
+			realCacheDirPath := oldCacheDir
+			if !hadCacheDir {
+				if userCacheDir, err := os.UserCacheDir(); err == nil {
+					realCacheDirPath = filepath.Join(userCacheDir, "dci")
+				}
+			}
+			if realCacheDirPath != "" {
+				if err := os.MkdirAll(realCacheDirPath, 0o700); err == nil {
+					if err := os.WriteFile(filepath.Join(realCacheDirPath, "cache.json"), cacheData, 0o600); err != nil {
+						fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
+					}
+				}
+			}
+		}
 		if hadConfigDir {
 			os.Setenv("DCI_CONFIG_DIR", oldConfigDir)
 		} else {

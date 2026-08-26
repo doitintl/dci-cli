@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/viper"
 	"golang.org/x/term"
 )
 
@@ -235,29 +235,27 @@ func cachedSpecAvailableForInvocation() bool {
 	return !expiresAt.IsZero() && expiresAt.After(time.Now())
 }
 
-// readCacheExpiry reads a viper-style timestamp key directly out of
+// readCacheExpiry reads a viper-style dotted timestamp key directly out of
 // cacheDir's cache.json, bypassing cli.Cache — which, during an active
 // DCI_API_BASE_URL override, is restish's in-memory view of the isolated
 // temp dir's copy, not necessarily the same file cachedSpecAvailableForInvocation
 // needs to check here (the real one).
+//
+// Uses a scratch viper instance rather than plain json.Unmarshal into a
+// flat map: viper's Set("dci.expires", ...) (restish cli/api.go's cacheAPI)
+// nests the dot into a real JSON object — {"dci":{"expires":"..."}}, not a
+// flat {"dci.expires":"..."} key — so a flat-map unmarshal fails outright
+// whenever any other top-level key (e.g. "dci:default" holding the OAuth
+// token object) is present, which it always is on a real cache.json.
 func readCacheExpiry(cacheDir, key string) time.Time {
-	data, err := os.ReadFile(filepath.Join(cacheDir, "cache.json"))
-	if err != nil {
+	v := viper.New()
+	v.SetConfigName("cache")
+	v.SetConfigType("json")
+	v.AddConfigPath(cacheDir)
+	if err := v.ReadInConfig(); err != nil {
 		return time.Time{}
 	}
-	var doc map[string]string
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return time.Time{}
-	}
-	value, ok := doc[key]
-	if !ok {
-		return time.Time{}
-	}
-	parsed, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		return time.Time{}
-	}
-	return parsed
+	return v.GetTime(key)
 }
 
 func authenticationRequiredPreflightError() error {
