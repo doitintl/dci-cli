@@ -28,8 +28,10 @@ generation would otherwise have to guess.
   import as draft, and tell the user which nodes to finish in the builder. A draft with honest
   gaps beats a plausible-looking flow with guessed field names.
 - **Verify IDs the user supplies before building around them** — a report ID with
-  `dci get-report <id>`, a flow ID with `dci list-cloudflows`, a connection with
-  `dci list-cloudflow-connections`. IDs in a prompt are claims, not facts.
+  `dci list-reports --search <name-or-id>` or `-C id,reportName` (not `get-report`, which
+  executes the report query — expensive and quota-bound), a flow ID with
+  `dci list-cloudflows -C id,name`, a connection with `dci list-cloudflow-connections`. IDs in
+  a prompt are claims, not facts.
 - **Always dry-run first.** `dci import-cloudflow-flow --dry-run < bundle.json` writes nothing
   and returns every validation error at once, plus each requirement's resolution and candidate
   IDs. Fix and repeat until the plan is clean, then import for real with a fresh
@@ -40,11 +42,15 @@ generation would otherwise have to guess.
 
 ## Authoring pipeline
 
-1. **Ground** — establish the target tenant first (Doers building for a customer add
-   `-D <customer-domain>` to every command). Then inventory what exists there:
-   `dci list-cloudflow-connections` (which clouds are even connected — this resolves "save the
-   file" to S3 vs GCS without a question), `dci list-cloudflows` (a clone candidate?),
-   `dci list-cloudflow-templates`. Verify any IDs from the prompt.
+1. **Ground** — establish the target tenant first. **Doer caveat**: CloudFlow endpoints
+   currently reject customer-context impersonation (`tenant_id_mismatch` — the tenant must
+   match the bearer token), so `-D`/`DCI_CUSTOMER_CONTEXT` work for analytics grounding but
+   NOT for `cloudflow` commands; flows land in the token's own tenant. Then inventory what
+   exists there: `dci list-cloudflow-connections` (which clouds are even connected — this
+   resolves "save the file" to S3 vs GCS without a question),
+   `dci list-cloudflows -C id,name` (a clone candidate? the default columns omit the `id`
+   that `export-cloudflow-flow` needs), `dci list-cloudflow-templates`. Verify any IDs from
+   the prompt.
 2. **Classify** the request into an archetype (below) — composition becomes "which shape, what
    fills the slots".
 3. **Clarify** only genuine ambiguities, in plain language ("you have AWS and GCP connected —
@@ -65,10 +71,34 @@ Authoritative schemas: `dci export-cloudflow-flow --help-full` and
   `flows`), `flows` (root flow plus its subflows, max 20), `requirements`.
 - Flow: `key`, `name`, `triggerType`, `firstNode` (entry node key), `nodes` (max 150),
   `localVariables` (max 50), `unsupportedReferences`.
-- Node: `key`, `name`, `type` (e.g. `triggerNode`, `actionNode`, `datastoreNode` — validated
-  at import), `parameters` (free-form; tenant-scoped values appear as tokens, below),
+- Node: `key`, `name`, `type` (observed in real exports: `manualTrigger`, `triggerNode`,
+  `actionNode`, `filterNode`, `transformation`, `codeNode`, `httpNode`, `datastoreNode` —
+  validated at import), `parameters` (shapes below; tenant-scoped values appear as tokens),
   `approval` (recipients stripped), `transitions` (`target` = next node's key, optional
   `label`/`pathId` for branch paths). The graph is nodes + transitions from `firstNode`.
+
+**In-node wiring (confirmed against real exports, 2026-08-26).** A reference to an upstream
+node's data is a structured object, not a template string:
+`{"referencedNodeId": "<node-key>", "referencedField": ["path", "to", "field"], "type": "output"}`
+(`"type": "input"` reads what that node was sent instead of what it produced). An API call
+node (`actionNode`) carries:
+
+```json
+"parameters": {
+  "provider": "DoiT",
+  "operation": {"id": "getReport", "provider": "DoiT", "service": "Reports", "version": "v1"},
+  "configurationValues": {},
+  "formValues": {"id": "<literal or reference object>"}
+}
+```
+
+`formValues` holds the API's request parameters (literals or reference objects, nested to any
+depth); `configurationValues` holds connection/environment inputs (an AWS `accountId`, a GCP
+`serviceAccountResource`). `filterNode` uses `conditionGroups` → `conditions`
+(`{field, comparisonOperator, type: "STATIC", value}`); `transformation` uses a
+`transformations` array (`concatenation`, `extract`, …) over a referenced field. These shapes
+are stable, but per the hard rules, still copy the details from a real export of the same node
+type.
 - Tokens inside `parameters` and variable values: `$req:<section>/<key>` points into
   `requirements` (`connections`, `datastoreTables`, `globalVariables`);
   `$bundle:flows/<flowKey>` points at a subflow in the same bundle. Every tenant-scoped
