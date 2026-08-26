@@ -528,11 +528,17 @@ func augmentTableViewColumns(rows []map[string]interface{}, keys []string) []str
 		}
 		ratio := spend / amount
 		row[utilizationKey] = utilizationCell(ratio)
-		if ratio >= 0.9 {
-			// Red accent applied by accentCell after width formatting —
-			// embedding ANSI in the cell value would skew column widths.
-			row["utilizationRisk"] = "accent-red"
+		// The band flag drives accentCell's colored bar after width
+		// formatting — embedding ANSI in the cell value would skew column
+		// widths. Every row gets a band; red keeps the 90% risk threshold.
+		band := "green"
+		switch {
+		case ratio >= 0.9:
+			band = "red"
+		case ratio >= 0.7:
+			band = "amber"
 		}
+		row["utilizationRisk"] = "utilization-" + band
 	}
 	if strings.TrimSpace(viper.GetString("table-accent-column")) == "" {
 		viper.Set("table-accent-column", utilizationKey)
