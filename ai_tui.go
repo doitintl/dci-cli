@@ -538,7 +538,8 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// cheap. Once the terminal affirms Kitty support, the half-block mark
 	// upgrades to the real raster.
 	logoCmd := m.logo.Update(msg)
-	if !m.logoKitty && picture.KittySupported() == picture.KittyCapabilitySupported {
+	if !m.logoKitty && picture.KittySupported() == picture.KittyCapabilitySupported &&
+		aiKittyPlaceholderTerminal() {
 		m.logoKitty = true
 		logoCmd = tea.Batch(logoCmd, m.logo.SetImage(aiLogoImage()), m.logo.Toggle())
 	}
