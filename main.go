@@ -383,26 +383,26 @@ func run() (exitCode int) {
 	// swap is meant to prevent. Neither refresher ever talks to the DCI API,
 	// so neither needs the override at all.
 	//
-	// A write failure (e.g. a read-only config mount in CI) degrades to a
-	// warning and the persisted base rather than aborting: commands that
-	// never depended on apis.json's base (--help, --version, completion,
-	// `status`, which reads apiBase() directly) must keep working even when
-	// the override can't be applied.
+	// A malformed override or a write failure (e.g. a read-only config mount
+	// in CI) both fall back to the persisted base silently rather than
+	// aborting here: commands that never depended on apis.json's base
+	// (--help, --version, completion) must keep working regardless, and a
+	// command that does care about the override's validity — `status`,
+	// which calls apiBase() itself — surfaces that same error on its own
+	// terms instead of it being reported twice.
+	var restore func()
 	if envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL")); envBase != "" && !isDetachedRefreshInvocation(os.Args) {
-		base, err := apiBase()
-		if err != nil {
-			return reportExecutionError(err, 0, configDir)
+		if base, err := apiBase(); err == nil {
+			if r, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base); err == nil {
+				restore = r
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
+			}
 		}
-		restore, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
-			cli.Init("dci", version)
-		} else {
-			cli.Init("dci", version)
-			restore()
-		}
-	} else {
-		cli.Init("dci", version)
+	}
+	cli.Init("dci", version)
+	if restore != nil {
+		restore()
 	}
 	cli.Defaults()
 	overrideTableOutput()
