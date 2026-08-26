@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -552,6 +553,99 @@ func TestSwapConfiguredAPIBaseWriteFailureDegradesGracefully(t *testing.T) {
 	}
 	if string(data) != string(original) {
 		t.Fatalf("apis.json changed despite a failed swap: %s", data)
+	}
+}
+
+// TestSwapConfiguredAPIBaseSerializesConcurrentCallers guards a Claude-review
+// finding on PR #128: two concurrent swapConfiguredAPIBase calls (as two
+// ordinary `dci` invocations with DCI_API_BASE_URL set would produce) must
+// not race read-swap-write on the same apis.json — the loser must not
+// restore a value it captured mid-swap as if it were the true original.
+func TestSwapConfiguredAPIBaseSerializesConcurrentCallers(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "apis.json")
+	original := `{"dci":{"base":"https://api.doit.com"}}`
+	if err := os.WriteFile(configFile, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			restore, err := swapConfiguredAPIBase(configFile, "https://dev.example.com")
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			// Hold the swapped state briefly to widen the race window a
+			// non-serialized implementation would fall into.
+			time.Sleep(2 * time.Millisecond)
+			restore()
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d: swapConfiguredAPIBase error: %v", i, err)
+		}
+	}
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Fatalf("apis.json = %s, want unchanged %s (a racing restore corrupted it)", data, original)
+	}
+}
+
+func TestInvalidateSpecCacheOnHostChange(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("DCI_CACHE_DIR", cacheDir)
+
+	specFile := filepath.Join(cacheDir, "dci.cbor")
+	if err := os.WriteFile(specFile, []byte("prod-spec"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := lastCachedSpecHost(); got != "" {
+		t.Fatalf("lastCachedSpecHost() = %q before any tracking, want empty", got)
+	}
+
+	// First call with a new host: no prior source recorded, so the existing
+	// cache (never tracked) is invalidated defensively and the host is now
+	// recorded.
+	invalidateSpecCacheOnHostChange("https://dev.example.com")
+	if _, err := os.Stat(specFile); !os.IsNotExist(err) {
+		t.Fatalf("dci.cbor should have been removed on the first host record, err=%v", err)
+	}
+	if got := lastCachedSpecHost(); got != "https://dev.example.com" {
+		t.Fatalf("lastCachedSpecHost() = %q, want the dev host", got)
+	}
+
+	// Simulate restish re-populating the cache after the (now empty) refetch.
+	if err := os.WriteFile(specFile, []byte("dev-spec"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same host again: cache must survive (the whole point of tracking).
+	invalidateSpecCacheOnHostChange("https://dev.example.com")
+	if _, err := os.Stat(specFile); err != nil {
+		t.Fatalf("dci.cbor should survive a same-host call, err=%v", err)
+	}
+
+	// Different host: must invalidate.
+	invalidateSpecCacheOnHostChange("https://api.doit.com")
+	if _, err := os.Stat(specFile); !os.IsNotExist(err) {
+		t.Fatalf("dci.cbor should have been removed on a host change, err=%v", err)
+	}
+	if got := lastCachedSpecHost(); got != "https://api.doit.com" {
+		t.Fatalf("lastCachedSpecHost() = %q, want the new host", got)
 	}
 }
 

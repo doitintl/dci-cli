@@ -168,6 +168,45 @@ func ensureConfig(configDir string) (bool, error) {
 	return true, nil
 }
 
+// apiBaseSwapLockStaleAfter bounds how long a crashed swap can block later
+// ones: the swap+restore critical section is a couple of file writes (well
+// under a second), so a lock older than this belonged to a process that died
+// mid-swap, not one still working.
+const apiBaseSwapLockStaleAfter = 10 * time.Second
+
+// apiBaseSwapLockWait bounds how long a concurrent invocation waits for
+// another's swap+restore to finish, matching apiBaseSwapLockStaleAfter so a
+// live holder is never given up on before a crashed one would be reclaimed.
+const apiBaseSwapLockWait = 10 * time.Second
+
+// acquireAPIBaseSwapLock takes a cross-process advisory lock around
+// swapConfiguredAPIBase's read-swap-write critical section (O_CREATE|O_EXCL,
+// portable to Windows and Unix alike). Unlike acquireUpdateRefreshLock
+// (update.go), which backs off immediately since a skipped refresh is
+// harmless, this waits: two ordinary concurrent `dci` invocations that both
+// have DCI_API_BASE_URL set (e.g. a script backgrounding two commands) must
+// not race writes to the same apis.json, and each still needs the swap
+// applied for its own routing, so skipping isn't an option.
+func acquireAPIBaseSwapLock(configDir string) (release func(), err error) {
+	path := filepath.Join(configDir, "api_base_swap.lock")
+	deadline := time.Now().Add(apiBaseSwapLockWait)
+	for {
+		file, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if openErr == nil {
+			_ = file.Close()
+			return func() { _ = os.Remove(path) }, nil
+		}
+		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > apiBaseSwapLockStaleAfter {
+			_ = os.Remove(path)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out waiting for %s", path)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // swapConfiguredAPIBase temporarily rewrites apis.json's "dci.base" field to
 // override for the duration of restish's cli.Init() read (which is where
 // restish loads apis.json into its in-process API config map, the map
@@ -176,18 +215,31 @@ func ensureConfig(configDir string) (bool, error) {
 // preserved untouched — and returns a restore func that puts the original
 // file content back so the on-disk config, and every later invocation
 // without DCI_API_BASE_URL set, is left exactly as it was.
+//
+// The whole read-swap-write sequence runs under acquireAPIBaseSwapLock so two
+// concurrent dci invocations (both with the override set) can't race writes
+// to the same file; the returned restore() releases that lock after writing
+// the original content back.
 func swapConfiguredAPIBase(configFile, override string) (restore func(), err error) {
+	release, err := acquireAPIBaseSwapLock(filepath.Dir(configFile))
+	if err != nil {
+		return nil, err
+	}
+
 	original, err := os.ReadFile(configFile)
 	if err != nil {
+		release()
 		return nil, err
 	}
 
 	var doc map[string]interface{}
 	if err := json.Unmarshal(original, &doc); err != nil {
+		release()
 		return nil, fmt.Errorf("unable to parse %s: %w", configFile, err)
 	}
 	dci, ok := doc["dci"].(map[string]interface{})
 	if !ok {
+		release()
 		return nil, fmt.Errorf("%s is missing a \"dci\" section", configFile)
 	}
 	dci["base"] = override
@@ -195,17 +247,79 @@ func swapConfiguredAPIBase(configFile, override string) (restore func(), err err
 
 	swapped, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
+		release()
 		return nil, err
 	}
 	if err := os.WriteFile(configFile, swapped, 0o600); err != nil {
+		release()
 		return nil, err
 	}
 
 	return func() {
+		defer release()
 		if err := os.WriteFile(configFile, original, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: unable to restore %s: %v\n", configFile, err)
 		}
 	}, nil
+}
+
+// restishCacheDir mirrors restish's own getCacheDir("dci"): honors
+// DCI_CACHE_DIR, falling back to os.UserCacheDir()/dci.
+func restishCacheDir() string {
+	if dir := os.Getenv("DCI_CACHE_DIR"); dir != "" {
+		return dir
+	}
+	userCacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(userCacheDir, "dci")
+}
+
+// specCacheSourceFile records, alongside restish's own dci.cbor spec cache,
+// which base URL that cached spec was fetched from.
+func specCacheSourceFile(cacheDir string) string {
+	return filepath.Join(cacheDir, "dci.cbor.source")
+}
+
+// lastCachedSpecHost returns the base URL recorded by a previous
+// invalidateSpecCacheOnHostChange call, or "" if the cache has never been
+// marked (untouched, or from before this tracking existed).
+func lastCachedSpecHost() string {
+	cacheDir := restishCacheDir()
+	if cacheDir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(specCacheSourceFile(cacheDir))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// invalidateSpecCacheOnHostChange deletes restish's cached OpenAPI spec
+// (<cacheDir>/dci.cbor, 24h TTL, keyed by API name only — not by host, see
+// restish cli/api.go's cacheAPI) when it was last fetched from a different
+// base than the one this invocation is about to use. Without this, a spec
+// fetched once under DCI_API_BASE_URL would get served to every other
+// invocation on this machine for the next 24h, including plain `dci` runs
+// against prod with no override set — silently corrupting the CLI's command
+// surface. Reusing the cache across invocations that share the same base
+// (the common case: repeated work against the same dev host) is preserved.
+func invalidateSpecCacheOnHostChange(base string) {
+	cacheDir := restishCacheDir()
+	if cacheDir == "" {
+		return
+	}
+	sourceFile := specCacheSourceFile(cacheDir)
+	if lastCachedSpecHost() == base {
+		return
+	}
+	_ = os.Remove(filepath.Join(cacheDir, "dci.cbor"))
+	_ = os.Remove(sourceFile)
+	if err := os.MkdirAll(cacheDir, 0o700); err == nil {
+		_ = os.WriteFile(sourceFile, []byte(base), 0o600)
+	}
 }
 
 // detachedRefreshCommands are the hidden subcommands a background refresher
@@ -222,6 +336,57 @@ var detachedRefreshCommands = map[string]bool{
 // refresher re-exec rather than a normal user invocation.
 func isDetachedRefreshInvocation(args []string) bool {
 	return len(args) > 1 && detachedRefreshCommands[args[1]]
+}
+
+// applyAPIBaseOverride handles everything DCI_API_BASE_URL touches before
+// cli.Init(configDir's apis.json read): swapping apis.json's persisted base
+// (if the env override is set) and keeping restish's spec cache in sync with
+// whichever host is actually in play this invocation. It never aborts —
+// every failure mode (malformed override, a read-only apis.json, an
+// unreadable persisted base) falls back to running with whatever base is
+// already on disk — so it is safe to call unconditionally for every command,
+// including ones that never depended on the override.
+//
+// Returns a restore func to call right after cli.Init() (nil if there is
+// nothing to restore), matching swapConfiguredAPIBase's contract.
+func applyAPIBaseOverride(configDir string, args []string) func() {
+	if isDetachedRefreshInvocation(args) {
+		// Neither refresher ever talks to the DCI API, so cache bookkeeping
+		// here would be pure overhead — and could itself race the parent's
+		// own call to this function.
+		return nil
+	}
+
+	if envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL")); envBase != "" {
+		base, err := apiBase()
+		if err != nil {
+			// A malformed override falls back to the persisted base
+			// silently: `status` calls apiBase() itself and will surface
+			// this exact error on its own terms for the one command that
+			// actually cares, so warning here too would just double it.
+			return nil
+		}
+		restore, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
+			return nil
+		}
+		invalidateSpecCacheOnHostChange(base)
+		return restore
+	}
+
+	// No override: still invalidate if the cache was last populated from a
+	// different host (e.g. a prior DCI_API_BASE_URL run) so a stale
+	// non-prod spec never leaks into a plain prod invocation. Skip the
+	// apiBase() call entirely when the cache has never been marked with a
+	// source host — the overwhelmingly common case — to keep this free for
+	// every invocation that never touches the override.
+	if lastCachedSpecHost() != "" {
+		if base, err := apiBase(); err == nil {
+			invalidateSpecCacheOnHostChange(base)
+		}
+	}
+	return nil
 }
 
 func writeConfig(configFile, base string) error {
@@ -369,37 +534,13 @@ func run() (exitCode int) {
 	// cli.Init reads apis.json into restish's in-process API config map right
 	// away (not cli.Defaults(), despite the name suggesting setup-time
 	// config), and that map — not apiBase() — is what cli.Run() consults to
-	// pick the base URL for every data command. Swap the on-disk base to the
-	// DCI_API_BASE_URL override just for this read, then restore it
-	// immediately after so the override still never persists.
-	//
-	// Skipped for a detached refresh re-exec (isDetachedRefreshInvocation):
-	// startUpdateCheck/name_completion's cache refreshers inherit the parent's
-	// env — including DCI_API_BASE_URL — and run this same run() concurrently
-	// with the parent via exec.Command(os.Args[0], ...). Without this guard,
-	// two processes race read-swap-write-restore on the same apis.json; the
-	// loser's restore can overwrite the winner's, leaving the dev override
-	// stuck on disk for every future invocation — exactly what apis.json's
-	// swap is meant to prevent. Neither refresher ever talks to the DCI API,
-	// so neither needs the override at all.
-	//
-	// A malformed override or a write failure (e.g. a read-only config mount
-	// in CI) both fall back to the persisted base silently rather than
-	// aborting here: commands that never depended on apis.json's base
-	// (--help, --version, completion) must keep working regardless, and a
-	// command that does care about the override's validity — `status`,
-	// which calls apiBase() itself — surfaces that same error on its own
-	// terms instead of it being reported twice.
-	var restore func()
-	if envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL")); envBase != "" && !isDetachedRefreshInvocation(os.Args) {
-		if base, err := apiBase(); err == nil {
-			if r, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base); err == nil {
-				restore = r
-			} else {
-				fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
-			}
-		}
-	}
+	// pick the base URL for every data command. applyAPIBaseOverride swaps
+	// the on-disk base to DCI_API_BASE_URL just for this read (see its own
+	// doc comment for the detached-refresh guard, the graceful-degrade
+	// rules, and the spec-cache invalidation it also handles); the restore
+	// it returns puts the on-disk base back immediately after, so the
+	// override still never persists.
+	restore := applyAPIBaseOverride(configDir, os.Args)
 	cli.Init("dci", version)
 	if restore != nil {
 		restore()
