@@ -81,6 +81,10 @@ type aiCmdDoneMsg struct {
 // aiSessionEventMsg wraps one protocol event for the Update loop.
 type aiSessionEventMsg struct{ event aiEvent }
 
+// aiLoginDoneMsg reports the /login child that ran with the real terminal
+// (tea.ExecProcess); err carries its failure, nil on success.
+type aiLoginDoneMsg struct{ err error }
+
 // aiSessionClosedMsg reports the events channel closing.
 type aiSessionClosedMsg struct{}
 
@@ -607,6 +611,11 @@ func (m aiModel) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.append(renderAIRunCard(msg))
+		// A successful /logout invalidates everything the banner and identity
+		// lines derived from the (now cleared) credential cache.
+		if len(msg.argv) > 0 && msg.argv[0] == "logout" && msg.exitCode == 0 && !msg.canceled && msg.runErr == "" {
+			m.refreshAuthState()
+		}
 		// A finished user command joins the conversation so follow-up
 		// questions can reference what is on screen (§4.4).
 		if m.session != nil && !msg.canceled && msg.runErr == "" {
@@ -615,6 +624,9 @@ func (m aiModel) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 		return m, nil
+
+	case aiLoginDoneMsg:
+		return m.handleLoginDone(msg)
 
 	case aiSessionEventMsg:
 		return m.handleSessionEvent(msg.event)
@@ -670,6 +682,37 @@ func (m aiModel) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	m.input, cmd = m.input.Update(msg)
 	m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionMatchCap))
 	return m, cmd
+}
+
+// refreshAuthState re-reads the credential cache a login/logout child just
+// rewrote (the parent's in-memory copy predates the child) and rebuilds
+// everything derived from it: the command catalog, the identity lines, and
+// the banner.
+func (m *aiModel) refreshAuthState() {
+	reloadCredentialCache()
+	m.catalog = aiSessionCatalog()
+	m.userLine = aiUserLine()
+	m.customerName = ""
+	m.identity = m.contextLabel()
+	m.refreshBanner()
+}
+
+// handleLoginDone resumes the session after the /login child ran on the real
+// terminal. The child re-fetched and cached the API spec, so the rebuilt
+// catalog picks up the API operations that were missing before login. The
+// conversation session (if any) keeps its history: its system prompt's
+// catalog snapshot is stale, but the model rediscovers commands via --help,
+// which isn't worth dropping the conversation over.
+func (m aiModel) handleLoginDone(msg aiLoginDoneMsg) (tea.Model, tea.Cmd) {
+	m.refreshAuthState()
+	if msg.err != nil {
+		// The child already printed its own error to the terminal while the
+		// session was suspended; this line keeps a record in the transcript.
+		m.append(aiErrorStyle.Render("login failed: " + msg.err.Error()))
+		return m, nil
+	}
+	m.append(tuiSuccessStyle.Render(fmt.Sprintf("Logged in — %d commands available.", len(m.catalog))))
+	return m, nil
 }
 
 // handleSessionEvent renders one protocol event and re-arms the listener.
@@ -1187,6 +1230,16 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 			m.append(aiNoticeStyle.Render("The interactive query builder needs a regular terminal — run dci query in your shell.") + "\n" +
 				aiEchoStyle.Render("In here: ask the AI to build and run the query for you, or pass shorthand body arguments to /query."))
 			return m, nil
+		}
+		// /login needs the real terminal (the browser OAuth flow refuses to
+		// run headless), which a piped dispatch child never has: suspend the
+		// session and hand the child the tty instead of degrading to the
+		// headless error. The child also re-fetches and caches the API spec,
+		// so aiLoginDoneMsg can rebuild the catalog.
+		if route.argv[0] == "login" {
+			return m, tea.ExecProcess(exec.Command(aiExecutablePath(), route.argv...), func(err error) tea.Msg {
+				return aiLoginDoneMsg{err: err}
+			})
 		}
 		if intent := aiPickerIntentFor(route.argv); intent != nil {
 			entries := intent.cachedEntries(m.configDir, m.effectiveCustomer())
