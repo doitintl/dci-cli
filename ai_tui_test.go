@@ -270,7 +270,7 @@ func TestAIStatusLineStates(t *testing.T) {
 		t.Fatalf("idle status = %q", idle)
 	}
 	m.running = &aiRunState{argv: []string{"status"}, cancel: func() {}, started: time.Now()}
-	running := m.statusLine()
+	running := stripANSI(m.statusLine())
 	if !strings.Contains(running, "running /status") || !strings.Contains(running, "esc to cancel") {
 		t.Fatalf("running status = %q", running)
 	}
@@ -364,7 +364,7 @@ func TestAITurnLifecycleEvents(t *testing.T) {
 	// the answer stream or the transcript — an analytical pause must show
 	// live progress instead of a frozen spinner.
 	m, _ = aiEventUpdate(m, aiEvent{ThinkingDelta: &aiThinkingDelta{TurnID: "t1", Text: "comparing months"}})
-	if !strings.Contains(m.statusLine(), "thinking · comparing months") {
+	if !strings.Contains(stripANSI(m.statusLine()), "thinking · comparing months") {
 		t.Fatalf("status line missing the thinking snippet: %q", m.statusLine())
 	}
 	if m.stream != "" {
@@ -377,7 +377,7 @@ func TestAITurnLifecycleEvents(t *testing.T) {
 	}
 	// The quiet turn: in-flight text drives the status line, not the
 	// transcript (Claude Code UX) — only the final answer is committed.
-	if !strings.Contains(m.statusLine(), "Spend rose because of GKE.") {
+	if !strings.Contains(stripANSI(m.statusLine()), "Spend rose because of GKE.") {
 		t.Fatalf("status line missing the activity snippet: %q", m.statusLine())
 	}
 	if strings.Contains(aiTranscriptText(m), "Spend rose") {
@@ -422,13 +422,13 @@ func TestAIQuietTurnToolActivity(t *testing.T) {
 	if m.stream != "" {
 		t.Fatal("interim narration not discarded on a tool call")
 	}
-	if status := m.statusLine(); !strings.Contains(status, "running dci list-reports") {
+	if status := stripANSI(m.statusLine()); !strings.Contains(status, "running dci list-reports") {
 		t.Fatalf("status line = %q", status)
 	}
 	m, _ = aiEventUpdate(m, aiEvent{ToolResult: &aiToolResult{
 		TurnID: "t1", CallID: "c1", OK: true, Data: "big table", Elapsed: 1200 * time.Millisecond,
 	}})
-	if status := m.statusLine(); !strings.Contains(status, "✓ dci list-reports") || !strings.Contains(status, "1 command") {
+	if status := stripANSI(m.statusLine()); !strings.Contains(status, "✓ dci list-reports") || !strings.Contains(status, "1 command") {
 		t.Fatalf("status line = %q", status)
 	}
 	transcript := aiTranscriptText(m)
@@ -465,13 +465,13 @@ func TestAIQuietTurnInterleavedToolActivity(t *testing.T) {
 	m, _ = aiEventUpdate(m, aiEvent{ToolCallStarted: &aiToolCallStarted{
 		TurnID: "t1", CallID: "c2", Tool: aiToolRunCommand, Argv: []string{"list-reports"}, By: "agent",
 	}})
-	if status := m.statusLine(); !strings.Contains(status, "running 2 commands") {
+	if status := stripANSI(m.statusLine()); !strings.Contains(status, "running 2 commands") {
 		t.Fatalf("status line = %q", status)
 	}
 	m, _ = aiEventUpdate(m, aiEvent{ToolResult: &aiToolResult{
 		TurnID: "t1", CallID: "c1", OK: true, Elapsed: time.Second,
 	}})
-	status := m.statusLine()
+	status := stripANSI(m.statusLine())
 	if !strings.Contains(status, "✓ dci list-budgets") {
 		t.Fatalf("result captioned with the wrong label: %q", status)
 	}
@@ -898,7 +898,7 @@ func TestAIPickerFetchesWhenCacheEmpty(t *testing.T) {
 	if m.fetchIntent == nil || m.running != nil || cmd == nil {
 		t.Fatalf("fetch not armed (intent=%v running=%v)", m.fetchIntent != nil, m.running != nil)
 	}
-	if !strings.Contains(m.statusLine(), "fetching report names") {
+	if !strings.Contains(stripANSI(m.statusLine()), "fetching report names") {
 		t.Fatalf("status = %q", m.statusLine())
 	}
 
