@@ -11,6 +11,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/cobra"
 )
 
 // aiTestModel builds a session model without touching cli.Root, the real
@@ -1729,5 +1731,65 @@ func TestAIKeyClearMidTurnResetsTurnState(t *testing.T) {
 	m = updated
 	if m.turnActive || m.turnActivity != "" {
 		t.Fatal("turn state survived closing the session — the spinner would spin forever")
+	}
+}
+
+// aiTestCommandTree installs a fake cobra tree behind cli.Root, restoring
+// the real one afterwards.
+func aiTestCommandTree(t *testing.T) {
+	t.Helper()
+	oldRoot := cli.Root
+	root := &cobra.Command{Use: "dci"}
+	api := &cobra.Command{Use: "dci"}
+	api.AddCommand(&cobra.Command{Use: "get-report report-id"})
+	beta := &cobra.Command{Use: "beta"}
+	beta.AddCommand(&cobra.Command{Use: "get-report-results operation-id"})
+	api.AddCommand(beta)
+	root.AddCommand(api)
+	group := &cobra.Command{Use: "customer-context"}
+	group.AddCommand(&cobra.Command{Use: "set <value>"})
+	root.AddCommand(group)
+	cli.Root = root
+	t.Cleanup(func() { cli.Root = oldRoot })
+}
+
+func TestAIUsageLineFor(t *testing.T) {
+	aiTestCommandTree(t)
+	cases := map[string]string{
+		"get-report":                    "usage: /get-report report-id",
+		"beta get-report-results":       "usage: /beta get-report-results operation-id",
+		"beta get-report-results extra": "usage: /beta get-report-results operation-id",
+		"customer-context set a b":      "usage: /customer-context set <value>",
+		"customer-context":              "", // groups explain themselves
+		"beta":                          "",
+		"no-such-command":               "",
+	}
+	for argv, want := range cases {
+		if got := aiUsageLineFor(strings.Fields(argv)); got != want {
+			t.Fatalf("aiUsageLineFor(%q) = %q, want %q", argv, got, want)
+		}
+	}
+	if got := aiUsageLineFor(nil); got != "" {
+		t.Fatalf("nil argv usage = %q", got)
+	}
+}
+
+func TestAIUsageAppendedToUsageErrorCard(t *testing.T) {
+	m := aiTestModel(t)
+	aiTestCommandTree(t)
+	updated, _ := m.Update(aiCmdDoneMsg{
+		argv:     []string{"beta", "get-report-results"},
+		output:   "Error: accepts 1 arg(s), received 0\n",
+		exitCode: exitUsage,
+	})
+	m = updated.(aiModel)
+	if !strings.Contains(aiTranscriptText(m), "usage: /beta get-report-results operation-id") {
+		t.Fatal("usage line missing from the error card")
+	}
+	// Non-usage failures keep the plain card.
+	updated, _ = m.Update(aiCmdDoneMsg{argv: []string{"get-report", "x"}, output: "boom", exitCode: 1})
+	m = updated.(aiModel)
+	if strings.Count(aiTranscriptText(m), "usage: /") != 1 {
+		t.Fatal("usage line appended to a non-usage failure")
 	}
 }

@@ -31,6 +31,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/NimbleMarkets/ntcharts/v2/picture"
 	"github.com/charmbracelet/glamour"
+	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -617,7 +619,16 @@ func (m aiModel) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.append(renderAIDispatchApproval(*m.dispatchApproval))
 			return m, nil
 		}
-		m.append(renderAIRunCard(msg))
+		card := renderAIRunCard(msg)
+		if msg.exitCode == exitUsage && !msg.canceled && msg.runErr == "" {
+			// A usage-shaped failure says what went wrong ("accepts 1 arg(s),
+			// received 0") but not what the command wanted — append the
+			// one-line usage, spelled the session's way.
+			if usage := aiUsageLineFor(msg.argv); usage != "" {
+				card += "\n" + aiEchoStyle.Render(usage)
+			}
+		}
+		m.append(card)
 		// A successful /logout invalidates everything the banner and identity
 		// lines derived from the (now cleared) credential cache.
 		if len(msg.argv) > 0 && msg.argv[0] == "logout" && msg.exitCode == 0 && !msg.canceled && msg.runErr == "" {
@@ -1935,6 +1946,55 @@ func renderAIMarkdown(text string, width int, style string) string {
 		return text
 	}
 	return strings.Trim(rendered, "\n")
+}
+
+// aiUsageLineFor reconstructs a failed dispatch's one-line usage from the
+// live cobra tree, spelled the session's way ("/beta run-report id"). Only
+// leaf commands get one: a group's own help already lists its subcommands.
+func aiUsageLineFor(argv []string) string {
+	if len(argv) == 0 || cli.Root == nil {
+		return ""
+	}
+	command := findChildCommand(findDCICommand(), argv[0])
+	if command == nil {
+		command = findChildCommand(cli.Root, argv[0])
+	}
+	if command == nil {
+		return ""
+	}
+	// Descend while the following words name subcommands ("beta run-report",
+	// "customer-context set"); the matched words become the usage's prefix.
+	matched := 1
+	for matched < len(argv) {
+		child := findChildCommand(command, argv[matched])
+		if child == nil {
+			break
+		}
+		command = child
+		matched++
+	}
+	if len(command.Commands()) > 0 || strings.TrimSpace(command.Use) == "" {
+		return ""
+	}
+	prefix := "/"
+	if matched > 1 {
+		prefix = "/" + strings.Join(argv[:matched-1], " ") + " "
+	}
+	return "usage: " + prefix + command.Use
+}
+
+// findChildCommand returns parent's direct subcommand matching name (or one
+// of its aliases); nil parent or no match return nil.
+func findChildCommand(parent *cobra.Command, name string) *cobra.Command {
+	if parent == nil {
+		return nil
+	}
+	for _, child := range parent.Commands() {
+		if child.Name() == name || child.HasAlias(name) {
+			return child
+		}
+	}
+	return nil
 }
 
 // renderAIRunCard renders one finished user dispatch for the transcript:
