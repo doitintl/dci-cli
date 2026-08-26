@@ -122,6 +122,16 @@ the CLI guide.
   guessing node parameters, validate with a dry run, land as drafts). Run
   `dci skill update` to refresh installed copies.
 
+### Improved
+
+- `dci build-cloud-flow` and `dci refine-cloud-flow` now answer with a
+  readable result — the created flow's ID, the conversation ID for follow-up
+  refinements, the builder's reply, and the build steps that ran — instead of
+  the raw event stream. Both commands also accept the family-consistent
+  spellings `dci build-cloudflow` and `dci refine-cloudflow`.
+- `dci list-cloudflows` shows each flow's `id` first — the value
+  `dci export-cloudflow-flow` and `dci refine-cloud-flow` need.
+
 ### Fixed
 
 - The AI session's command popup scrolls: with more matches than fit (say

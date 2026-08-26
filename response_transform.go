@@ -27,6 +27,10 @@ import (
 //  6. --pivot reshapes report rows into a time-as-columns pivot view
 //  7. --rows keyed re-keys positional report rows into schema-named objects
 func transformSuccessBody(body interface{}) interface{} {
+	// First: the NL flow builder's SSE body is a string, not JSON — parse it
+	// into {flowId, conversationId, answer, steps} before anything else runs
+	// (cloudflow_build.go); every later step no-ops on the small result map.
+	body = transformCloudflowBuildStream(body)
 	body = normalizeIntegralNumbers(body)
 	body = nullListsToEmpty(body)
 	// Before transformInsightsList and applyListView: search matches raw item

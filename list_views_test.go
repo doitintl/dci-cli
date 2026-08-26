@@ -241,8 +241,10 @@ func listViewCases() []listViewCase {
 				"triggerType": "triggerNode", "lastExecutionStatus": "complete",
 				"lastExecutedTime": "2026-08-14T13:10:29.705Z", "nextRun": "2026-08-16T13:00:00Z",
 			},
-			columns: "name,published,trigger,run status,last run (UTC),next run (UTC)",
-			cells:   map[string]interface{}{"trigger": "triggerNode", "run status": "complete"},
+			columns: "name,id,published,trigger,run status,last run (UTC),next run (UTC)",
+			cells: map[string]interface{}{
+				"id": "G2zdE9inbvwxBc38FCVc", "trigger": "triggerNode", "run status": "complete",
+			},
 		},
 		{
 			command:  "list-budget-suggestions",
