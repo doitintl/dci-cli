@@ -133,8 +133,10 @@ the omni-published design would have needed upstream PRs for is local here.
 **`tools/betaspec`** — a small Go generator (`go generate ./...`): fetches the public
 dev spec, extracts the manifest's operations plus the **transitive `$ref` closure** of
 their parameters/schemas/responses, injects the extensions, and writes a self-contained
-`beta/openapi.beta.yaml` with a provenance header (source URL, source spec SHA-256,
-generation date). Deterministic output — same input spec, byte-identical file.
+`beta/openapi.beta.yaml` with a provenance header (source URL and source spec SHA-256 —
+deliberately no timestamp). Deterministic output — same input spec, byte-identical file —
+so the drift workflow (§2.3) and the release staleness check diff cleanly: a regeneration
+against an unchanged source is a no-op, never a manufactured weekly diff.
 
 Why vendored beats the alternatives (full comparison in §3):
 
