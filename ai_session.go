@@ -179,6 +179,20 @@ func aiValidateAPIKey(key string) error {
 	return nil
 }
 
+// aiMaskAPIKey renders a key for display without disclosing it: the sk-
+// family prefix and the last four characters, everything between elided.
+// Short strings (not a plausible key) mask entirely.
+func aiMaskAPIKey(key string) string {
+	if len(key) < 12 {
+		return "•••"
+	}
+	prefix := "sk-"
+	if !strings.HasPrefix(key, prefix) {
+		prefix = key[:3]
+	}
+	return prefix + "…" + key[len(key)-4:]
+}
+
 func aiValidateModel(model string) error {
 	if !strings.HasPrefix(model, "claude-") {
 		return fmt.Errorf("model %q does not look like a Claude model id (expected claude-…)", model)

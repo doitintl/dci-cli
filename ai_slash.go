@@ -33,6 +33,7 @@ type aiSessionVerb struct {
 var aiSessionVerbs = []aiSessionVerb{
 	{name: "customer", usage: "/customer [name|id]", summary: "Show or set the customer context"},
 	{name: "model", usage: "/model [id]", summary: "Show or set the AI model"},
+	{name: "key", usage: "/key [set|clear]", summary: "Show, change, or clear the saved Anthropic API key"},
 	{name: "export", usage: "/export [file]", summary: "Save the transcript to a file"},
 	{name: "mouse", usage: "/mouse", summary: "Toggle mouse capture (off = select/copy text)"},
 	{name: "bell", usage: "/bell", summary: "Toggle the end-of-turn terminal bell"},
