@@ -60,6 +60,29 @@ dci list-budgets --help
 dci commands --json
 ```
 
+## Beta Commands
+
+Early-access API capabilities are available under the `beta` prefix before they become
+generally available:
+
+```bash
+# List beta commands
+dci beta --help
+
+# Run a saved report asynchronously, then poll and fetch the results
+dci beta run-report <report-id>
+dci beta get-report-operation <operation-id>
+dci beta get-report-results <operation-id>
+```
+
+Beta commands use your normal credentials and run against the production API, but most
+are gated per customer: each command's help names the early-access feature it requires,
+and calls return a 404 with an enrollment hint until that feature is enabled for the
+customer (via your DoiT account team, or the Early Access Features page in the DoiT
+console). Names, flags, and output shapes may change or be removed without notice — pin
+scripts to the GA command once a feature graduates. `dci commands --json --beta` includes
+beta commands in the machine-readable catalog, marked with `"stage": "beta"`.
+
 ## AI Assistant
 
 Running `dci` with no arguments at a terminal opens an interactive session where you can ask questions in plain English — the AI runs `dci` commands for you and explains the results — or run any command yourself with a `/` prefix (`dci ai` opens the same session):

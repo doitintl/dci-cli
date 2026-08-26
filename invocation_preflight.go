@@ -47,6 +47,11 @@ func preflightAPIInvocation(args []string) error {
 	if commandName == "" {
 		return nil
 	}
+	if commandName == "beta" {
+		// Beta commands validate against the embedded beta surface, not the
+		// GA spec — beta_commands.go owns that preflight.
+		return preflightBetaInvocation(args)
+	}
 
 	authenticated := invocationCredentialsAvailable()
 	interactive := invocationInteractive()

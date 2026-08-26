@@ -35,6 +35,10 @@ type commandCatalogEntry struct {
 	ResolvesNames bool                     `json:"resolvesNames,omitempty"`
 	RequiresAuth  bool                     `json:"requires_auth"`
 	AgentFriendly bool                     `json:"agent_friendly"`
+	// Stage marks non-GA commands ("beta"); GA entries omit it. Additive, so
+	// the catalog schema version is unchanged.
+	Stage       string `json:"stage,omitempty"`
+	EarlyAccess string `json:"early_access,omitempty"`
 }
 
 type commandCatalogArgument struct {
@@ -78,12 +82,23 @@ func registerCommandCatalog() {
 				return fmt.Errorf("load DCI command catalog: %w", err)
 			}
 			catalog := buildCommandCatalog(api)
+			if includeBeta, _ := command.Flags().GetBool("beta"); includeBeta {
+				betaAPI, err := loadBetaAPI()
+				if err != nil {
+					return fmt.Errorf("load beta command catalog: %w", err)
+				}
+				catalog.Commands = append(catalog.Commands, betaCatalogEntries(betaAPI)...)
+				sort.Slice(catalog.Commands, func(i, j int) bool {
+					return strings.Join(catalog.Commands[i].Path, " ") < strings.Join(catalog.Commands[j].Path, " ")
+				})
+			}
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetIndent("", "  ")
 			return encoder.Encode(catalog)
 		},
 	}
 	command.Flags().Bool("json", false, "Emit JSON (the catalog's stable wire format)")
+	command.Flags().Bool("beta", false, "Include beta commands (invoked as dci beta <command>; entries carry stage: beta)")
 	cli.Root.AddCommand(command)
 }
 
@@ -174,6 +189,44 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 			},
 		},
 	}
+}
+
+// betaCatalogEntries renders the embedded beta surface for `dci commands
+// --beta`. Beta entries are invoked as `dci beta <name>` (two-element path),
+// carry stage: beta plus the gating early-access flag, and never mark
+// idempotency-key flags required — the CLI auto-generates the header.
+func betaCatalogEntries(api cli.API) []commandCatalogEntry {
+	entries := make([]commandCatalogEntry, 0, len(api.Operations))
+	for _, operation := range api.Operations {
+		if operation.Hidden {
+			continue
+		}
+		flags := make([]commandCatalogFlag, 0, len(operation.QueryParams)+len(operation.HeaderParams)+6)
+		for _, parameter := range append(append([]*cli.Param{}, operation.QueryParams...), operation.HeaderParams...) {
+			flags = append(flags, commandCatalogFlag{
+				Name:        "--" + parameter.OptionName(),
+				Type:        parameter.Type,
+				Default:     parameter.Default,
+				Description: parameter.Description,
+				Example:     parameter.Example,
+			})
+		}
+		flags = appendUniqueCatalogFlags(flags, agentContractCatalogFlags())
+		sort.Slice(flags, func(i, j int) bool { return flags[i].Name < flags[j].Name })
+		entries = append(entries, commandCatalogEntry{
+			Path:          []string{"beta", operation.Name},
+			Summary:       operation.Short,
+			Arguments:     catalogArgumentsForOperation(operation),
+			Flags:         flags,
+			OutputShape:   "api_response",
+			Destructive:   isDestructiveOperation(operation),
+			RequiresAuth:  true,
+			AgentFriendly: true,
+			Stage:         "beta",
+			EarlyAccess:   betaEarlyAccessByCommand[operation.Name],
+		})
+	}
+	return entries
 }
 
 func appendUniqueCatalogFlags(existing []commandCatalogFlag, additional []commandCatalogFlag) []commandCatalogFlag {

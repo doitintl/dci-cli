@@ -1,0 +1,30 @@
+# Beta command manifest — the editorial layer for the `dci beta` surface.
+#
+# Each entry admits one API operation from the source spec into the beta
+# command tree. Adding an entry is a deliberate maintainer decision: verify the
+# operation is actually deployed on prod api.doit.com first (BETA-SPEC.md §1.1).
+#
+# Fields:
+#   operationId  — the operationId in the source (dev) OpenAPI spec
+#   cliName      — the command name under `dci beta` (becomes x-cli-name)
+#   earlyAccess  — the early-access feature flag gating the endpoint server-side
+#                  (becomes x-dci-early-access; drives help text and 404 hints)
+#
+# Regenerate the embedded spec after editing:  go generate ./...
+source: https://api-dev.doit.com/openapi.yaml
+operations:
+  - operationId: asyncRunInline
+    cliName: run-report-config
+    earlyAccess: CMP-44423
+  - operationId: asyncRunReportById
+    cliName: run-report
+    earlyAccess: CMP-44423
+  - operationId: getAsyncOperation
+    cliName: get-report-operation
+    earlyAccess: CMP-44423
+  - operationId: getAsyncOperationResults
+    cliName: get-report-results
+    earlyAccess: CMP-44423
+  - operationId: cancelAsyncOperation
+    cliName: cancel-report-operation
+    earlyAccess: CMP-44423
