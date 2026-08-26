@@ -1792,4 +1792,15 @@ func TestAIUsageAppendedToUsageErrorCard(t *testing.T) {
 	if strings.Count(aiTranscriptText(m), "usage: /") != 1 {
 		t.Fatal("usage line appended to a non-usage failure")
 	}
+	// Domain errors sharing exit 2 (ambiguous names, body validation) explain
+	// themselves — no usage line.
+	updated, _ = m.Update(aiCmdDoneMsg{
+		argv:     []string{"get-report", "bigquery"},
+		output:   "Error: \"bigquery\" matches multiple reports: ...\n",
+		exitCode: exitUsage,
+	})
+	m = updated.(aiModel)
+	if strings.Count(aiTranscriptText(m), "usage: /") != 1 {
+		t.Fatal("usage line appended to a self-explanatory exit-2 domain error")
+	}
 }

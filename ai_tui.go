@@ -620,10 +620,10 @@ func (m aiModel) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		card := renderAIRunCard(msg)
-		if msg.exitCode == exitUsage && !msg.canceled && msg.runErr == "" {
-			// A usage-shaped failure says what went wrong ("accepts 1 arg(s),
-			// received 0") but not what the command wanted — append the
-			// one-line usage, spelled the session's way.
+		if msg.exitCode == exitUsage && !msg.canceled && msg.runErr == "" && aiOutputIsArgvError(msg.output) {
+			// A bare argument/flag rejection says what went wrong ("accepts
+			// 1 arg(s), received 0") but not what the command wanted — append
+			// the one-line usage, spelled the session's way.
 			if usage := aiUsageLineFor(msg.argv); usage != "" {
 				card += "\n" + aiEchoStyle.Render(usage)
 			}
@@ -1946,6 +1946,28 @@ func renderAIMarkdown(text string, width int, style string) string {
 		return text
 	}
 	return strings.Trim(rendered, "\n")
+}
+
+// aiOutputIsArgvError reports whether a failed dispatch's output is cobra's
+// own argument/flag rejection — the only exit-2 failures where the one-line
+// usage answers the error. exitUsage is shared by richer domain errors (an
+// ambiguous name listing its candidates, a body-validation message naming
+// the field) that already explain themselves; a usage line after those would
+// misdirect the reader toward the argument count.
+func aiOutputIsArgvError(output string) bool {
+	lower := strings.ToLower(output)
+	for _, fragment := range []string{
+		"accepts ",
+		"requires at least",
+		"requires exactly",
+		"unknown flag",
+		"unknown shorthand flag",
+	} {
+		if strings.Contains(lower, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // aiUsageLineFor reconstructs a failed dispatch's one-line usage from the

@@ -233,18 +233,16 @@ func betaOperationCommand(operation cli.Operation) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			printBetaNotice(command.Name())
 
-			// GA-parity name resolution before the URI substitution below
-			// consumes the arguments: a name-shaped path argument resolves to
-			// its resource ID, and a zero-argument interactive invocation of a
-			// resolvable command (run-report) opens the picker. Both no-op for
-			// commands without a resolution target.
-			if betaResolutionReady() {
-				if err := resolvePathArguments(command, args); err != nil {
-					return err
-				}
-				if len(args) == 0 && pickedPathArgument != "" {
-					args = []string{pickedPathArgument}
-				}
+			// Name resolution (name → ID, joined multi-word names, the
+			// zero-argument picker) already ran: beta commands inherit the
+			// dci command's PersistentPreRunE, whose resolvePathArguments
+			// call finds them through the keys registerBetaResolutionMetadata
+			// added. Never resolve again here — a second pass would rejoin a
+			// resolved ID with a multi-word name's leftover words and re-open
+			// the picker. Only the picker's selection needs injecting: GA
+			// leaves get installPickerArgInjection, beta does it inline.
+			if len(args) == 0 && pickedPathArgument != "" {
+				args = []string{pickedPathArgument}
 			}
 			if len(args) < len(operation.PathParams) {
 				// The relaxed Args validator admits a zero-argument resolvable
