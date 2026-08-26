@@ -42,9 +42,11 @@ generation would otherwise have to guess.
   and returns every validation error at once, plus each requirement's resolution and candidate
   IDs. Fix and repeat until the plan is clean, then import for real with a fresh
   `--idempotency-key`.
-- **Do not fabricate what a bundle cannot carry**: credentials, tenant IDs, schedules,
-  execution state, Slack-channel and policy references never travel (the last two export as
-  `unsupportedReferences` and leave nodes flagged incomplete).
+- **Do not fabricate what a bundle cannot carry**: credentials, tenant IDs, schedule
+  *activation*, execution state, Slack-channel and policy references never travel (the last
+  two export as `unsupportedReferences` and leave nodes flagged incomplete). A schedule
+  trigger's *configuration* (frequency, run times, time zone) does travel — it just stays
+  inert until the imported draft is published.
 
 ## Authoring pipeline
 
@@ -102,9 +104,26 @@ node (`actionNode`) carries:
 depth); `configurationValues` holds connection/environment inputs (an AWS `accountId`, a GCP
 `serviceAccountResource`). `filterNode` uses `conditionGroups` → `conditions`
 (`{field, comparisonOperator, type: "STATIC", value}`); `transformation` uses a
-`transformations` array (`concatenation`, `extract`, …) over a referenced field. These shapes
-are stable, but per the hard rules, still copy the details from a real export of the same node
-type.
+`transformations` array (`concatenation`, `extract`, …) over a referenced field.
+
+Other node contracts (all confirmed against real exports):
+
+- `codeNode`: `{language: "python", code, schema, schemaType}` — `schema` is a JSON Schema
+  *string* describing the node's output; inside `code`, upstream data is read via the `nodes`
+  dict keyed by node **name**, e.g. `nodes["getDailySegmentUsage"][0]["results"][0]["data"]`.
+  The transform of choice when a `transformation` node's operations don't fit.
+- `httpNode`: `{method, url, headers, queryParams, body, apiClientConfig, payloadModel,
+  usePagination}`.
+- `triggerNode` (schedule): `{frequency, customFrequency, customFrequencyAmount, time,
+  dailyRunTimes, startDate, timeZone}` — note: a bundle carries the schedule
+  **configuration**; it's the *activation* that never travels (imports land as drafts, nothing
+  runs until published).
+- Requirements in the wild: `requirements.connections[]` entries look like
+  `{key, name, provider, usedByNodes: ["<flowKey>/<nodeKey>"]}` and are referenced from
+  parameters as `$req:connections/<key>`.
+
+These shapes are stable, but per the hard rules, still copy the details from a real export of
+the same node type.
 - Tokens inside `parameters` and variable values: `$req:<section>/<key>` points into
   `requirements` (`connections`, `datastoreTables`, `globalVariables`);
   `$bundle:flows/<flowKey>` points at a subflow in the same bundle. Every tenant-scoped
@@ -117,17 +136,27 @@ type.
 
 ## Archetypes
 
-Most requests are one of these shapes; clone the nearest real flow of the same shape:
+Ranked by real production frequency (30-day execution scan across customer tenants,
+2026-08-26); clone the nearest real flow of the same shape:
 
-- **Scheduled report → destination**: schedule trigger → DoiT report/query → transform →
-  storage or notification.
-- **Event → notification**: event/webhook trigger → filter → notification (Slack/email).
-- **Threshold → remediation**: schedule or event trigger → fetch state → filter/branch on
-  condition → cloud action (with `approval` on the destructive node) → notification.
-- **Fetch → transform → ingest**: trigger → fetch (DoiT or cloud API) → transform rows to the
-  destination's event shape → Datastore/DataHub write. Mind row volume: batch or page rather
-  than assuming one call.
-- **Data → LLM → route**: fetch → LLM node with a prompt → branch on the answer.
+- **Scheduled inventory → filter → act** — *the dominant pattern by far*, in several guises:
+  `Schedule → Describe/List (cloud API) → filterNode → action`. Real examples: stop/start RDS
+  instances by tag on a schedule; tag Lambda/ElastiCache resources; delete unattached disks
+  (`zones.list → disks.list → filter → transform → disks.delete`). Destructive final actions
+  take an `approval` block.
+- **DoiT signal → filter → transform → ticket/notification**: `Schedule → List anomalies
+  (DoiT op) → filterNode (severity) → transformation nodes building summary/description →
+  create thread/notification`. Deployed per-severity as sibling flows.
+- **Insight → remediation with a safety step**: `Schedule → DoiT Insights op → filter →
+  CreateSnapshot → ModifyVolume` — take the reversible safety action *before* the mutating
+  one; that ordering is the pattern, not an accident.
+- **Fetch → code transform → ingest**: `Schedule → fetch (httpNode / BigQuery jobs.query /
+  DoiT report) → codeNode reshaping rows → DataHub/Datastore write`. Mind row volume: batch
+  or page rather than assuming one call.
+- **Scheduled report → destination** and **event/webhook → notification**: as above with a
+  report or webhook source.
+- **Data → LLM → route**: fetch → LLM node with a prompt → branch on the answer (rare in
+  production so far).
 
 ## Current limitation
 
