@@ -30,6 +30,7 @@ require (
 	github.com/42wim/httpsig v1.2.4 // indirect
 	github.com/AlecAivazis/survey/v2 v2.3.6 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
+	github.com/NimbleMarkets/pixterm v0.0.0-20260501211346-dc18ac6c1a0f // indirect
 	github.com/ThalesIgnite/crypto11 v1.2.5 // indirect
 	github.com/alecthomas/chroma v0.10.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect

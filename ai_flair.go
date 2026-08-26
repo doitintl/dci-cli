@@ -9,6 +9,8 @@ package main
 // chapter-split guidance.
 
 import (
+	"image"
+	"image/color"
 	"strings"
 	"time"
 
@@ -107,6 +109,78 @@ func aiRuleGradient(cells int) string {
 	}
 	return b.String()
 }
+
+// The banner's Kitty-graphics logo: the cell rectangle it occupies (matching
+// the half-block fallback's footprint) and the image ID it registers under.
+const (
+	aiLogoKittyCols = 15
+	aiLogoKittyRows = 7
+	aiLogoKittyID   = 4443
+)
+
+// aiLogoImage draws the DoiT mark — the round bowl with its circular
+// counter, the stem flush with the bowl's right edge, the detached dot at
+// mid-height — as an anti-aliased raster in the brand accent on a
+// transparent background, for terminals that render real pixels (the Kitty
+// graphics banner). Same geometry as the half-block fallback, sixteen times
+// the resolution. Built lazily: only Kitty-capable terminals pay for it.
+func aiLogoImage() image.Image {
+	const height = 224
+	fH := float64(height)
+	bowlX, bowlY, bowlR := 0.40*fH, 0.66*fH, 0.34*fH
+	holeR := 0.165 * fH
+	stemR := bowlX + bowlR
+	stemL := stemR - 0.20*fH
+	capY := 0.06*fH + (stemR-stemL)/2
+	dotX, dotY, dotR := stemR+0.24*fH+dotRadiusPad*fH, 0.43*fH, 0.115*fH
+	width := int(dotX + dotR + 0.03*fH)
+
+	inside := func(x, y float64) bool {
+		dxB, dyB := x-bowlX, y-bowlY
+		distB := dxB*dxB + dyB*dyB
+		if distB <= bowlR*bowlR && distB >= holeR*holeR {
+			return true
+		}
+		if x >= stemL && x <= stemR && y >= capY && y <= bowlY {
+			return true
+		}
+		dxC, dyC := x-(stemL+stemR)/2, y-capY
+		if dxC*dxC+dyC*dyC <= (stemR-stemL)*(stemR-stemL)/4 { // rounded cap
+			return true
+		}
+		dxD, dyD := x-dotX, y-dotY
+		return dxD*dxD+dyD*dyD <= dotR*dotR
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for py := 0; py < height; py++ {
+		for px := 0; px < width; px++ {
+			hits := 0
+			for sy := 0; sy < 4; sy++ {
+				for sx := 0; sx < 4; sx++ {
+					if inside(float64(px)+(float64(sx)+0.5)/4, float64(py)+(float64(sy)+0.5)/4) {
+						hits++
+					}
+				}
+			}
+			if hits == 0 {
+				continue
+			}
+			// Premultiplied alpha: the brand accent scaled by coverage.
+			img.SetRGBA(px, py, color.RGBA{
+				R: uint8(0xFC * hits / 16),
+				G: uint8(0x31 * hits / 16),
+				B: uint8(0x65 * hits / 16),
+				A: uint8(0xFF * hits / 16),
+			})
+		}
+	}
+	return img
+}
+
+// dotRadiusPad nudges the dot outward so the raster's proportions match the
+// half-block fallback, whose dot snaps to whole cells.
+const dotRadiusPad = 0.06
 
 // aiWindowTitle names the terminal tab after the session and its state:
 // what the session is pointed at, a running marker while something is in

@@ -29,6 +29,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/NimbleMarkets/ntcharts/v2/picture"
 	"github.com/charmbracelet/glamour"
 )
 
@@ -112,6 +113,14 @@ type aiModel struct {
 	turnQuip     string
 	quipAt       time.Time
 	turnDoneMark bool
+
+	// The banner's Kitty-graphics logo (ai_flair.go): on terminals that
+	// answer the Kitty probe, the half-block mark upgrades to a real raster.
+	// logoGrid caches the placeholder grid the banner embeds; everywhere
+	// else it stays empty and the half-blocks stand.
+	logo      picture.Model
+	logoKitty bool
+	logoGrid  string
 	// sessionCustomer mirrors the agent's session-scoped context override
 	// ("" = none): the identity line and user dispatches follow it, while the
 	// persisted context file stays untouched until the user runs /customer.
@@ -256,6 +265,8 @@ func newAIModel(configDir string) aiModel {
 		// queries the terminal mid-session (see aiMarkdownStyle).
 		markdownStyle: aiMarkdownStyle(),
 	}
+	m.logo = picture.NewWithConfig(picture.Config{KittyID: aiLogoKittyID})
+	m.logo.SetSize(aiLogoKittyCols, aiLogoKittyRows)
 	m.identity = m.contextLabel()
 	if key := resolveAIKey(settings); key != "" {
 		m.session = newAIConversationSession(configDir, key, modelName, catalog)
@@ -301,6 +312,11 @@ var aiLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(aiBrandHex))
 // model and key source, tenant identity, catalog size.
 func aiBannerBlock(m *aiModel) string {
 	logo := aiLogoStyle.Render(strings.Join(aiDoitLogo, "\n"))
+	if m.logoGrid != "" {
+		// A Kitty-graphics terminal answered the probe: the placeholder grid
+		// resolves to the real raster of the mark (ai_flair.go).
+		logo = m.logoGrid
+	}
 
 	versionLabel := "v" + version
 	if version == "dev" {
@@ -444,7 +460,9 @@ var newAIConversationSession = func(configDir, apiKey, model string, catalog []a
 }
 
 func (m aiModel) Init() tea.Cmd {
-	commands := []tea.Cmd{textarea.Blink}
+	// The logo's Init probes for Kitty graphics support (env-gated: it sends
+	// nothing to terminals with no Kitty signal) and asks for the cell size.
+	commands := []tea.Cmd{textarea.Blink, m.logo.Init()}
 	if m.session != nil {
 		commands = append(commands, aiListen(m.session))
 	}
@@ -514,6 +532,32 @@ func (m *aiModel) layout() {
 }
 
 func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// The banner logo's picture model routes its own protocol traffic — the
+	// Kitty capability probe reply, its timeout tick, cell-size reports, and
+	// built frames; it ignores everything else, so the blanket forward is
+	// cheap. Once the terminal affirms Kitty support, the half-block mark
+	// upgrades to the real raster.
+	logoCmd := m.logo.Update(msg)
+	if !m.logoKitty && picture.KittySupported() == picture.KittyCapabilitySupported {
+		m.logoKitty = true
+		logoCmd = tea.Batch(logoCmd, m.logo.SetImage(aiLogoImage()), m.logo.Toggle())
+	}
+	if m.logoKitty {
+		if grid := m.logo.View().Content; grid != "" && grid != m.logoGrid {
+			m.logoGrid = grid
+			m.refreshBanner()
+		}
+	}
+	model, cmd := m.dispatch(msg)
+	if logoCmd == nil {
+		return model, cmd
+	}
+	return model, tea.Batch(cmd, logoCmd)
+}
+
+// dispatch is the session's message handler proper; Update wraps it with the
+// banner logo's plumbing.
+func (m aiModel) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
