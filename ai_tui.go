@@ -105,6 +105,13 @@ type aiModel struct {
 
 	running    *aiRunState
 	ctrlCArmed bool
+	// Status-line flair (ai_flair.go): the shimmer phase advances per
+	// spinner tick; a quiet turn shows rotating quips; turnDoneMark drives
+	// the window title's checkmark until the user presses a key.
+	spinPhase    int
+	turnQuip     string
+	quipAt       time.Time
+	turnDoneMark bool
 	// sessionCustomer mirrors the agent's session-scoped context override
 	// ("" = none): the identity line and user dispatches follow it, while the
 	// persisted context file stays untouched until the user runs /customer.
@@ -215,7 +222,10 @@ func newAIModel(configDir string) aiModel {
 	input.SetStyles(textarea.Styles{
 		Focused: inputState,
 		Blurred: inputState,
-		Cursor:  textarea.CursorStyle{Shape: tea.CursorBlock, Blink: true},
+		// The brand-pink block cursor: the virtual cursor renders in reverse
+		// video, so the color becomes the block and the character under it
+		// keeps the terminal's background color — legible on light and dark.
+		Cursor: textarea.CursorStyle{Color: lipgloss.Color(aiBrandHex), Shape: tea.CursorBlock, Blink: true},
 	})
 	input.Focus()
 
@@ -230,7 +240,7 @@ func newAIModel(configDir string) aiModel {
 		userCommands: loadAIUserCommands(configDir),
 		input:        input,
 		view:         viewport.New(viewport.WithWidth(80), viewport.WithHeight(20)),
-		spin:         spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		spin:         spinner.New(spinner.WithSpinner(aiDoitSpinner)),
 		width:        80,
 		height:       24,
 		follow:       true,
@@ -282,9 +292,9 @@ var aiDoitLogo = []string{
 	"  ▀█████▀",
 }
 
-// aiLogoStyle carries the DoiT accent (#FC3165); lipgloss degrades the hex
-// to the terminal's nearest color when truecolor is unavailable.
-var aiLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FC3165"))
+// aiLogoStyle carries the DoiT accent; lipgloss degrades the hex to the
+// terminal's nearest color when truecolor is unavailable.
+var aiLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(aiBrandHex))
 
 // aiBannerBlock is the transcript's opening block, Claude Code-style: the
 // mark beside the product name, version, and the session facts that matter —
@@ -521,6 +531,13 @@ func (m aiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.running == nil && !m.turnActive && m.fetchIntent == nil {
 			return m, nil
 		}
+		m.spinPhase++
+		// A still-quiet turn rotates its waiting quip so a long analytical
+		// pause reads as alive, not stuck.
+		if m.turnActive && m.turnActivity == "" && time.Since(m.quipAt) >= aiQuipRotateEvery {
+			m.turnQuip = spinnerQuip()
+			m.quipAt = time.Now()
+		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
@@ -614,6 +631,8 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		m.turnActive = true
 		m.stream = ""
 		m.turnActivity = ""
+		m.turnQuip = spinnerQuip()
+		m.quipAt = time.Now()
 		m.turnStarted = time.Now()
 		m.thinking = ""
 		m.turnCommands = 0
@@ -715,6 +734,7 @@ func (m aiModel) handleSessionEvent(event aiEvent) (tea.Model, tea.Cmd) {
 		m.lastUsage = &usage
 		m.turnActive = false
 		m.turnActivity = ""
+		m.turnDoneMark = true // window-title checkmark until the next keypress
 		m.approval = nil
 		if m.bellOn && aiBellWorthy(usage) {
 			commands = append(commands, aiTurnDoneSignal(m.focused))
@@ -828,6 +848,7 @@ func aiDisplayContext(context string) string {
 
 func (m aiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	m.turnDoneMark = false // the user is back — drop the title checkmark
 
 	// ctrl+l redraws, from every state (the repair gesture it is everywhere
 	// else). The renderer only rewrites lines whose content changed, so a
@@ -1864,6 +1885,8 @@ func (m aiModel) View() tea.View {
 	view := tea.NewView(aiFitFrame(b.String(), m.width, m.height))
 	view.AltScreen = true
 	view.ReportFocus = true // focus gates the end-of-turn desktop notification
+	view.WindowTitle = aiWindowTitle(&m)
+	view.ProgressBar = aiDockProgress(&m)
 	if m.mouseOn {
 		view.MouseMode = tea.MouseModeCellMotion
 	}
@@ -1917,15 +1940,22 @@ func aiRule(width int, hint string) string {
 	if width < 4 {
 		width = 4
 	}
+	// The rules open with a short brand fade (ai_flair.go) before settling
+	// into the usual dim line.
+	fade := len(aiRuleRamp)
+	if fade > width/3 {
+		fade = width / 3
+	}
+	lead := aiRuleGradient(fade)
 	if hint == "" {
-		return aiEchoStyle.Render(strings.Repeat("─", width))
+		return lead + aiEchoStyle.Render(strings.Repeat("─", width-fade))
 	}
 	label := " " + hint + " "
-	dashes := width - lipgloss.Width(label) - 2
+	dashes := width - fade - lipgloss.Width(label) - 2
 	if dashes < 1 {
 		dashes = 1
 	}
-	return aiEchoStyle.Render(strings.Repeat("─", dashes)) + aiNoticeStyle.Render(label) + aiEchoStyle.Render("──")
+	return lead + aiEchoStyle.Render(strings.Repeat("─", dashes)) + aiNoticeStyle.Render(label) + aiEchoStyle.Render("──")
 }
 
 // topRule is the line above the input; it carries the scrolled-up hint when
@@ -2062,23 +2092,34 @@ func (m aiModel) statusLine() string {
 		return aiApproveStyle.Render(aiStatusRow(m.statusWidth(""),
 			"", "destructive command pending — y run", "", "n decline"))
 	}
+	dark := m.markdownStyle != "light"
 	if m.fetchIntent != nil {
-		return m.spin.View() + " " + aiEchoStyle.Render(aiStatusRow(m.statusWidth(m.spin.View()+" "),
+		spin := aiSpinnerStyle(0).Render(m.spin.View())
+		return spin + " " + aiEchoStyle.Render(aiStatusRow(m.statusWidth(m.spin.View()+" "),
 			"fetching", m.fetchIntent.resource+" names…", "", "esc to cancel"))
 	}
 	if m.running != nil {
-		return m.spin.View() + " " + aiEchoStyle.Render(aiStatusRow(m.statusWidth(m.spin.View()+" "),
-			"running", "/"+strings.Join(m.running.argv, " "),
-			time.Since(m.running.started).Round(time.Second).String(), "esc to cancel"))
+		subject := "/" + strings.Join(m.running.argv, " ")
+		spin := aiSpinnerStyle(time.Since(m.running.started)).Render(m.spin.View())
+		row := aiStatusRow(m.statusWidth(m.spin.View()+" "),
+			"running", subject, time.Since(m.running.started).Round(time.Second).String(), "esc to cancel")
+		return spin + " " + aiEchoStyle.Render(aiShimmerRow(row, subject, m.spinPhase, dark))
 	}
 	if m.turnActive {
 		activity := m.turnActivity
 		if activity == "" {
+			// A quiet turn shows the rotating waiting quip (ai_flair.go); the
+			// literal fallback covers states created outside a TurnStarted.
+			activity = m.turnQuip
+		}
+		if activity == "" {
 			activity = "thinking (" + m.modelName + ")"
 		}
 		detail := make([]string, 0, 2)
+		elapsed := time.Duration(0)
 		if !m.turnStarted.IsZero() {
-			detail = append(detail, time.Since(m.turnStarted).Round(time.Second).String())
+			elapsed = time.Since(m.turnStarted)
+			detail = append(detail, elapsed.Round(time.Second).String())
 		}
 		if m.turnCommands > 0 {
 			commands := fmt.Sprintf("%d command", m.turnCommands)
@@ -2087,8 +2128,10 @@ func (m aiModel) statusLine() string {
 			}
 			detail = append(detail, commands)
 		}
-		return m.spin.View() + " " + aiEchoStyle.Render(aiStatusRow(m.statusWidth(m.spin.View()+" "),
-			"", activity, strings.Join(detail, " · "), "esc to cancel"))
+		spin := aiSpinnerStyle(elapsed).Render(m.spin.View())
+		row := aiStatusRow(m.statusWidth(m.spin.View()+" "),
+			"", activity, strings.Join(detail, " · "), "esc to cancel")
+		return spin + " " + aiEchoStyle.Render(aiShimmerRow(row, activity, m.spinPhase, dark))
 	}
 	if m.keyEntry {
 		return aiEchoStyle.Render(aiStatusRow(m.statusWidth(""),
