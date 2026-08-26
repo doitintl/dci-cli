@@ -837,9 +837,11 @@ func (m aiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// session forces that, and the banner (static by definition) is exactly
 	// what stays broken.
 	if key == "ctrl+l" {
-		// Belt and braces: rebuild the frame content too, so the repaint that
-		// follows the erase carries a freshly composed frame — banner
-		// included — whatever state the terminal left the cell grid in.
+		// The repair gesture returns a known-good live view: the frame is
+		// rebuilt (banner included, whatever state the terminal left the
+		// cell grid in), the viewport snaps back to the latest content, and
+		// the erase-and-repaint below rewrites every cell.
+		m.follow = true
 		m.layout()
 		return m, tea.ClearScreen
 	}
@@ -1814,9 +1816,9 @@ func aiHelpText(catalogSize int, sessionReady bool) string {
 		aiEchoStyle.Render("Saved commands: define your own in "+aiUserCommandsFileName+" — {\"top5\": {\"command\": \"list-reports --limit 5\"}, \"review\": {\"prompt\": \"Review last month's spend\"}}"),
 		aiEchoStyle.Render("Privacy: AI questions and dci command results are sent to Anthropic's API under your key."),
 		aiEchoStyle.Render("Copying text: select and copy normally (mouse capture is off by default); /mouse enables wheel scrolling instead; /export saves the whole transcript."),
-		aiEchoStyle.Render("Scrolling: PgUp/PgDn move the transcript. With mouse capture off the wheel scrolls the terminal itself, which slides this frame out of view and can leave it smeared — ctrl+l redraws it."),
+		aiEchoStyle.Render("Scrolling: PgUp/PgDn move the transcript. With mouse capture off the wheel scrolls the terminal itself, which slides this frame out of view and can leave it smeared — ctrl+l redraws it and jumps back to the latest content."),
 		"",
-		"  tab/enter complete · ↑/↓ history or popup · PgUp/PgDn scroll (wheel via /mouse) · ctrl+l redraw · esc clears or cancels")
+		"  tab/enter complete · ↑/↓ history or popup · PgUp/PgDn scroll (wheel via /mouse) · ctrl+l redraw+latest · esc clears or cancels")
 	return strings.Join(lines, "\n")
 }
 
