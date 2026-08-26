@@ -26,6 +26,45 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.7.1 — August 26, 2026
+
+### New
+
+- `/key` in the AI session manages your Anthropic API key: on its own it
+  shows which key is in use (masked) and where it comes from — including
+  when the `ANTHROPIC_API_KEY` environment variable overrides a saved key —
+  `/key set` replaces it through the guided entry, and `/key clear` removes
+  it. No more hand-editing the settings file.
+- Your first-ever session opens with the full `/help` text right after the
+  banner, so you don't have to discover the slash-command grammar by
+  accident. Later sessions keep the compact banner.
+
+### Improved
+
+- `dci beta` commands complete in the session's popup and run like every
+  other `/` command, and a bare `/beta` lists the early-access commands the
+  way you'd type them in the session.
+- `/exit` now appears in the command popup and in `/help` alongside `/quit`
+  (it has always worked as an alias).
+- When the session has no API commands to offer, the banner says so
+  ("API commands appear after /login") instead of just showing a small
+  command count.
+
+### Fixed
+
+- The interactive session shows the full command set again. In v2.7.0 every
+  session opened with only the built-in commands — no API commands,
+  whatever your sign-in state — and restarting or signing in again couldn't
+  bring them back.
+- `/login` works inside the session: it hands the browser sign-in your real
+  terminal, then picks up your commands and identity live once you're back.
+  Previously it failed with "cannot open a browser to log in", which left
+  no way back in after a `/logout`. Signing in or out now also refreshes
+  the banner's role and tenant immediately, and signing in as a different
+  account drops the previous account's customer context and cached names.
+- Changing or clearing the API key while an answer is streaming no longer
+  risks a status line stuck on a spinner.
+
 ## v2.7.0 — August 26, 2026
 
 ### New
