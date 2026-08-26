@@ -137,11 +137,26 @@ func TestAICompletionsFor(t *testing.T) {
 		t.Fatalf("post-token input completed: %v", got)
 	}
 	got := aiCompletionsFor("/", catalog, nil, 20)
-	if len(got) != len(aiSessionVerbs)+len(catalog) {
-		t.Fatalf("bare slash offers %d candidates, want %d", len(got), len(aiSessionVerbs)+len(catalog))
+	if len(got) != len(aiSessionVerbs)+len(aiVerbAliases)+len(catalog) {
+		t.Fatalf("bare slash offers %d candidates, want %d", len(got), len(aiSessionVerbs)+len(aiVerbAliases)+len(catalog))
 	}
 	if got[0].Value != aiSessionVerbs[0].name {
 		t.Fatalf("session verbs must list first, got %q", got[0].Value)
+	}
+	// Aliases complete too — /exit was invisible when only canonical verbs
+	// appeared in the popup.
+	got = aiCompletionsFor("/ex", catalog, nil, 6)
+	found := false
+	for _, completion := range got {
+		if completion.Value == "exit" {
+			found = true
+			if !strings.Contains(completion.Summary, "/quit") {
+				t.Fatalf("exit completion should name /quit: %+v", completion)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("completions for /ex = %v, want the exit alias offered", got)
 	}
 	got = aiCompletionsFor("/LI", catalog, nil, 6)
 	if len(got) != 2 || got[0].Value != "list-anomalies" || got[1].Value != "list-budgets" {

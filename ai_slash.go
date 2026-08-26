@@ -40,7 +40,7 @@ var aiSessionVerbs = []aiSessionVerb{
 	{name: "default", usage: "/default [session|help]", summary: "What bare dci opens: this session or the help screen"},
 	{name: "clear", usage: "/clear", summary: "Clear the transcript and start a new conversation"},
 	{name: "help", usage: "/help", summary: "Show how the session works"},
-	{name: "quit", usage: "/quit", summary: "Leave the session"},
+	{name: "quit", usage: "/quit (or /exit)", summary: "Leave the session"},
 }
 
 // aiVerbAliases maps alternate spellings onto session verbs.
@@ -425,6 +425,18 @@ func aiCompletionsFor(input string, catalog []aiCatalogEntry, userCommands map[s
 	for _, verb := range aiSessionVerbs {
 		if strings.HasPrefix(verb.name, token) {
 			verbs = append(verbs, aiCompletion{Value: verb.name, Summary: verb.summary})
+		}
+	}
+	// Aliases complete too: /exit routes to /quit but was undiscoverable when
+	// only the canonical spellings appeared in the popup.
+	aliases := make([]string, 0, len(aiVerbAliases))
+	for alias := range aiVerbAliases {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	for _, alias := range aliases {
+		if verb, ok := aiLookupVerb(alias); ok && strings.HasPrefix(alias, token) {
+			verbs = append(verbs, aiCompletion{Value: alias, Summary: verb.summary + " (same as /" + verb.name + ")"})
 		}
 	}
 	userNames := make([]string, 0, len(userCommands))
