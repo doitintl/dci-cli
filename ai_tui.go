@@ -261,12 +261,19 @@ func newAIModel(configDir string) aiModel {
 }
 
 // aiDoitLogo is the DoiT "d" mark — the lowercase d with its floating dot —
-// in the brand accent, the session's answer to Claude Code's robot.
+// in the brand accent, the session's answer to Claude Code's robot. Rendered
+// in half-blocks (two pixel rows per text row, roughly square pixels on 1:2
+// terminal cells), rasterized from the mark's real proportions: the round
+// bowl with its circular counter, the stem flush with the bowl's right edge,
+// and the detached dot at mid-height.
 var aiDoitLogo = []string{
-	"        ██    ",
-	"  ▄▄▄▄▄▄██  ▄▄",
-	"  ██    ██  ▀▀",
-	"  ▀██████▀    ",
+	"       ███",
+	"       ███",
+	"  ▄▄██████",
+	" ▄██▀▀▀███   ██",
+	" ██▀   ▀██",
+	" ███▄▄▄███",
+	"  ▀█████▀",
 }
 
 // aiLogoStyle carries the DoiT accent (#FC3165); lipgloss degrades the hex
