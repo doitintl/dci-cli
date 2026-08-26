@@ -1670,3 +1670,64 @@ func TestAIBareBetaListsSessionSpelledCommands(t *testing.T) {
 		t.Fatal("/beta list-widgets did not dispatch")
 	}
 }
+
+func TestAILoginDoneClearsTenantScopedState(t *testing.T) {
+	m := aiTestModel(t)
+	m.sessionCustomer = "old-tenant.com"
+	m.fetchedNames["report"] = []nameCacheEntry{{Name: "Old", ID: "old-1"}}
+	updated, _ := m.Update(aiLoginDoneMsg{})
+	m = updated.(aiModel)
+	if m.sessionCustomer != "" {
+		t.Fatalf("sessionCustomer survived re-auth: %q", m.sessionCustomer)
+	}
+	if len(m.fetchedNames) != 0 {
+		t.Fatalf("fetched names survived re-auth: %v", m.fetchedNames)
+	}
+}
+
+func TestAIKeyEntryHonorsEnvPrecedence(t *testing.T) {
+	m := aiTestModel(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-env-0123456789")
+	var receivedKey string
+	oldFactory := newAIConversationSession
+	newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
+		receivedKey = apiKey
+		return newFakeAISession()
+	}
+	t.Cleanup(func() { newAIConversationSession = oldFactory })
+
+	m = aiType(m, "/key set")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	m = aiType(m, "sk-ant-file-0123456789")
+	updated, _ = aiPress(m, tea.KeyEnter)
+	m = updated
+	if got := loadAISettings(m.configDir).APIKey; got != "sk-ant-file-0123456789" {
+		t.Fatalf("typed key not persisted: %q", got)
+	}
+	if receivedKey != "sk-ant-env-0123456789" {
+		t.Fatalf("session built on %q, want the environment key (env wins)", receivedKey)
+	}
+	if !strings.Contains(aiTranscriptText(m), "overrides the saved key") {
+		t.Fatal("env-override note missing from the transcript")
+	}
+}
+
+func TestAIKeyClearMidTurnResetsTurnState(t *testing.T) {
+	m := aiTestModel(t)
+	settings := loadAISettings(m.configDir)
+	settings.APIKey = "sk-ant-test-0123456789"
+	if err := saveAISettings(m.configDir, settings); err != nil {
+		t.Fatal(err)
+	}
+	m.session = newFakeAISession()
+	m.turnActive = true
+	m.turnActivity = "running dci list-budgets"
+
+	m = aiType(m, "/key clear")
+	updated, _ := aiPress(m, tea.KeyEnter)
+	m = updated
+	if m.turnActive || m.turnActivity != "" {
+		t.Fatal("turn state survived closing the session — the spinner would spin forever")
+	}
+}

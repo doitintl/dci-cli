@@ -694,11 +694,19 @@ func (m aiModel) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 // refreshAuthState re-reads the credential cache a login/logout child just
 // rewrote (the parent's in-memory copy predates the child) and rebuilds
 // everything derived from it: the command catalog, the identity lines, and
-// the banner.
+// the banner. The identity change also invalidates every piece of
+// tenant-scoped state — the agent's session-scoped customer override and the
+// fetched picker names must not survive into another account's session
+// (§6.2), same policy as /clear and /customer.
 func (m *aiModel) refreshAuthState() {
 	reloadCredentialCache()
 	m.catalog = aiSessionCatalog()
 	m.userLine = aiUserLine()
+	m.sessionCustomer = ""
+	m.fetchedNames = map[string][]nameCacheEntry{}
+	if session, ok := m.session.(interface{ ClearCustomerOverride() }); ok {
+		session.ClearCustomerOverride()
+	}
 	m.customerName = ""
 	m.identity = m.contextLabel()
 	m.refreshBanner()
@@ -719,6 +727,12 @@ func (m aiModel) handleLoginDone(msg aiLoginDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.append(tuiSuccessStyle.Render(fmt.Sprintf("Logged in — %d commands available.", len(m.catalog))))
+	// refreshAuthState blanked the resolved display name; the fresh
+	// credentials (and the just-hydrated get-customer operation) can resolve
+	// it again. Logout skips this: without credentials the lookup can't run.
+	if lookup := aiLookupCustomerName(readCustomerContext(m.configDir)); lookup != nil {
+		return m, lookup
+	}
 	return m, nil
 }
 
@@ -867,6 +881,20 @@ func aiTurnDoneSignal(focused bool) tea.Cmd {
 		signal += "\x1b]9;dci ai — response ready\x07"
 	}
 	return tea.Raw(signal)
+}
+
+// resetTurnState drops the in-flight turn UI when its session is being
+// closed or replaced (/clear, /key set, /key clear): the closed session's
+// terminal event can be lost (emit races the closed done channel against the
+// buffered events channel), and without this the status line would show the
+// spinner forever.
+func (m *aiModel) resetTurnState() {
+	m.turnActive = false
+	m.turnActivity = ""
+	m.thinking = ""
+	m.stream = ""
+	m.toolLabels = nil
+	m.approval = nil
 }
 
 // commitStream moves the accumulated assistant text into the transcript,
@@ -1386,10 +1414,19 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// /key set over a live session: the replacement key takes over,
 			// and the old session (built on the old key) goes with it.
 			_ = m.session.Close()
+			m.resetTurnState()
 		}
-		m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
+		// The session runs on the resolved key, not the typed one verbatim:
+		// ANTHROPIC_API_KEY wins over the file everywhere else (resolveAIKey),
+		// and building on the typed key here would leave /key reporting a
+		// source the live session is not actually using.
+		activeKey := resolveAIKey(settings)
+		m.session = newAIConversationSession(m.configDir, activeKey, m.modelName, m.catalog)
 		m.sessionNote = ""
 		m.append(tuiSuccessStyle.Render("Key saved — AI is ready."))
+		if activeKey != key {
+			m.append(aiNoticeStyle.Render("ANTHROPIC_API_KEY is set and overrides the saved key — the session keeps using the environment's key."))
+		}
 		commands := []tea.Cmd{aiListen(m.session)}
 		if question := m.pendingQuestion; question != "" {
 			m.pendingQuestion = ""
@@ -1498,6 +1535,7 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 		m.append(aiBannerBlock(&m))
 		if m.session != nil {
 			_ = m.session.Close()
+			m.resetTurnState()
 			settings := loadAISettings(m.configDir)
 			if key := resolveAIKey(settings); key != "" {
 				m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
@@ -1709,6 +1747,7 @@ func (m aiModel) runKeyVerb(args []string) (tea.Model, tea.Cmd) {
 		if m.session != nil {
 			_ = m.session.Close()
 			m.session = nil
+			m.resetTurnState()
 		}
 		m.sessionNote = "AI needs an Anthropic API key — ask a question to set one up, or export ANTHROPIC_API_KEY"
 		m.append(tuiSuccessStyle.Render("Saved key cleared — AI is off.") + "\n" +
