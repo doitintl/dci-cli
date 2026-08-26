@@ -150,6 +150,11 @@ func configureCompletionPreflightTest(t *testing.T, api cli.API, specCached bool
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	// dciConfigDir() memoizes its first resolution per process (run()
+	// resets it per invocation; a direct call here needs the same reset so
+	// an earlier test's HOME doesn't leak into this one's).
+	resetDCIConfigDirCache()
+	t.Cleanup(resetDCIConfigDirCache)
 	configDir := dciConfigDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)

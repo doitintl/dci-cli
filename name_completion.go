@@ -142,6 +142,16 @@ var spawnNameCacheRefresh = spawnDetachedNameRefresh
 // current process serves whatever it has and the refresh arms the next Tab.
 func spawnDetachedNameRefresh() {
 	command := exec.Command(os.Args[0], "__refresh-names")
+	// detachedRefreshEnv, not plain inherited os.Environ(): completionPreflight
+	// runs after applyAPIBaseOverride, so under an active DCI_API_BASE_URL
+	// override DCI_CONFIG_DIR/DCI_CACHE_DIR already point at the throwaway
+	// temp dir. This child never applies its own override
+	// (isDetachedRefreshInvocation skips it) but would otherwise inherit
+	// those same temp-dir env vars, do a real network refresh, and write the
+	// result into a directory the parent's cleanup deletes on exit — a
+	// silently wasted fetch that never reaches the real, persisted name
+	// cache.
+	command.Env = detachedRefreshEnv()
 	if err := command.Start(); err != nil {
 		return
 	}

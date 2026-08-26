@@ -107,7 +107,49 @@ var agentUAMode uaMode
 // any), used to surface the human-mode "an optimized agent mode exists" tip.
 var agentEnvDetected string
 
+// cachedDCIConfigDir memoizes dciConfigDir()'s first resolution for the
+// current invocation (reset alongside the rest of run()'s per-invocation
+// state). applyAPIBaseOverride later points DCI_CONFIG_DIR at a private,
+// per-invocation temp dir so restish's own cli.Init() picks up the override
+// — but completion (name_completion.go), the `dci open` picker
+// (tui_picker.go), and anything else that resolves the config dir AFTER
+// that point must still see the real, persisted directory (the name cache,
+// customer context, and update-check cache all live there and are never
+// copied into the throwaway temp dir). Caching the first, pre-override
+// resolution and reusing it for the rest of the invocation gives every
+// caller the real directory without threading configDir through each of
+// them individually.
+var cachedDCIConfigDir string
+
+// dciConfigDir mirrors restish's own getConfigDir("dci"): DCI_CONFIG_DIR
+// takes priority when set. Without this, dci-cli's own ensureConfig could
+// read/write a different apis.json than the one restish's cli.Init()
+// actually loads — silently defeating anything that depends on both sides
+// agreeing on where apis.json lives (this is exactly how DCI_API_BASE_URL
+// stayed broken across several earlier fix attempts).
 func dciConfigDir() string {
+	if cachedDCIConfigDir != "" {
+		return cachedDCIConfigDir
+	}
+	cachedDCIConfigDir = resolveDCIConfigDir()
+	return cachedDCIConfigDir
+}
+
+// resetDCIConfigDirCache clears dciConfigDir()'s memoized value. run()
+// already does this as part of its per-invocation reset; tests that call
+// completionPreflight/pickerEntries/other dciConfigDir() callers directly —
+// without going through run() — need it too, or a value memoized by an
+// earlier test in the same process leaks into one that expects a fresh
+// resolution (e.g. a "cold cache" test finding a warm one from a previous
+// test's directory).
+func resetDCIConfigDirCache() {
+	cachedDCIConfigDir = ""
+}
+
+func resolveDCIConfigDir() string {
+	if dir := os.Getenv("DCI_CONFIG_DIR"); dir != "" {
+		return dir
+	}
 	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
 		cfgDir := filepath.Join(dir, "dci")
 
@@ -168,145 +210,32 @@ func ensureConfig(configDir string) (bool, error) {
 	return true, nil
 }
 
-// apiBaseSwapLockStaleAfter bounds how long a crashed swap can block later
-// ones: the swap+restore critical section is a couple of file writes (well
-// under a second), so a lock older than this belonged to a process that died
-// mid-swap, not one still working.
-const apiBaseSwapLockStaleAfter = 10 * time.Second
-
-// apiBaseSwapLockWait bounds how long a concurrent invocation waits for
-// another's swap+restore to finish, matching apiBaseSwapLockStaleAfter so a
-// live holder is never given up on before a crashed one would be reclaimed.
-const apiBaseSwapLockWait = 10 * time.Second
-
-// acquireAPIBaseSwapLock takes a cross-process advisory lock (O_CREATE|O_EXCL,
-// portable to Windows and Unix alike) around every invocation's apis.json
-// read/cli.Init(), not just a swap: a plain invocation with no override
-// never wrote apis.json, but it still READS it, and without holding this
-// same lock it could observe the file mid-swap from a concurrent overridden
-// invocation and get silently misrouted despite never setting the env var
-// itself. Unlike acquireUpdateRefreshLock (update.go), which backs off
-// immediately since a skipped refresh is harmless, this waits: every
-// invocation still needs cli.Init() to see a consistent file, so skipping
-// isn't an option. A genuine permission failure (as opposed to lock
-// contention) returns immediately instead of spinning for the full wait.
-func acquireAPIBaseSwapLock(configDir string) (release func(), err error) {
-	path := filepath.Join(configDir, "api_base_swap.lock")
-	deadline := time.Now().Add(apiBaseSwapLockWait)
-	for {
-		file, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if openErr == nil {
-			_ = file.Close()
-			return func() { _ = os.Remove(path) }, nil
-		}
-		if !os.IsExist(openErr) {
-			return nil, openErr
-		}
-		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > apiBaseSwapLockStaleAfter {
-			// A failed Remove (e.g. the lock is owned by another user, or
-			// this directory permits create but not delete) must still fall
-			// through to the deadline/sleep below — otherwise a stale lock
-			// that can't be reclaimed spins this loop at 100% CPU forever,
-			// since the next OpenFile would just find the same untouched
-			// file and this branch would fire again immediately.
-			if err := os.Remove(path); err == nil {
-				continue
-			}
-		}
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("timed out waiting for %s", path)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-// swapConfiguredAPIBase temporarily rewrites apis.json's "dci.base" field to
-// override for the duration of restish's cli.Init() read (which is where
-// restish loads apis.json into its in-process API config map, the map
-// cli.Run() later consults to pick a data command's base URL). It edits
-// only that one field — auth, TLS, and any other config already on disk are
-// preserved untouched — and returns a restore func that puts the original
-// file content back so the on-disk config, and every later invocation
-// without DCI_API_BASE_URL set, is left exactly as it was.
-//
-// Callers must already hold acquireAPIBaseSwapLock (applyAPIBaseOverride
-// does, covering plain invocations too) — this function only touches the
-// file, it does not lock around it itself.
-func swapConfiguredAPIBase(configFile, override string) (restore func(), err error) {
-	original, err := os.ReadFile(configFile)
+// writeOverriddenAPIsConfig reads srcFile (the real apis.json), patches only
+// its "dci.base" field to override, and writes the result to dstFile (a
+// path inside the private per-invocation temp dir). Every other field —
+// auth, TLS, and anything else already on disk — is preserved untouched.
+func writeOverriddenAPIsConfig(srcFile, dstFile, override string) error {
+	original, err := os.ReadFile(srcFile)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	var doc map[string]interface{}
 	if err := json.Unmarshal(original, &doc); err != nil {
-		return nil, fmt.Errorf("unable to parse %s: %w", configFile, err)
+		return fmt.Errorf("unable to parse %s: %w", srcFile, err)
 	}
 	dci, ok := doc["dci"].(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("%s is missing a \"dci\" section", configFile)
+		return fmt.Errorf("%s is missing a \"dci\" section", srcFile)
 	}
 	dci["base"] = override
 	doc["dci"] = dci
 
-	swapped, err := json.MarshalIndent(doc, "", "  ")
+	patched, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := os.WriteFile(configFile, swapped, 0o600); err != nil {
-		return nil, err
-	}
-
-	return func() {
-		restoreConfiguredAPIBase(configFile, original)
-	}, nil
-}
-
-// restoreConfiguredAPIBaseRetries bounds how many times restoreConfiguredAPIBase
-// retries a failed write-back before giving up: enough to ride out a
-// transient hiccup (a brief network-mount stall, a momentary permission
-// flip), not so many that a persistently broken filesystem blocks the
-// command that's otherwise done.
-const restoreConfiguredAPIBaseRetries = 3
-
-// restoreConfiguredAPIBase writes original back to configFile, retrying a
-// failed write a few times (a single unretried failure here is exactly what
-// leaves apis.json permanently pinned to the override on disk — silently,
-// with only a stderr line most invocations don't watch for). If every
-// attempt fails, it re-reads the file first: another process may have
-// already restored it (or it may already hold the override, worth knowing),
-// and only warns loudly, naming the exact remediation, when the content on
-// disk still isn't what it should be.
-func restoreConfiguredAPIBase(configFile string, original []byte) {
-	var lastErr error
-	for range restoreConfiguredAPIBaseRetries {
-		if err := os.WriteFile(configFile, original, 0o600); err == nil {
-			return
-		} else {
-			lastErr = err
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	if current, readErr := os.ReadFile(configFile); readErr == nil && string(current) == string(original) {
-		// Another invocation (or a delayed retry above) already restored
-		// the exact content we wanted; nothing left to warn about.
-		return
-	}
-
-	wantBase := defaultAPIBase
-	var doc map[string]interface{}
-	if err := json.Unmarshal(original, &doc); err == nil {
-		if dci, ok := doc["dci"].(map[string]interface{}); ok {
-			if base, ok := dci["base"].(string); ok && base != "" {
-				wantBase = base
-			}
-		}
-	}
-
-	fmt.Fprintf(os.Stderr,
-		"warning: unable to restore %s after %d attempts (%v) — it may still hold the DCI_API_BASE_URL override; edit its \"dci\".\"base\" field back to %q if later commands start hitting the wrong host\n",
-		configFile, restoreConfiguredAPIBaseRetries, lastErr, wantBase)
+	return os.WriteFile(dstFile, patched, 0o600)
 }
 
 // restishCacheDir mirrors restish's own getCacheDir("dci"): honors
@@ -322,57 +251,12 @@ func restishCacheDir() string {
 	return filepath.Join(userCacheDir, "dci")
 }
 
-// specCacheSourceFile records, alongside restish's own dci.cbor spec cache,
-// which base URL that cached spec was fetched from.
-func specCacheSourceFile(cacheDir string) string {
-	return filepath.Join(cacheDir, "dci.cbor.source")
-}
-
-// lastCachedSpecHost returns the base URL recorded by a previous
-// invalidateSpecCacheOnHostChange call, or "" if the cache has never been
-// marked (untouched, or from before this tracking existed).
-func lastCachedSpecHost() string {
-	cacheDir := restishCacheDir()
-	if cacheDir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(specCacheSourceFile(cacheDir))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-// invalidateSpecCacheOnHostChange deletes restish's cached OpenAPI spec
-// (<cacheDir>/dci.cbor, 24h TTL, keyed by API name only — not by host, see
-// restish cli/api.go's cacheAPI) when it was last fetched from a different
-// base than the one this invocation is about to use. Without this, a spec
-// fetched once under DCI_API_BASE_URL would get served to every other
-// invocation on this machine for the next 24h, including plain `dci` runs
-// against prod with no override set — silently corrupting the CLI's command
-// surface. Reusing the cache across invocations that share the same base
-// (the common case: repeated work against the same dev host) is preserved.
-func invalidateSpecCacheOnHostChange(base string) {
-	cacheDir := restishCacheDir()
-	if cacheDir == "" {
-		return
-	}
-	sourceFile := specCacheSourceFile(cacheDir)
-	if lastCachedSpecHost() == base {
-		return
-	}
-	_ = os.Remove(filepath.Join(cacheDir, "dci.cbor"))
-	_ = os.Remove(sourceFile)
-	if err := os.MkdirAll(cacheDir, 0o700); err == nil {
-		_ = os.WriteFile(sourceFile, []byte(base), 0o600)
-	}
-}
-
 // detachedRefreshCommands are the hidden subcommands a background refresher
 // re-execs the binary as (update.go's __refresh-update-check, name_completion.go's
-// __refresh-names). Each inherits the parent's full environment via
-// exec.Command(os.Args[0], ...) and runs this same run() concurrently with
-// whatever invoked it — including a apis.json swap it must never perform.
+// __refresh-names). Each inherits the parent's full environment, including
+// DCI_API_BASE_URL, but neither ever talks to the DCI API — applyAPIBaseOverride
+// skips them entirely rather than paying for an isolated config/cache dir
+// neither would use.
 var detachedRefreshCommands = map[string]bool{
 	"__refresh-update-check": true,
 	"__refresh-names":        true,
@@ -384,82 +268,159 @@ func isDetachedRefreshInvocation(args []string) bool {
 	return len(args) > 1 && detachedRefreshCommands[args[1]]
 }
 
-// applyAPIBaseOverride handles everything DCI_API_BASE_URL touches before
-// cli.Init(configDir's apis.json read): swapping apis.json's persisted base
-// (if the env override is set) and keeping restish's spec cache in sync with
-// whichever host is actually in play this invocation. It never aborts —
-// every failure mode (malformed override, a read-only apis.json, an
-// unreadable persisted base) falls back to running with whatever base is
-// already on disk — so it is safe to call unconditionally for every command,
-// including ones that never depended on the override.
+// realDCIDirOverrides records what DCI_CONFIG_DIR/DCI_CACHE_DIR were set to
+// (or absent) before applyAPIBaseOverride pointed them at its throwaway temp
+// dir, if it did. Nil until the first (successful) override of this
+// invocation; reset alongside run()'s other per-invocation state.
 //
-// Acquires acquireAPIBaseSwapLock unconditionally — even for a plain
-// invocation with no override, which never writes apis.json but still reads
-// it via cli.Init(), and without this same lock could observe another
-// concurrent invocation's file mid-swap. The returned release func must be
-// called right after cli.Init() returns (that is the only place restish
-// reads apis.json — cli.Defaults() does not touch it — so the lock never
-// needs to outlive it), and covers every failure path — cache invalidation
-// runs before releasing on every branch, not only the successful-swap one.
-func applyAPIBaseOverride(configDir string, args []string) (release func()) {
+// detachedRefreshEnv reads this to give the __refresh-names child (spawned
+// mid-invocation by completionPreflight, after applyAPIBaseOverride has
+// already run) the REAL directories rather than letting it inherit the
+// temp-dir env vars via plain os.Environ(): that child does real network
+// I/O and writes its refreshed name cache to whatever DCI_CONFIG_DIR/
+// DCI_CACHE_DIR say, and the parent's deferred cleanup removes the temp dir
+// on exit — a write racing (or losing to) that removal, into a directory
+// nobody will ever read again, is exactly the kind of silently-broken
+// completion refresh this exists to prevent.
+type dciDirOverride struct {
+	value string
+	had   bool
+}
+type realDCIDirOverridesState struct {
+	configDir dciDirOverride
+	cacheDir  dciDirOverride
+}
+
+var realDCIDirOverrides *realDCIDirOverridesState
+
+// detachedRefreshEnv returns the environment a detached refresh child
+// (__refresh-update-check, __refresh-names) should inherit: os.Environ(),
+// with DCI_CONFIG_DIR/DCI_CACHE_DIR forced back to what they were before any
+// active DCI_API_BASE_URL override, so the child never writes into (or
+// reads a stale copy from) the parent's temp dir. A nil realDCIDirOverrides
+// (no override active, or the child is spawned before applyAPIBaseOverride
+// ever runs) means os.Environ() is already correct as-is.
+func detachedRefreshEnv() []string {
+	if realDCIDirOverrides == nil {
+		return os.Environ()
+	}
+	env := os.Environ()
+	filtered := make([]string, 0, len(env)+2)
+	for _, e := range env {
+		if strings.HasPrefix(e, "DCI_CONFIG_DIR=") || strings.HasPrefix(e, "DCI_CACHE_DIR=") {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	if realDCIDirOverrides.configDir.had {
+		filtered = append(filtered, "DCI_CONFIG_DIR="+realDCIDirOverrides.configDir.value)
+	}
+	if realDCIDirOverrides.cacheDir.had {
+		filtered = append(filtered, "DCI_CACHE_DIR="+realDCIDirOverrides.cacheDir.value)
+	}
+	return filtered
+}
+
+// applyAPIBaseOverride makes DCI_API_BASE_URL actually control routing.
+//
+// This used to work by rewriting the real apis.json's "dci.base" field on
+// disk in place, restoring it right after restish's cli.Init() read it.
+// That traded one bug (the override being ignored) for a much worse class:
+// every invocation — override or not — shared one mutable file that
+// restish's own cli.Init()/cli.Run() also read/wrote, so making the swap
+// safe required a cross-process lock, stale-lock reclamation, and a
+// spec-cache invalidation sidecar. Six rounds of review each found a new
+// concurrency bug in that machinery (a panic during cli.Init() leaking the
+// swapped base forever; a lock-file TOCTOU letting two processes both
+// "reclaim" a stale lock and end up inside the critical section at once;
+// DCI_CONFIG_DIR — which restish itself honors — silently pointing the two
+// processes at different files entirely) — each fix added surface area
+// instead of shrinking it, which is the sign the shared-mutable-file
+// approach was the wrong layer to solve this at.
+//
+// Instead: when the override is set, this seeds a private, per-invocation
+// config+cache directory (DCI_CONFIG_DIR/DCI_CACHE_DIR, both already read by
+// restish's own getConfigDir/getCacheDir) with a copy of the real apis.json
+// — patched to the override base — and the real cache.json (so the OAuth
+// session carries over; restish's disk cache is a single directory shared
+// by auth, the OpenAPI spec, and HTTP response caching, so isolating one
+// means isolating all three). The real apis.json is never touched, so
+// there is nothing to lock, nothing to restore, and nothing for a
+// concurrent invocation — with or without its own override — to race.
+// dci.cbor (the cached OpenAPI spec) is deliberately NOT copied in: it
+// starts empty in the temp dir, so cli.Init()'s later cli.Load() always
+// fetches fresh from the override host rather than risking a stale spec
+// from a different host.
+//
+// Returns a cleanup func to defer immediately: it must run even if
+// cli.Init() panics, since that's exactly when a stale env var pointing at
+// a now-deleted temp dir would otherwise strand the next command.
+func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) {
+	noop := func() {}
 	if isDetachedRefreshInvocation(args) {
-		// Neither refresher ever talks to the DCI API, so lock/cache
-		// bookkeeping here would be pure overhead — and could itself
-		// deadlock against the parent's own call to this function, since
-		// the child inherits the parent's environment and could otherwise
-		// contend for the very lock the parent is holding.
-		return func() {}
+		return noop
 	}
-
-	lockRelease, err := acquireAPIBaseSwapLock(configDir)
-	if err != nil {
-		// Couldn't even get the lock (contention timeout, or a genuine
-		// permission failure) — run with whatever is already on disk rather
-		// than aborting a command that may not have needed the override.
-		fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
-		return func() {}
-	}
-
 	envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL"))
 	if envBase == "" {
-		// No override: still invalidate if the cache was last populated
-		// from a different host (e.g. a prior DCI_API_BASE_URL run) so a
-		// stale non-prod spec never leaks into a plain prod invocation.
-		// Skip the apiBase() call entirely when the cache has never been
-		// marked with a source host — the overwhelmingly common case.
-		if lastCachedSpecHost() != "" {
-			if base, err := apiBase(); err == nil {
-				invalidateSpecCacheOnHostChange(base)
-			}
-		}
-		return lockRelease
+		return noop
 	}
-
 	base, err := apiBase()
 	if err != nil {
 		// A malformed override falls back to the persisted base silently:
 		// `status` calls apiBase() itself and will surface this exact error
 		// on its own terms for the one command that actually cares, so
-		// warning here too would just double it. Still reconcile the spec
-		// cache against the persisted base actually ending up in play (set
-		// unconditionally by ensureConfig before this runs), so a
-		// previously-cached non-prod spec doesn't survive this fallback.
-		if lastCachedSpecHost() != "" {
-			invalidateSpecCacheOnHostChange(configuredAPIBase)
-		}
-		return lockRelease
+		// warning here too would just double it.
+		return noop
 	}
 
-	restore, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base)
+	tempDir, err := os.MkdirTemp("", "dci-api-base-override-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
-		invalidateSpecCacheOnHostChange(configuredAPIBase)
-		return lockRelease
+		return noop
 	}
-	invalidateSpecCacheOnHostChange(base)
+	cleanupTempDir := func() { _ = os.RemoveAll(tempDir) }
+
+	// Copy the real apis.json and only patch its "dci.base" field, so any
+	// customization already on disk — the TLS block in particular, e.g.
+	// "insecure" for a self-signed dev/test host — survives into the
+	// isolated copy exactly like swapConfiguredAPIBase used to preserve it
+	// in place.
+	if err := writeOverriddenAPIsConfig(filepath.Join(realConfigDir, "apis.json"), filepath.Join(tempDir, "apis.json"), base); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
+		cleanupTempDir()
+		return noop
+	}
+	// Preserve auth (the cached OAuth token) across the isolated cache dir;
+	// its absence just means an extra login prompt, not misrouted traffic,
+	// so a copy failure is worth a warning but not worth aborting over.
+	if cacheData, err := os.ReadFile(filepath.Join(restishCacheDir(), "cache.json")); err == nil {
+		if err := os.WriteFile(filepath.Join(tempDir, "cache.json"), cacheData, 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: unable to carry over the cached session for DCI_API_BASE_URL (%v); you may need to log in again\n", err)
+		}
+	}
+
+	oldConfigDir, hadConfigDir := os.LookupEnv("DCI_CONFIG_DIR")
+	oldCacheDir, hadCacheDir := os.LookupEnv("DCI_CACHE_DIR")
+	realDCIDirOverrides = &realDCIDirOverridesState{
+		configDir: dciDirOverride{value: oldConfigDir, had: hadConfigDir},
+		cacheDir:  dciDirOverride{value: oldCacheDir, had: hadCacheDir},
+	}
+	os.Setenv("DCI_CONFIG_DIR", tempDir)
+	os.Setenv("DCI_CACHE_DIR", tempDir)
+
 	return func() {
-		restore()
-		lockRelease()
+		if hadConfigDir {
+			os.Setenv("DCI_CONFIG_DIR", oldConfigDir)
+		} else {
+			os.Unsetenv("DCI_CONFIG_DIR")
+		}
+		if hadCacheDir {
+			os.Setenv("DCI_CACHE_DIR", oldCacheDir)
+		} else {
+			os.Unsetenv("DCI_CACHE_DIR")
+		}
+		realDCIDirOverrides = nil
+		cleanupTempDir()
 	}
 }
 
@@ -560,6 +521,8 @@ func run() (exitCode int) {
 	displayTimeLocation = nil
 	localizedInstantShown = false
 	nonJSONErrorResponse = false
+	cachedDCIConfigDir = ""
+	realDCIDirOverrides = nil
 	resetErrorContractState()
 	resetDestructiveContractState()
 	resetPathValidationState()
@@ -608,18 +571,14 @@ func run() (exitCode int) {
 	// cli.Init reads apis.json into restish's in-process API config map right
 	// away (not cli.Defaults(), despite the name suggesting setup-time
 	// config), and that map — not apiBase() — is what cli.Run() consults to
-	// pick the base URL for every data command. applyAPIBaseOverride swaps
-	// the on-disk base to DCI_API_BASE_URL for the duration of cli.Init()'s
-	// read (see its own doc comment for the cross-process lock it holds
-	// across every invocation — not just ones with the override set — the
-	// detached-refresh guard, the graceful-degrade rules, and the spec-cache
-	// invalidation it also handles); the release it returns restores the
-	// on-disk base and releases that lock immediately after, so the
-	// override still never persists and no other invocation is held up
-	// longer than cli.Init() itself takes.
-	release := applyAPIBaseOverride(configDir, os.Args)
+	// pick the base URL for every data command. When DCI_API_BASE_URL is
+	// set, applyAPIBaseOverride points DCI_CONFIG_DIR/DCI_CACHE_DIR at a
+	// private, per-invocation temp directory seeded with the override
+	// before cli.Init() reads it, instead of mutating the real apis.json —
+	// see its own doc comment for why. deferred so the temp dir and env
+	// vars are cleaned up even if cli.Init() itself panics.
+	defer applyAPIBaseOverride(configDir, os.Args)()
 	cli.Init("dci", version)
-	release()
 	cli.Defaults()
 	overrideTableOutput()
 	installOutputGuard()

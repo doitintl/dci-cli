@@ -51,6 +51,13 @@ func updateRefreshNeeded(configDir string, now time.Time) bool {
 // process; a var so tests can observe the spawn without forking.
 var spawnUpdateCacheRefresh = func() {
 	command := exec.Command(os.Args[0], "__refresh-update-check")
+	// detachedRefreshEnv, not plain inherited os.Environ(): startUpdateCheck
+	// always runs before applyAPIBaseOverride in run(), so realDCIDirOverrides
+	// is nil here today and this is equivalent to os.Environ(). Kept for the
+	// same reason spawnDetachedNameRefresh (name_completion.go) needs it for
+	// real — a future reorder of run()'s setup sequence must not silently
+	// reintroduce the temp-dir-inheritance bug that fix closed there.
+	command.Env = detachedRefreshEnv()
 	if err := command.Start(); err != nil {
 		return
 	}
