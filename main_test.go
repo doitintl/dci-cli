@@ -737,6 +737,47 @@ func TestApplyAPIBaseOverrideIsolatesConfigAndCacheDirs(t *testing.T) {
 	}
 }
 
+// TestApplyAPIBaseOverrideCleanupPersistsRefreshedSession guards a
+// Claude-review finding: restish writes a refreshed/new OAuth token to
+// cache.json under DCI_CACHE_DIR — the temp dir, for the whole override
+// invocation — on an access-token refresh or a `dci login` run under the
+// override. Without copying it back to the real cache dir before the temp
+// dir is deleted, that session is silently discarded: the next invocation,
+// override or not, finds the same stale real cache.json and has to
+// re-authenticate despite the login/refresh having appeared to succeed.
+func TestApplyAPIBaseOverrideCleanupPersistsRefreshedSession(t *testing.T) {
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "apis.json"), []byte(`{"dci":{"base":"https://api.doit.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	realCacheDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realCacheDir, "cache.json"), []byte(`{"dci:default":{"token":"stale-token"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DCI_CACHE_DIR", realCacheDir)
+	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
+
+	cleanup := applyAPIBaseOverride(realDir, []string{"dci", "list-budgets"})
+	tempCacheDir := os.Getenv("DCI_CACHE_DIR")
+
+	// Simulate restish writing a refreshed token into the temp dir's
+	// cache.json during the invocation (e.g. an access-token refresh, or
+	// `dci login` run under the override).
+	if err := os.WriteFile(filepath.Join(tempCacheDir, "cache.json"), []byte(`{"dci:default":{"token":"refreshed-token"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanup()
+
+	data, err := os.ReadFile(filepath.Join(realCacheDir, "cache.json"))
+	if err != nil {
+		t.Fatalf("real cache.json missing after cleanup: %v", err)
+	}
+	if !strings.Contains(string(data), "refreshed-token") {
+		t.Fatalf("real cache.json = %s, want the refreshed token persisted back", data)
+	}
+}
+
 // TestDCIConfigDirMemoizesAcrossOverride guards a finding from the
 // adversarial review of this redesign: name_completion.go and
 // tui_picker.go call dciConfigDir() fresh, after applyAPIBaseOverride has
@@ -3445,14 +3486,19 @@ func TestDataCommandHonorsAPIBaseOverride(t *testing.T) {
 
 	// dciConfigDir() resolves against HOME via os.UserConfigDir() (macOS:
 	// $HOME/Library/Application Support/dci; Linux: $XDG_CONFIG_HOME/dci or
-	// $HOME/.config/dci) and does not honor DCI_CONFIG_DIR, unlike restish's
-	// own config-dir lookup. Compute the same path runCLIWithEnv's HOME (and
+	// $HOME/.config/dci). Compute the same path runCLIWithEnv's HOME (and
 	// XDG_CONFIG_HOME on Linux) will make dciConfigDir() resolve to, so
 	// restish's cli.Init reads the same file dci-cli's own ensureConfig()/
 	// apiBase() use. apis.json is pinned to prod, as it always is on a real
 	// machine — the override must never need to be persisted to take effect.
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	// dciConfigDir() memoizes its resolution per process; reset it so an
+	// earlier test's HOME doesn't leak in, and so this test's own resolution
+	// (this call, in-process, unlike the built binary's own separate process
+	// below) doesn't leak into a later one.
+	resetDCIConfigDirCache()
+	t.Cleanup(resetDCIConfigDirCache)
 	configDir := dciConfigDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)

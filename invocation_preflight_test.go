@@ -342,8 +342,16 @@ func TestCachedSpecAvailableForInvocationUsesRealCacheDirDuringOverride(t *testi
 	if err := os.WriteFile(filepath.Join(realDir, "dci.cbor"), []byte("spec-bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// cache.json's real shape is viper-nested — Set("dci.expires", ...)
+	// produces {"dci":{"expires":...}}, not a flat {"dci.expires":...} key —
+	// and always has other top-level keys too (e.g. "dci:default" holding
+	// the OAuth token object), which is exactly what broke a flat
+	// map[string]string unmarshal in an earlier version of this fix.
 	future := time.Now().Add(time.Hour).Format(time.RFC3339)
-	cacheJSON, err := json.Marshal(map[string]string{"dci.expires": future})
+	cacheJSON, err := json.Marshal(map[string]interface{}{
+		"dci":         map[string]interface{}{"expires": future},
+		"dci:default": map[string]interface{}{"token": "real-token"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
