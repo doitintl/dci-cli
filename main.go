@@ -1676,7 +1676,7 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("raw-numbers", false, "Keep numbers unformatted and preserve epoch timestamps in table/TOON output")
 	dciCmd.PersistentFlags().Bool("utc", false, "Render timestamps in UTC instead of the local timezone (table output only; machine formats and report period columns are always UTC)")
 	dciCmd.PersistentFlags().Bool("heatmap", true, "Shade pivot cells by magnitude in interactive table output (respects NO_COLOR)")
-	dciCmd.PersistentFlags().String("chart", "", "Render a chart of the report under the table: 'stacked' columns per group (the default) or a 'line' of period totals (table output in human mode only; ignored elsewhere)")
+	dciCmd.PersistentFlags().String("chart", "", "Render a chart of the report under the table: 'stacked' columns per group (the default), a 'line' of period totals, a one-line 'sparkline', or a group-by-period 'heatmap' (table output in human mode only; ignored elsewhere)")
 	// Bare --chart keeps working (and picks the stacked view): cobra fills
 	// the value from NoOptDefVal when the flag is passed without one.
 	dciCmd.PersistentFlags().Lookup("chart").NoOptDefVal = "stacked"
@@ -1810,13 +1810,13 @@ func addOutputFlag() {
 		if flag := cmd.Flags().Lookup("chart"); flag != nil && flag.Changed {
 			chartMode = strings.ToLower(strings.TrimSpace(flag.Value.String()))
 			switch chartMode {
-			case "stacked", "line":
+			case "stacked", "line", "sparkline", "heatmap":
 			case "true": // the flag's former boolean spelling keeps working
 				chartMode = "stacked"
 			case "false", "":
 				chartMode = ""
 			default:
-				return fmt.Errorf("invalid --chart %q (supported: stacked, line)", flag.Value.String())
+				return fmt.Errorf("invalid --chart %q (supported: stacked, line, sparkline, heatmap)", flag.Value.String())
 			}
 		}
 		viper.Set("chart-requested", chartMode != "")

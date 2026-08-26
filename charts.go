@@ -96,12 +96,25 @@ func maybeRenderChart(tableWidth int) {
 		fmt.Fprintln(os.Stderr, "note: --chart needs a report result with at least two time periods (the pivot view); no chart rendered")
 		return
 	}
-	if viper.GetString("chart-mode") == "stacked" && stackedChartRenderable(series) {
-		// The styled writer owns color degradation: lipgloss v2 styles emit
-		// the palette's truecolor as-is, and 256/16-color terminals need the
-		// writer to downsample it (tui.go).
-		fmt.Fprintln(tuiStyledStderr(), "\n"+renderStackedChart(series, chartRenderWidth(tableWidth)))
+	// The styled writer owns color degradation for every styled mode:
+	// lipgloss v2 styles emit truecolor as-is, and 256/16-color terminals
+	// need the writer to downsample it (tui.go). Modes whose gate fails
+	// (colorless terminal, too few groups) fall back to the line of period
+	// totals rather than erroring.
+	switch viper.GetString("chart-mode") {
+	case "stacked":
+		if stackedChartRenderable(series) {
+			fmt.Fprintln(tuiStyledStderr(), "\n"+renderStackedChart(series, chartRenderWidth(tableWidth)))
+			return
+		}
+	case "sparkline":
+		fmt.Fprintln(tuiStyledStderr(), "\n"+renderSparklineChart(series, chartRenderWidth(tableWidth)))
 		return
+	case "heatmap":
+		if heatmapChartRenderable(series) {
+			fmt.Fprintln(tuiStyledStderr(), "\n"+renderHeatmapChart(series, chartRenderWidth(tableWidth)))
+			return
+		}
 	}
 	// asciigraph prepends a y-axis value margin, so the graph area is
 	// narrowed to keep the total line length at the table width.
@@ -111,6 +124,107 @@ func maybeRenderChart(tableWidth int) {
 		asciigraph.Caption(chartCaption(series)),
 	)
 	fmt.Fprintln(os.Stderr, "\n"+graph)
+}
+
+// renderSparklineChart draws the period totals as a one-line sparkline in
+// the brand accent, caption underneath — the lightest chart, for a glance at
+// the shape. Negative totals (credit-dominated periods) clamp to the
+// baseline. Wider series than the width keep the most recent periods.
+func renderSparklineChart(series *chartSeriesData, width int) string {
+	values, periods := series.values, series.periods
+	if len(values) > width {
+		values = values[len(values)-width:]
+		periods = periods[len(periods)-width:]
+	}
+	peak := 0.0
+	for _, value := range values {
+		if value > peak {
+			peak = value
+		}
+	}
+	levels := []rune("▁▂▃▄▅▆▇█")
+	var bar strings.Builder
+	for _, value := range values {
+		index := 0
+		if peak > 0 && value > 0 {
+			index = int(value/peak*float64(len(levels)-1) + 0.5)
+		}
+		bar.WriteRune(levels[index])
+	}
+	spark := lipgloss.NewStyle().Foreground(lipgloss.Color(aiBrandHex)).Render(bar.String())
+	return spark + "\n" + chartCaption(&chartSeriesData{metric: series.metric, periods: periods, values: values})
+}
+
+// heatmapChartRenderable gates the heatmap on what makes it legible: at
+// least two group rows (one row is just a sparkline) and a terminal where
+// color renders — intensity is told by color alone.
+func heatmapChartRenderable(series *chartSeriesData) bool {
+	return len(series.groups) >= 2 && viper.GetBool("table-color") && chartColorCapable()
+}
+
+// heatmapLabelWidth bounds the group labels on heatmap rows.
+const heatmapLabelWidth = 24
+
+// renderHeatmapChart draws one row per group and one cell per period,
+// colored by the value's share of the grid maximum — the console's heatmap
+// reports, in terminal cells. The intensity ramp runs from near the terminal
+// background to the brand accent, picked per background so "hot" reads hot
+// on light and dark alike. Negative cells (credits) render as the low end.
+func renderHeatmapChart(series *chartSeriesData, width int) string {
+	low, high := "#FFE3EC", "#3A0714"
+	if chartDarkBackground() {
+		low = "#3A0714"
+		high = "#FF7295"
+	}
+	ramp := lipgloss.Blend1D(8, lipgloss.Color(low), lipgloss.Color(high))
+
+	peak := 0.0
+	for _, group := range series.groups {
+		for _, value := range group.values {
+			if value > peak {
+				peak = value
+			}
+		}
+	}
+	cellWidth := 1
+	if columns := len(series.periods); columns > 0 {
+		if fit := (width - heatmapLabelWidth - 1) / columns; fit > cellWidth {
+			cellWidth = fit
+		}
+		if cellWidth > 3 {
+			cellWidth = 3
+		}
+	}
+
+	lines := make([]string, 0, len(series.groups)+2)
+	for _, group := range series.groups {
+		var row strings.Builder
+		row.WriteString(padHeatmapLabel(group.name))
+		row.WriteString(" ")
+		for _, value := range group.values {
+			index := 0
+			if peak > 0 && value > 0 {
+				index = int(value/peak*float64(len(ramp)-1) + 0.5)
+			}
+			row.WriteString(lipgloss.NewStyle().Foreground(ramp[index]).Render(strings.Repeat("█", cellWidth)))
+		}
+		lines = append(lines, row.String())
+	}
+	var scale strings.Builder
+	for _, tone := range ramp {
+		scale.WriteString(lipgloss.NewStyle().Foreground(tone).Render("█"))
+	}
+	lines = append(lines, "low "+scale.String()+" high — "+chartCaption(series))
+	return strings.Join(lines, "\n")
+}
+
+// padHeatmapLabel bounds a group label to the heatmap's label column.
+func padHeatmapLabel(name string) string {
+	runes := []rune(name)
+	if len(runes) > heatmapLabelWidth {
+		return string(runes[:heatmapLabelWidth-1]) + "…"
+	}
+	return string(runes) + strings.Repeat(" ", heatmapLabelWidth-len(runes))
 }
 
 // chartRenderWidth aligns the chart with the rendered table when its width is
