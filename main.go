@@ -179,14 +179,17 @@ const apiBaseSwapLockStaleAfter = 10 * time.Second
 // live holder is never given up on before a crashed one would be reclaimed.
 const apiBaseSwapLockWait = 10 * time.Second
 
-// acquireAPIBaseSwapLock takes a cross-process advisory lock around
-// swapConfiguredAPIBase's read-swap-write critical section (O_CREATE|O_EXCL,
-// portable to Windows and Unix alike). Unlike acquireUpdateRefreshLock
-// (update.go), which backs off immediately since a skipped refresh is
-// harmless, this waits: two ordinary concurrent `dci` invocations that both
-// have DCI_API_BASE_URL set (e.g. a script backgrounding two commands) must
-// not race writes to the same apis.json, and each still needs the swap
-// applied for its own routing, so skipping isn't an option.
+// acquireAPIBaseSwapLock takes a cross-process advisory lock (O_CREATE|O_EXCL,
+// portable to Windows and Unix alike) around every invocation's apis.json
+// read/cli.Init(), not just a swap: a plain invocation with no override
+// never wrote apis.json, but it still READS it, and without holding this
+// same lock it could observe the file mid-swap from a concurrent overridden
+// invocation and get silently misrouted despite never setting the env var
+// itself. Unlike acquireUpdateRefreshLock (update.go), which backs off
+// immediately since a skipped refresh is harmless, this waits: every
+// invocation still needs cli.Init() to see a consistent file, so skipping
+// isn't an option. A genuine permission failure (as opposed to lock
+// contention) returns immediately instead of spinning for the full wait.
 func acquireAPIBaseSwapLock(configDir string) (release func(), err error) {
 	path := filepath.Join(configDir, "api_base_swap.lock")
 	deadline := time.Now().Add(apiBaseSwapLockWait)
@@ -195,6 +198,9 @@ func acquireAPIBaseSwapLock(configDir string) (release func(), err error) {
 		if openErr == nil {
 			_ = file.Close()
 			return func() { _ = os.Remove(path) }, nil
+		}
+		if !os.IsExist(openErr) {
+			return nil, openErr
 		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > apiBaseSwapLockStaleAfter {
 			_ = os.Remove(path)
@@ -216,30 +222,21 @@ func acquireAPIBaseSwapLock(configDir string) (release func(), err error) {
 // file content back so the on-disk config, and every later invocation
 // without DCI_API_BASE_URL set, is left exactly as it was.
 //
-// The whole read-swap-write sequence runs under acquireAPIBaseSwapLock so two
-// concurrent dci invocations (both with the override set) can't race writes
-// to the same file; the returned restore() releases that lock after writing
-// the original content back.
+// Callers must already hold acquireAPIBaseSwapLock (applyAPIBaseOverride
+// does, covering plain invocations too) — this function only touches the
+// file, it does not lock around it itself.
 func swapConfiguredAPIBase(configFile, override string) (restore func(), err error) {
-	release, err := acquireAPIBaseSwapLock(filepath.Dir(configFile))
-	if err != nil {
-		return nil, err
-	}
-
 	original, err := os.ReadFile(configFile)
 	if err != nil {
-		release()
 		return nil, err
 	}
 
 	var doc map[string]interface{}
 	if err := json.Unmarshal(original, &doc); err != nil {
-		release()
 		return nil, fmt.Errorf("unable to parse %s: %w", configFile, err)
 	}
 	dci, ok := doc["dci"].(map[string]interface{})
 	if !ok {
-		release()
 		return nil, fmt.Errorf("%s is missing a \"dci\" section", configFile)
 	}
 	dci["base"] = override
@@ -247,16 +244,13 @@ func swapConfiguredAPIBase(configFile, override string) (restore func(), err err
 
 	swapped, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		release()
 		return nil, err
 	}
 	if err := os.WriteFile(configFile, swapped, 0o600); err != nil {
-		release()
 		return nil, err
 	}
 
 	return func() {
-		defer release()
 		if err := os.WriteFile(configFile, original, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: unable to restore %s: %v\n", configFile, err)
 		}
@@ -347,46 +341,74 @@ func isDetachedRefreshInvocation(args []string) bool {
 // already on disk — so it is safe to call unconditionally for every command,
 // including ones that never depended on the override.
 //
-// Returns a restore func to call right after cli.Init() (nil if there is
-// nothing to restore), matching swapConfiguredAPIBase's contract.
-func applyAPIBaseOverride(configDir string, args []string) func() {
+// Acquires acquireAPIBaseSwapLock unconditionally — even for a plain
+// invocation with no override, which never writes apis.json but still reads
+// it via cli.Init(), and without this same lock could observe another
+// concurrent invocation's file mid-swap. The returned release func must be
+// called right after cli.Init() returns (that is the only place restish
+// reads apis.json — cli.Defaults() does not touch it — so the lock never
+// needs to outlive it), and covers every failure path — cache invalidation
+// runs before releasing on every branch, not only the successful-swap one.
+func applyAPIBaseOverride(configDir string, args []string) (release func()) {
 	if isDetachedRefreshInvocation(args) {
-		// Neither refresher ever talks to the DCI API, so cache bookkeeping
-		// here would be pure overhead — and could itself race the parent's
-		// own call to this function.
-		return nil
+		// Neither refresher ever talks to the DCI API, so lock/cache
+		// bookkeeping here would be pure overhead — and could itself
+		// deadlock against the parent's own call to this function, since
+		// the child inherits the parent's environment and could otherwise
+		// contend for the very lock the parent is holding.
+		return func() {}
 	}
 
-	if envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL")); envBase != "" {
-		base, err := apiBase()
-		if err != nil {
-			// A malformed override falls back to the persisted base
-			// silently: `status` calls apiBase() itself and will surface
-			// this exact error on its own terms for the one command that
-			// actually cares, so warning here too would just double it.
-			return nil
-		}
-		restore, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
-			return nil
-		}
-		invalidateSpecCacheOnHostChange(base)
-		return restore
+	lockRelease, err := acquireAPIBaseSwapLock(configDir)
+	if err != nil {
+		// Couldn't even get the lock (contention timeout, or a genuine
+		// permission failure) — run with whatever is already on disk rather
+		// than aborting a command that may not have needed the override.
+		fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
+		return func() {}
 	}
 
-	// No override: still invalidate if the cache was last populated from a
-	// different host (e.g. a prior DCI_API_BASE_URL run) so a stale
-	// non-prod spec never leaks into a plain prod invocation. Skip the
-	// apiBase() call entirely when the cache has never been marked with a
-	// source host — the overwhelmingly common case — to keep this free for
-	// every invocation that never touches the override.
-	if lastCachedSpecHost() != "" {
-		if base, err := apiBase(); err == nil {
-			invalidateSpecCacheOnHostChange(base)
+	envBase := strings.TrimSpace(os.Getenv("DCI_API_BASE_URL"))
+	if envBase == "" {
+		// No override: still invalidate if the cache was last populated
+		// from a different host (e.g. a prior DCI_API_BASE_URL run) so a
+		// stale non-prod spec never leaks into a plain prod invocation.
+		// Skip the apiBase() call entirely when the cache has never been
+		// marked with a source host — the overwhelmingly common case.
+		if lastCachedSpecHost() != "" {
+			if base, err := apiBase(); err == nil {
+				invalidateSpecCacheOnHostChange(base)
+			}
 		}
+		return lockRelease
 	}
-	return nil
+
+	base, err := apiBase()
+	if err != nil {
+		// A malformed override falls back to the persisted base silently:
+		// `status` calls apiBase() itself and will surface this exact error
+		// on its own terms for the one command that actually cares, so
+		// warning here too would just double it. Still reconcile the spec
+		// cache against the persisted base actually ending up in play (set
+		// unconditionally by ensureConfig before this runs), so a
+		// previously-cached non-prod spec doesn't survive this fallback.
+		if lastCachedSpecHost() != "" {
+			invalidateSpecCacheOnHostChange(configuredAPIBase)
+		}
+		return lockRelease
+	}
+
+	restore, err := swapConfiguredAPIBase(filepath.Join(configDir, "apis.json"), base)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: unable to apply DCI_API_BASE_URL (%v); using the persisted API base\n", err)
+		invalidateSpecCacheOnHostChange(configuredAPIBase)
+		return lockRelease
+	}
+	invalidateSpecCacheOnHostChange(base)
+	return func() {
+		restore()
+		lockRelease()
+	}
 }
 
 func writeConfig(configFile, base string) error {
@@ -535,16 +557,17 @@ func run() (exitCode int) {
 	// away (not cli.Defaults(), despite the name suggesting setup-time
 	// config), and that map — not apiBase() — is what cli.Run() consults to
 	// pick the base URL for every data command. applyAPIBaseOverride swaps
-	// the on-disk base to DCI_API_BASE_URL just for this read (see its own
-	// doc comment for the detached-refresh guard, the graceful-degrade
-	// rules, and the spec-cache invalidation it also handles); the restore
-	// it returns puts the on-disk base back immediately after, so the
-	// override still never persists.
-	restore := applyAPIBaseOverride(configDir, os.Args)
+	// the on-disk base to DCI_API_BASE_URL for the duration of cli.Init()'s
+	// read (see its own doc comment for the cross-process lock it holds
+	// across every invocation — not just ones with the override set — the
+	// detached-refresh guard, the graceful-degrade rules, and the spec-cache
+	// invalidation it also handles); the release it returns restores the
+	// on-disk base and releases that lock immediately after, so the
+	// override still never persists and no other invocation is held up
+	// longer than cli.Init() itself takes.
+	release := applyAPIBaseOverride(configDir, os.Args)
 	cli.Init("dci", version)
-	if restore != nil {
-		restore()
-	}
+	release()
 	cli.Defaults()
 	overrideTableOutput()
 	installOutputGuard()

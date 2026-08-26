@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -556,51 +557,123 @@ func TestSwapConfiguredAPIBaseWriteFailureDegradesGracefully(t *testing.T) {
 	}
 }
 
-// TestSwapConfiguredAPIBaseSerializesConcurrentCallers guards a Claude-review
-// finding on PR #128: two concurrent swapConfiguredAPIBase calls (as two
-// ordinary `dci` invocations with DCI_API_BASE_URL set would produce) must
-// not race read-swap-write on the same apis.json — the loser must not
-// restore a value it captured mid-swap as if it were the true original.
-func TestSwapConfiguredAPIBaseSerializesConcurrentCallers(t *testing.T) {
+// TestAcquireAPIBaseSwapLockFailsFastOnPermissionError guards a
+// Claude-review finding on PR #128: a genuine permission failure (e.g. a
+// read-only config directory in CI) must return immediately, not be
+// mistaken for lock contention and spun on for the full apiBaseSwapLockWait.
+func TestAcquireAPIBaseSwapLockFailsFastOnPermissionError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory write permissions")
+	}
+
 	dir := t.TempDir()
-	configFile := filepath.Join(dir, "apis.json")
-	original := `{"dci":{"base":"https://api.doit.com"}}`
-	if err := os.WriteFile(configFile, []byte(original), 0o600); err != nil {
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	start := time.Now()
+	_, err := acquireAPIBaseSwapLock(dir)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected acquireAPIBaseSwapLock to fail against a read-only directory")
+	}
+	if elapsed >= apiBaseSwapLockWait {
+		t.Fatalf("acquireAPIBaseSwapLock took %v, want a fast failure well under the %v contention wait", elapsed, apiBaseSwapLockWait)
+	}
+}
+
+// TestAcquireAPIBaseSwapLockSerializesConcurrentCallers guards a
+// Claude-review finding on PR #128: two concurrent holders of the lock (as
+// two ordinary `dci` invocations with DCI_API_BASE_URL set would produce
+// around swapConfiguredAPIBase) must never be inside the critical section at
+// the same time.
+func TestAcquireAPIBaseSwapLockSerializesConcurrentCallers(t *testing.T) {
+	dir := t.TempDir()
 
 	const n = 8
 	var wg sync.WaitGroup
+	var inCriticalSection atomic.Int32
+	var maxObserved atomic.Int32
 	errs := make([]error, n)
 	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			restore, err := swapConfiguredAPIBase(configFile, "https://dev.example.com")
+			release, err := acquireAPIBaseSwapLock(dir)
 			if err != nil {
 				errs[i] = err
 				return
 			}
-			// Hold the swapped state briefly to widen the race window a
-			// non-serialized implementation would fall into.
+			defer release()
+			cur := inCriticalSection.Add(1)
+			for {
+				max := maxObserved.Load()
+				if cur <= max || maxObserved.CompareAndSwap(max, cur) {
+					break
+				}
+			}
+			// Hold briefly to widen the window a non-serialized
+			// implementation would fall into.
 			time.Sleep(2 * time.Millisecond)
-			restore()
+			inCriticalSection.Add(-1)
 		}(i)
 	}
 	wg.Wait()
 
 	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("caller %d: swapConfiguredAPIBase error: %v", i, err)
+			t.Fatalf("caller %d: acquireAPIBaseSwapLock error: %v", i, err)
 		}
 	}
+	if got := maxObserved.Load(); got != 1 {
+		t.Fatalf("max concurrent holders in critical section = %d, want 1", got)
+	}
+}
+
+// TestApplyAPIBaseOverrideSerializesConcurrentInvocations guards the same
+// finding at the level run() actually calls: concurrent applyAPIBaseOverride
+// calls (simulating concurrent `dci` invocations, some with the override set
+// and some without) must not race read-swap-write on the same apis.json —
+// a racing restore must never leave a mid-swap value on disk, including for
+// callers that never set DCI_API_BASE_URL themselves.
+func TestApplyAPIBaseOverrideSerializesConcurrentInvocations(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "apis.json")
+	original := `{"dci":{"base":"https://api.doit.com"}}`
+	if err := os.WriteFile(configFile, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// t.Setenv panics if called concurrently, so set the override once,
+	// outside the goroutines below — every concurrent call still exercises
+	// its own full read-swap-write-restore, which is what the race is about.
+	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
+
+	const n = 8
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			release := applyAPIBaseOverride(dir, []string{"dci", "list-budgets"})
+			time.Sleep(2 * time.Millisecond)
+			release()
+		}(i)
+	}
+	wg.Wait()
 
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != original {
-		t.Fatalf("apis.json = %s, want unchanged %s (a racing restore corrupted it)", data, original)
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("apis.json is not valid JSON after concurrent access: %s", data)
+	}
+	dci, _ := doc["dci"].(map[string]interface{})
+	if base, _ := dci["base"].(string); base != "https://api.doit.com" {
+		t.Fatalf("apis.json base = %q, want the original https://api.doit.com (a racing restore corrupted it)", base)
 	}
 }
 
