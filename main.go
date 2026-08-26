@@ -351,6 +351,7 @@ func run() (exitCode int) {
 	registerNameRefreshCommand(configDir)
 	registerSkillCommands()
 	registerCommandCatalog()
+	registerBetaCommands()
 	registerAICommand(configDir)
 	if cachedTokenIsDoer() {
 		for _, command := range cli.Root.Commands() {

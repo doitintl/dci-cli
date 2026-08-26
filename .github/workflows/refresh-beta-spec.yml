@@ -1,0 +1,76 @@
+# Regenerates beta/openapi.beta.yaml (the embedded `dci beta` command surface)
+# from the public dev API spec and opens a PR when the output drifts from what
+# is committed. Drift arrives as a reviewable diff — nothing merges unseen —
+# and releases stay hermetic because go:embed only ever ships the committed
+# file (BETA-SPEC.md §2.3).
+name: Refresh Beta Spec
+
+on:
+  schedule:
+    # Weekly, Monday 06:00 UTC. Trigger manually after known overlay changes.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Regenerate beta spec
+        run: go run ./tools/betaspec
+
+      - name: Detect drift
+        id: drift
+        run: |
+          if git diff --quiet -- beta/openapi.beta.yaml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No drift: the committed beta spec matches the source."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat -- beta/openapi.beta.yaml
+          fi
+
+      - name: Verify the regenerated spec still hydrates
+        if: steps.drift.outputs.changed == 'true'
+        run: go test ./... -run 'TestLoadBetaAPI|TestBetaOperationCommandShape|TestBetaCatalogEntries'
+
+      - name: Open drift PR
+        if: steps.drift.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch="chore/refresh-beta-spec-$(date -u +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code origin "refs/heads/${branch}" >/dev/null 2>&1; then
+            echo "Branch ${branch} already exists; a drift PR is already open."
+            exit 0
+          fi
+          git checkout -b "${branch}"
+          git add beta/openapi.beta.yaml
+          git commit -m "chore: refresh generated beta spec from the source API spec"
+          git push origin "${branch}"
+          gh pr create \
+            --title "chore: refresh generated beta spec" \
+            --body "$(cat <<'EOF'
+          Automated regeneration of `beta/openapi.beta.yaml` (the embedded `dci beta`
+          command surface) detected drift against the source spec. Review the shape
+          changes below; merging updates what the next release embeds.
+
+          If an operation listed in `beta/manifest.yaml` disappeared from the source
+          spec, the generator fails instead of opening this PR — that case needs a
+          manifest edit (likely a GA promotion; see BETA-SPEC.md §2.8).
+          EOF
+          )"

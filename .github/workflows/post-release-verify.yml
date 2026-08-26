@@ -152,6 +152,35 @@ jobs:
           test -f /usr/share/zsh/site-functions/_dci
           test -f /usr/share/fish/vendor_completions.d/dci.fish
 
+  # Warn-only: regenerates the embedded beta spec and reports drift against
+  # what the release shipped. Never fails the verify run — an api-dev outage
+  # or a mid-flight API change must not implicate a finished release; the
+  # refresh-beta-spec workflow owns the fix (BETA-SPEC.md §2.3).
+  beta-spec-staleness:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Compare shipped beta spec against the live source
+        run: |
+          if ! go run ./tools/betaspec; then
+            echo "::warning::betaspec could not regenerate (source spec unreachable or an operation vanished); the shipped beta spec was not verified"
+            exit 0
+          fi
+          if git diff --quiet -- beta/openapi.beta.yaml; then
+            echo "Shipped beta spec matches the live source."
+          else
+            echo "::warning::the shipped beta spec is stale — run the Refresh Beta Spec workflow and merge its PR before the next release"
+            git diff --stat -- beta/openapi.beta.yaml
+          fi
+
   windows-zip-smoke:
     runs-on: windows-latest
 
