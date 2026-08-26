@@ -231,6 +231,31 @@ datahub dataset"*. Through the pipeline:
 This prompt is seed eval #1 (§8): it exercises Doer tenant targeting, DoiT-provider operation
 resolution, two-sided schema retrieval for a transform, and trigger clarification in one case.
 
+**Live run (2026-08-26, Doer token, home tenant).** The prompt was executed end-to-end through
+both paths; findings, all folded into the skill reference:
+
+- *Grounding held up*: connections and flows inventoried; clone candidates found for both
+  halves of the scenario; real exports pinned the in-node reference syntax (structured
+  `referencedNodeId`/`referencedField` objects) and the DataHub ingest shape
+  (`DoiT/DataHub/datahubEvents`, `events[] {id, provider, time, metrics[{type, value}]}`).
+- *Doer gap confirmed*: `cloudflow` endpoints reject customer-context impersonation
+  (`tenant_id_mismatch` — tenant must match the bearer token), so the flow could not land in
+  the design partner's tenant; the run proceeded in the token's home tenant. Cross-tenant
+  Doer authoring needs either API-side support or an export/import handoff.
+- *Server builder (`build-cloud-flow`/`refine-cloud-flow`)*: streams fine through the CLI and
+  visibly runs this spec's own pipeline (grounding tools, operation-schema lookups, a correct
+  clarifying question about the target dataset). But it creates the flow shell before
+  clarifications resolve, each round costs 1–2 minutes of SSE, phrasing drift derailed it
+  ("event source" → AWS EventBridge), and after three rounds the flow contained a single
+  placeholder node.
+- *Local loop*: a bundle hand-authored from the two cloned exports passed
+  `import-cloudflow-flow --dry-run` on the **first attempt** (`valid: true`, 0 errors, 0
+  incomplete nodes) and imported as a 4-node draft
+  (manualTrigger → getReport → transform → datahubEvents).
+
+Conclusion: the clone-and-edit loop is currently the stronger path, and the builder's
+observed failure modes are exactly the eval assertions §8 prescribes.
+
 ## 7. Relationship to `buildCloudFlow` / `refineCloudFlow`
 
 The platform already has a server-side NL builder streaming build events. Two front doors, one
