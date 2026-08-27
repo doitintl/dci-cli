@@ -169,6 +169,69 @@ func TestDestructiveMetadataDoesNotReloadEmptyOperationSet(t *testing.T) {
 	}
 }
 
+// TestLoadDCIOperationAPIFromRealCacheUsesRealBaseAndCacheDir guards a
+// Claude-review finding: completion's own guard (invocationCachedSpecAvailable)
+// checks the REAL cache dir and reports a spec warm, but the actual load
+// used to run against whatever DCI_CACHE_DIR currently resolves to — the
+// override's throwaway temp dir, which never has a copy of dci.cbor — so
+// every Tab press triggered a real network fetch of the OpenAPI spec from
+// the override host despite the guard saying it was cached. completion
+// must load against the real base/cache dir instead.
+func TestLoadDCIOperationAPIFromRealCacheUsesRealBaseAndCacheDir(t *testing.T) {
+	t.Cleanup(func() { realDCIDirOverrides = nil })
+
+	previousLoadOperationAPI := loadOperationAPI
+	previousConfiguredAPIBase := configuredAPIBase
+	t.Cleanup(func() {
+		loadOperationAPI = previousLoadOperationAPI
+		configuredAPIBase = previousConfiguredAPIBase
+	})
+	configuredAPIBase = "https://api.doit.com"
+
+	var gotBase, gotCacheDir string
+	loadOperationAPI = func(base string, root *cobra.Command) (cli.API, error) {
+		gotBase = base
+		gotCacheDir = os.Getenv("DCI_CACHE_DIR")
+		return cli.API{Operations: []cli.Operation{{Name: "list-budgets"}}}, nil
+	}
+
+	t.Run("no active override: identical to loadDCIOperationAPI", func(t *testing.T) {
+		realDCIDirOverrides = nil
+		t.Setenv("DCI_CACHE_DIR", "/real/cache")
+		if _, err := loadDCIOperationAPIFromRealCache(); err != nil {
+			t.Fatal(err)
+		}
+		if gotBase != "https://api.doit.com" {
+			t.Errorf("base = %q, want the persisted base", gotBase)
+		}
+		if gotCacheDir != "/real/cache" {
+			t.Errorf("DCI_CACHE_DIR seen by the loader = %q, want /real/cache", gotCacheDir)
+		}
+	})
+
+	t.Run("active override: loads against the real cache dir, not the temp one", func(t *testing.T) {
+		t.Setenv("DCI_CACHE_DIR", "/temp/override")
+		realDCIDirOverrides = &realDCIDirOverridesState{
+			cacheDir: dciDirOverride{value: "/real/cache", had: true},
+		}
+
+		if _, err := loadDCIOperationAPIFromRealCache(); err != nil {
+			t.Fatal(err)
+		}
+		if gotBase != "https://api.doit.com" {
+			t.Errorf("base = %q, want the persisted (real) base, not the override", gotBase)
+		}
+		if gotCacheDir != "/real/cache" {
+			t.Errorf("DCI_CACHE_DIR seen by the loader = %q, want the real cache dir /real/cache, not the override temp dir", gotCacheDir)
+		}
+		// DCI_CACHE_DIR must be restored to the override's temp dir
+		// afterward, for the rest of the invocation.
+		if got := os.Getenv("DCI_CACHE_DIR"); got != "/temp/override" {
+			t.Errorf("DCI_CACHE_DIR after the call = %q, want restored to the override temp dir /temp/override", got)
+		}
+	})
+}
+
 func TestDestructiveConfirmation(t *testing.T) {
 	setDestructiveOperations([]cli.Operation{{Name: "delete-budget", Method: "DELETE"}})
 	t.Cleanup(resetDestructiveContractState)

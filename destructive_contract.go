@@ -198,6 +198,47 @@ func loadDCIOperationAPI() (cli.API, error) {
 	return loadOperationAPI(base, &cobra.Command{})
 }
 
+// loadDCIOperationAPIFromRealCache loads operation metadata from the REAL,
+// persisted spec cache and base — never the override's — for completion's
+// own use (name_completion.go's completionPreflight). completion only reads
+// local state and shows suggestions; it makes no routed API call, so
+// consulting the real cache carries none of the cross-host-leak risk
+// applyAPIBaseOverride's temp dir exists to prevent for actual data
+// requests.
+//
+// Without this, completionPreflight's own guard (invocationCachedSpecAvailable,
+// which correctly checks realCacheDir()) and the actual load it gates
+// disagree on which directory is authoritative: cli.Load resolves its cache
+// location from the current DCI_CACHE_DIR, which is the override's
+// throwaway temp dir — one that deliberately never gets a copy of dci.cbor
+// — so it always misses and fetches fresh from the override host on every
+// single Tab press. That is exactly the network-from-a-keypress hazard
+// completionPreflight exists to prevent (see its own doc comment).
+//
+// realDCIDirOverrides being nil (no active override) makes this identical
+// to loadDCIOperationAPI().
+func loadDCIOperationAPIFromRealCache() (cli.API, error) {
+	if realDCIDirOverrides == nil {
+		return loadDCIOperationAPI()
+	}
+
+	oldCacheDir, hadCacheDir := os.LookupEnv("DCI_CACHE_DIR")
+	if realDCIDirOverrides.cacheDir.had {
+		os.Setenv("DCI_CACHE_DIR", realDCIDirOverrides.cacheDir.value)
+	} else {
+		os.Unsetenv("DCI_CACHE_DIR")
+	}
+	defer func() {
+		if hadCacheDir {
+			os.Setenv("DCI_CACHE_DIR", oldCacheDir)
+		} else {
+			os.Unsetenv("DCI_CACHE_DIR")
+		}
+	}()
+
+	return loadOperationAPI(configuredAPIBase, &cobra.Command{})
+}
+
 func isDestructiveCommand(command *cobra.Command) bool {
 	return destructiveCommandSet[command.Name()]
 }
