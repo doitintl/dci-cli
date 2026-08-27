@@ -499,18 +499,26 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 		// this cleanup would then silently revive the old session on disk
 		// by writing back a snapshot that predates the logout.
 		if cacheData, err := os.ReadFile(filepath.Join(tempDir, "cache.json")); err == nil && !bytes.Equal(cacheData, originalCacheData) {
+			// oldCacheDir's own emptiness — not hadCacheDir — decides the
+			// fallback: restishCacheDir() (used above to seed
+			// originalCacheData from the real dir in the first place) and
+			// dciConfigDir() both treat an explicitly-empty DCI_CACHE_DIR as
+			// unset, falling back to os.UserCacheDir()+"/dci". Branching on
+			// hadCacheDir here instead would disagree with that and resolve
+			// to "" for a DCI_CACHE_DIR="" invocation — silently skipping
+			// the write-back below with no diagnostic at all.
 			realCacheDirPath := oldCacheDir
-			if !hadCacheDir {
+			if realCacheDirPath == "" {
 				if userCacheDir, err := os.UserCacheDir(); err == nil {
 					realCacheDirPath = filepath.Join(userCacheDir, "dci")
 				}
 			}
-			if realCacheDirPath != "" {
-				if err := os.MkdirAll(realCacheDirPath, 0o700); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
-				} else if err := os.WriteFile(filepath.Join(realCacheDirPath, "cache.json"), cacheData, 0o600); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
-				}
+			if realCacheDirPath == "" {
+				fmt.Fprintln(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (could not determine the real cache directory); you may need to log in again")
+			} else if err := os.MkdirAll(realCacheDirPath, 0o700); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
+			} else if err := os.WriteFile(filepath.Join(realCacheDirPath, "cache.json"), cacheData, 0o600); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
 			}
 		}
 		if hadConfigDir {
