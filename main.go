@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -377,6 +378,35 @@ func detachedRefreshEnv() []string {
 // fetches fresh from the override host rather than risking a stale spec
 // from a different host.
 //
+// pendingAPIBaseOverrideCleanup holds the cleanup func applyAPIBaseOverride
+// returns, until run() defers runPendingAPIBaseOverrideCleanup (which reads
+// and clears it, guarding against a double-run). Package-level rather than
+// a plain local so login_page.go's os.Exit() paths — os.Exit never runs
+// deferred functions, so run()'s own defer would silently never fire — can
+// reach in and run it themselves first.
+var pendingAPIBaseOverrideCleanup func()
+
+// runPendingAPIBaseOverrideCleanup runs and clears pendingAPIBaseOverrideCleanup,
+// if one is set. Deferred by run() (the ordinary path), and also called
+// directly by login_page.go immediately before every os.Exit() in the login
+// flow (execLoginRunSuggestion's re-exec of a suggested command, and the
+// empty-authorization-code abort): `dci login` under an active
+// DCI_API_BASE_URL override writes the newly-acquired OAuth token only into
+// applyAPIBaseOverride's temp-dir cache.json, and only this cleanup copies
+// it back to the real cache dir — an os.Exit() that skips it silently loses
+// the session (login appears to succeed, but the next invocation must
+// re-authenticate) and leaks the temp dir on disk forever. Safe to call
+// more than once: the second call is a no-op since the first already
+// cleared the var.
+func runPendingAPIBaseOverrideCleanup() {
+	if pendingAPIBaseOverrideCleanup == nil {
+		return
+	}
+	cleanup := pendingAPIBaseOverrideCleanup
+	pendingAPIBaseOverrideCleanup = nil
+	cleanup()
+}
+
 // Returns a cleanup func to defer immediately: it must run even if
 // cli.Init() panics, since that's exactly when a stale env var pointing at
 // a now-deleted temp dir would otherwise strand the next command.
@@ -418,7 +448,12 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 	// Preserve auth (the cached OAuth token) across the isolated cache dir;
 	// its absence just means an extra login prompt, not misrouted traffic,
 	// so a copy failure is worth a warning but not worth aborting over.
+	// originalCacheData is compared against at cleanup time, to tell "this
+	// invocation refreshed the session" from "nothing changed" — see the
+	// cleanup closure's own comment for why that distinction matters.
+	var originalCacheData []byte
 	if cacheData, err := os.ReadFile(filepath.Join(restishCacheDir(), "cache.json")); err == nil {
+		originalCacheData = cacheData
 		if err := os.WriteFile(filepath.Join(tempDir, "cache.json"), cacheData, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: unable to carry over the cached session for DCI_API_BASE_URL (%v); you may need to log in again\n", err)
 		}
@@ -454,7 +489,16 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 		// invocation, override or not, finds the same stale real cache.json
 		// and has to re-authenticate despite the login/refresh having
 		// appeared to succeed.
-		if cacheData, err := os.ReadFile(filepath.Join(tempDir, "cache.json")); err == nil {
+		//
+		// Only writes back when the temp copy actually changed from what
+		// was seeded at the start of this invocation — not unconditionally
+		// on every override invocation's cleanup. An unconditional
+		// overwrite is a lost-update race: a concurrent plain `dci logout`
+		// (no override, real cache dir) in another terminal could clear
+		// the real cache.json while this invocation is still in flight, and
+		// this cleanup would then silently revive the old session on disk
+		// by writing back a snapshot that predates the logout.
+		if cacheData, err := os.ReadFile(filepath.Join(tempDir, "cache.json")); err == nil && !bytes.Equal(cacheData, originalCacheData) {
 			realCacheDirPath := oldCacheDir
 			if !hadCacheDir {
 				if userCacheDir, err := os.UserCacheDir(); err == nil {
@@ -462,10 +506,10 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 				}
 			}
 			if realCacheDirPath != "" {
-				if err := os.MkdirAll(realCacheDirPath, 0o700); err == nil {
-					if err := os.WriteFile(filepath.Join(realCacheDirPath, "cache.json"), cacheData, 0o600); err != nil {
-						fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
-					}
+				if err := os.MkdirAll(realCacheDirPath, 0o700); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
+				} else if err := os.WriteFile(filepath.Join(realCacheDirPath, "cache.json"), cacheData, 0o600); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
 				}
 			}
 		}
@@ -635,9 +679,13 @@ func run() (exitCode int) {
 	// set, applyAPIBaseOverride points DCI_CONFIG_DIR/DCI_CACHE_DIR at a
 	// private, per-invocation temp directory seeded with the override
 	// before cli.Init() reads it, instead of mutating the real apis.json —
-	// see its own doc comment for why. deferred so the temp dir and env
-	// vars are cleaned up even if cli.Init() itself panics.
-	defer applyAPIBaseOverride(configDir, os.Args)()
+	// see its own doc comment for why. Stashed in pendingAPIBaseOverrideCleanup
+	// (deferred via runPendingAPIBaseOverrideCleanup, not called directly)
+	// so login_page.go's os.Exit() paths — which a plain defer here would
+	// never reach — can invoke it themselves first; see that function's
+	// doc comment.
+	pendingAPIBaseOverrideCleanup = applyAPIBaseOverride(configDir, os.Args)
+	defer runPendingAPIBaseOverrideCleanup()
 	cli.Init("dci", version)
 	cli.Defaults()
 	overrideTableOutput()

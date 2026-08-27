@@ -778,6 +778,56 @@ func TestApplyAPIBaseOverrideCleanupPersistsRefreshedSession(t *testing.T) {
 	}
 }
 
+// TestApplyAPIBaseOverrideCleanupSkipsUnchangedCacheWriteBack guards a
+// Claude-review finding: the cleanup used to write the temp dir's
+// cache.json back to the real cache dir unconditionally, on every override
+// invocation — a lost-update race. A concurrent plain `dci logout` (no
+// override, real cache dir) in another terminal could clear the real
+// cache.json while an override-active invocation is still in flight; that
+// invocation's cleanup would then silently revive the old session by
+// writing back a snapshot that predates the logout. Cleanup must only
+// write back when the temp copy actually changed from what was seeded at
+// the start of the invocation.
+func TestApplyAPIBaseOverrideCleanupSkipsUnchangedCacheWriteBack(t *testing.T) {
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "apis.json"), []byte(`{"dci":{"base":"https://api.doit.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	realCacheDir := t.TempDir()
+	original := []byte(`{"dci:default":{"token":"original-token"}}`)
+	if err := os.WriteFile(filepath.Join(realCacheDir, "cache.json"), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DCI_CACHE_DIR", realCacheDir)
+	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
+
+	cleanup := applyAPIBaseOverride(realDir, []string{"dci", "list-budgets"})
+
+	// Simulate a concurrent, no-override `dci logout` in another terminal:
+	// it operates on the real cache dir directly (never redirected, since
+	// it never set DCI_API_BASE_URL itself) and clears the session there
+	// while this override-active invocation is still in flight — before
+	// its own cleanup runs.
+	concurrentLogout := []byte(`{"dci:default":{}}`)
+	if err := os.WriteFile(filepath.Join(realCacheDir, "cache.json"), concurrentLogout, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// This invocation's own temp-dir cache.json was never touched (no
+	// login/refresh happened inside it), so it still holds the original
+	// snapshot — cleanup must not write that back over the concurrent
+	// logout.
+	cleanup()
+
+	data, err := os.ReadFile(filepath.Join(realCacheDir, "cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, concurrentLogout) {
+		t.Fatalf("real cache.json = %s, want the concurrent logout's result preserved (got the stale pre-override snapshot written back)", data)
+	}
+}
+
 // TestDCIConfigDirMemoizesAcrossOverride guards a finding from the
 // adversarial review of this redesign: name_completion.go and
 // tui_picker.go call dciConfigDir() fresh, after applyAPIBaseOverride has
@@ -845,6 +895,34 @@ func TestApplyAPIBaseOverrideSkipsDetachedRefresh(t *testing.T) {
 
 	if got := os.Getenv("DCI_CONFIG_DIR"); got != oldConfigDir {
 		t.Errorf("DCI_CONFIG_DIR = %q, want unchanged %q for a detached refresh invocation", got, oldConfigDir)
+	}
+}
+
+// TestRunPendingAPIBaseOverrideCleanupIsIdempotent guards a Claude-review
+// finding: os.Exit() in login_page.go's execLoginRunSuggestion/empty-code
+// paths never runs run()'s deferred cleanup, so those paths call
+// runPendingAPIBaseOverrideCleanup() directly before exiting — and run()'s
+// own defer then calls it again on the way out in the ordinary case (no
+// os.Exit taken). The second call must be a safe no-op, not a double
+// cleanup (e.g. removing an already-removed temp dir a second time, or
+// writing the cache back twice).
+func TestRunPendingAPIBaseOverrideCleanupIsIdempotent(t *testing.T) {
+	t.Cleanup(func() { pendingAPIBaseOverrideCleanup = nil })
+
+	calls := 0
+	pendingAPIBaseOverrideCleanup = func() { calls++ }
+
+	runPendingAPIBaseOverrideCleanup()
+	if calls != 1 {
+		t.Fatalf("calls after first run = %d, want 1", calls)
+	}
+	if pendingAPIBaseOverrideCleanup != nil {
+		t.Fatal("pendingAPIBaseOverrideCleanup should be cleared after running")
+	}
+
+	runPendingAPIBaseOverrideCleanup()
+	if calls != 1 {
+		t.Fatalf("calls after second run = %d, want still 1 (idempotent)", calls)
 	}
 }
 
