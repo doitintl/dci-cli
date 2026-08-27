@@ -3535,6 +3535,89 @@ func TestDataCommandHonorsAPIBaseOverride(t *testing.T) {
 	}
 }
 
+// TestLogoutClearsRealCredentialsDuringAPIBaseOverride guards a Claude-review
+// finding on PR #128: `dci logout` clears credentials via the global
+// cli.Cache, which — under an active DCI_API_BASE_URL override —
+// applyAPIBaseOverride has pointed at its throwaway per-invocation temp dir
+// by the time logout's RunE runs. Logout must still clear the REAL,
+// persisted cache.json (the credential that matters for every future
+// invocation, override or not), not just the temp dir's copy that gets
+// deleted when the command returns — otherwise logout reports success while
+// silently leaving the real session intact.
+func TestLogoutClearsRealCredentialsDuringAPIBaseOverride(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+
+	dev := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"openapi":"3.0.0","info":{"title":"t","version":"1"},"paths":{}}`)
+	}))
+	t.Cleanup(dev.Close)
+
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	resetDCIConfigDirCache()
+	t.Cleanup(resetDCIConfigDirCache)
+	configDir := dciConfigDir()
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config, err := json.Marshal(map[string]interface{}{
+		"dci": map[string]interface{}{
+			"base":     "https://api.doit.com",
+			"profiles": map[string]interface{}{"default": map[string]interface{}{}},
+			"tls":      map[string]interface{}{"insecure": true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	realCacheDir := filepath.Join(home, "cache")
+	if err := os.MkdirAll(realCacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cacheJSON, err := json.Marshal(map[string]interface{}{
+		"dci:default": map[string]interface{}{
+			"token":   "real-oauth-token",
+			"refresh": "real-refresh-token",
+			"type":    "Bearer",
+			"expires": "9999-12-31T23:59:59Z",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realCacheDir, "cache.json"), cacheJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	environment := []string{
+		"DCI_API_BASE_URL=" + dev.URL,
+		"DCI_CACHE_DIR=" + realCacheDir,
+		"DCI_NO_UPDATE_CHECK=1",
+	}
+
+	res := runCLIWithEnv(t, bin, home, environment, "logout")
+	if res.timedOut {
+		t.Fatalf("command timed out; output:\n%s", res.output)
+	}
+	if res.exitCode != 0 {
+		t.Fatalf("logout exit code = %d; output:\n%s", res.exitCode, res.output)
+	}
+
+	data, err := os.ReadFile(filepath.Join(realCacheDir, "cache.json"))
+	if err != nil {
+		t.Fatalf("real cache.json missing after logout: %v", err)
+	}
+	if strings.Contains(string(data), "real-oauth-token") || strings.Contains(string(data), "real-refresh-token") {
+		t.Fatalf("logout under DCI_API_BASE_URL left the real credentials intact: %s", data)
+	}
+}
+
 func TestIsHTMLErrorPage(t *testing.T) {
 	tests := []struct {
 		name string
