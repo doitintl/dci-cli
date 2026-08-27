@@ -828,6 +828,60 @@ func TestApplyAPIBaseOverrideCleanupSkipsUnchangedCacheWriteBack(t *testing.T) {
 	}
 }
 
+// TestApplyAPIBaseOverrideCleanupTreatsEmptyDCICacheDirAsUnset guards a
+// Claude-review finding: applyAPIBaseOverride's setup reads the real
+// session via restishCacheDir(), which treats an explicitly-empty
+// DCI_CACHE_DIR as unset and falls back to os.UserCacheDir()+"/dci" — but
+// the cleanup used to branch on hadCacheDir (os.LookupEnv semantics: an
+// explicitly-empty var counts as "had"), disagreeing with that and
+// resolving the write-back target to "", silently skipping the write-back
+// with no diagnostic for a DCI_CACHE_DIR="" invocation.
+func TestApplyAPIBaseOverrideCleanupTreatsEmptyDCICacheDirAsUnset(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// os.UserCacheDir() on Linux honors XDG_CACHE_HOME; on macOS it's
+	// always $HOME/Library/Caches, unaffected by this. Set both so the
+	// fallback resolves deterministically on either platform.
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "xdgcache"))
+	userCacheDir, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	realCacheDir := filepath.Join(userCacheDir, "dci")
+	if err := os.MkdirAll(realCacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"dci:default":{"token":"original-token"}}`)
+	if err := os.WriteFile(filepath.Join(realCacheDir, "cache.json"), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "apis.json"), []byte(`{"dci":{"base":"https://api.doit.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The exact edge case: DCI_CACHE_DIR explicitly set to "", not unset.
+	t.Setenv("DCI_CACHE_DIR", "")
+	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
+
+	cleanup := applyAPIBaseOverride(realDir, []string{"dci", "list-budgets"})
+	tempCacheDir := os.Getenv("DCI_CACHE_DIR")
+	refreshed := []byte(`{"dci:default":{"token":"refreshed-token"}}`)
+	if err := os.WriteFile(filepath.Join(tempCacheDir, "cache.json"), refreshed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanup()
+
+	data, err := os.ReadFile(filepath.Join(realCacheDir, "cache.json"))
+	if err != nil {
+		t.Fatalf("real cache.json missing after cleanup: %v", err)
+	}
+	if !bytes.Equal(data, refreshed) {
+		t.Fatalf("real cache.json = %s, want the refreshed token persisted back despite DCI_CACHE_DIR being explicitly empty", data)
+	}
+}
+
 // TestDCIConfigDirMemoizesAcrossOverride guards a finding from the
 // adversarial review of this redesign: name_completion.go and
 // tui_picker.go call dciConfigDir() fresh, after applyAPIBaseOverride has
