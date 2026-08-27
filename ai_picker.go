@@ -38,8 +38,7 @@ func aiEnsureResolutionMetadata() {
 	if len(resolutionIndex) > 0 {
 		return
 	}
-	cacheDir, _ := os.UserCacheDir()
-	if _, err := os.Stat(filepath.Join(cacheDir, "dci", "dci.cbor")); err != nil {
+	if _, err := os.Stat(filepath.Join(restishCacheDir(), "dci.cbor")); err != nil {
 		return
 	}
 	_ = ensureDestructiveOperations()

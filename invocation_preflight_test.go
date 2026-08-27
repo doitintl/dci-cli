@@ -377,4 +377,21 @@ func TestCachedSpecAvailableForInvocationUsesRealCacheDirDuringOverride(t *testi
 			t.Error("expected the real cache to still be found via realCacheDir(), not the empty override temp dir")
 		}
 	})
+
+	// Guards a Claude-review finding: realCacheDir() returned
+	// realDCIDirOverrides.cacheDir.value verbatim whenever .had was true,
+	// without falling back to os.UserCacheDir() if that captured value
+	// happened to be "" (an explicitly-exported-empty DCI_CACHE_DIR) —
+	// inconsistent with every sibling accessor, which all treat an empty
+	// DCI_CACHE_DIR as unset.
+	t.Run("active override, DCI_CACHE_DIR was explicitly empty: still falls back correctly", func(t *testing.T) {
+		tempDir := t.TempDir()
+		t.Setenv("DCI_CACHE_DIR", tempDir)
+		realDCIDirOverrides = &realDCIDirOverridesState{
+			cacheDir: dciDirOverride{value: "", had: true},
+		}
+		if got := realCacheDir(); got == "" {
+			t.Fatal("realCacheDir() = \"\", want the os.UserCacheDir() fallback")
+		}
+	})
 }

@@ -312,8 +312,7 @@ func hydrateAPICommandsForAI() {
 	if cli.Root == nil {
 		return
 	}
-	cacheDir, _ := os.UserCacheDir()
-	cacheFile := filepath.Join(cacheDir, "dci", "dci.cbor")
+	cacheFile := filepath.Join(restishCacheDir(), "dci.cbor")
 	if _, err := os.Stat(cacheFile); err != nil {
 		return
 	}

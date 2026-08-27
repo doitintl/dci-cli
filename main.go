@@ -307,7 +307,14 @@ var realDCIDirOverrides *realDCIDirOverridesState
 // DCI_API_BASE_URL session even though a real, warm cache exists.
 func realCacheDir() string {
 	if realDCIDirOverrides != nil {
-		if realDCIDirOverrides.cacheDir.had {
+		// The captured value's own emptiness decides the fallback, not
+		// .had: restishCacheDir()/resolveDCIConfigDir() both treat an
+		// explicitly-empty DCI_CACHE_DIR as unset, and this must agree —
+		// an earlier version of this function branched on .had alone and
+		// returned "" verbatim for a DCI_CACHE_DIR="" invocation, silently
+		// reintroducing the exact "Tab completion always cold" bug this
+		// function exists to prevent, just gated on that one env value.
+		if realDCIDirOverrides.cacheDir.had && realDCIDirOverrides.cacheDir.value != "" {
 			return realDCIDirOverrides.cacheDir.value
 		}
 		userCacheDir, err := os.UserCacheDir()
@@ -445,34 +452,78 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 		cleanupTempDir()
 		return noop
 	}
-	// Preserve auth (the cached OAuth token) across the isolated cache dir;
-	// its absence just means an extra login prompt, not misrouted traffic,
-	// so a copy failure is worth a warning but not worth aborting over.
-	// originalCacheData is compared against at cleanup time, to tell "this
-	// invocation refreshed the session" from "nothing changed" — see the
-	// cleanup closure's own comment for why that distinction matters.
-	var originalCacheData []byte
-	if cacheData, err := os.ReadFile(filepath.Join(restishCacheDir(), "cache.json")); err == nil {
-		originalCacheData = cacheData
-		if err := os.WriteFile(filepath.Join(tempDir, "cache.json"), cacheData, 0o600); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: unable to carry over the cached session for DCI_API_BASE_URL (%v); you may need to log in again\n", err)
+	oldConfigDir, hadConfigDir := os.LookupEnv("DCI_CONFIG_DIR")
+	oldCacheDir, hadCacheDir := os.LookupEnv("DCI_CACHE_DIR")
+
+	// realCacheDirFallback resolves the real cache directory the same way
+	// restishCacheDir() does (empty DCI_CACHE_DIR means unset, fall back to
+	// os.UserCacheDir()+"/dci") — critical for cache.json's realDir below,
+	// since branching on hadCacheDir instead would disagree with that
+	// convention and resolve to "" for an explicitly-empty DCI_CACHE_DIR
+	// invocation, silently skipping the write-back on cleanup with no
+	// diagnostic at all.
+	realCacheDirFallback := func() string {
+		if oldCacheDir != "" {
+			return oldCacheDir
 		}
+		dir, err := os.UserCacheDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(dir, "dci")
 	}
-	// Preserve the persisted customer context: it's user/tenant selection
-	// data, not host-specific, so copying it carries none of the
-	// cross-host-leak risk dci.cbor is deliberately excluded to avoid.
-	// Without this, `dci ai` tool-call subprocesses (which re-exec this
-	// binary and so resolve their own dciConfigDir() — the temp dir, since
-	// they inherit DCI_CONFIG_DIR pointed at it) would silently lose the
-	// user's selected customer for the whole override session.
-	if ctxData, err := os.ReadFile(customerContextPath(realConfigDir)); err == nil {
-		if err := os.WriteFile(customerContextPath(tempDir), ctxData, 0o600); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: unable to carry over the customer context for DCI_API_BASE_URL (%v)\n", err)
+
+	// survivingLocalStateFiles is the one registry for "a local-state file
+	// that must survive an override session": each entry is copied into
+	// the temp dir now, and diffed-and-written-back to its real directory
+	// on cleanup below. Adding a new file here is enough — no other code
+	// needs to know about it. Grew out of hand-rolling this same copy-in/
+	// compare/write-back logic separately for cache.json and
+	// customer_context and discovering, across several review rounds,
+	// that every new way of reaching a subprocess under the override
+	// (name_completion.go's refresh child, ai_tools.go's tool-call
+	// subprocess, ai_tui.go's raw command dispatch) silently forgot
+	// customer_context's write-back because it wasn't the same code path
+	// as cache.json's.
+	survivingLocalStateFiles := []struct {
+		name    string
+		realDir func() string // the REAL directory this file lives in
+		warnOn  string        // noun used in the warning message on failure
+	}{
+		{
+			name:    "cache.json",
+			realDir: realCacheDirFallback,
+			warnOn:  "the cached session",
+		},
+		{
+			// realConfigDir, not the DCI_CONFIG_DIR env var: it's the
+			// single source of truth run() already resolved (dciConfigDir(),
+			// memoized before this override ever touched the env var) and
+			// passed in as this function's own parameter — using anything
+			// else here would just be a second, potentially-disagreeing
+			// notion of "the real config dir" for this one file.
+			name:    "customer_context",
+			realDir: func() string { return realConfigDir },
+			warnOn:  "the customer context",
+		},
+	}
+
+	// originals holds what each file looked like when copied in, so
+	// cleanup can tell "this invocation changed it" from "nothing changed"
+	// — see the cleanup closure's own comment for why that distinction
+	// matters (a lost-update race against a concurrent plain invocation).
+	originals := make(map[string][]byte, len(survivingLocalStateFiles))
+	for _, f := range survivingLocalStateFiles {
+		data, err := os.ReadFile(filepath.Join(f.realDir(), f.name))
+		if err != nil {
+			continue // absence just means less to carry over, not an error
+		}
+		originals[f.name] = data
+		if err := os.WriteFile(filepath.Join(tempDir, f.name), data, 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: unable to carry over %s for DCI_API_BASE_URL (%v)\n", f.warnOn, err)
 		}
 	}
 
-	oldConfigDir, hadConfigDir := os.LookupEnv("DCI_CONFIG_DIR")
-	oldCacheDir, hadCacheDir := os.LookupEnv("DCI_CACHE_DIR")
 	realDCIDirOverrides = &realDCIDirOverridesState{
 		configDir: dciDirOverride{value: oldConfigDir, had: hadConfigDir},
 		cacheDir:  dciDirOverride{value: oldCacheDir, had: hadCacheDir},
@@ -481,44 +532,35 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 	os.Setenv("DCI_CACHE_DIR", tempDir)
 
 	return func() {
-		// Copy the temp dir's cache.json back to the real cache dir before
-		// it's deleted: restish writes a refreshed/new OAuth token there on
-		// an access-token refresh or a `dci login` run under the override
-		// (DCI_CACHE_DIR points at the temp dir for the whole invocation),
-		// and without this that session is silently discarded — the next
-		// invocation, override or not, finds the same stale real cache.json
-		// and has to re-authenticate despite the login/refresh having
-		// appeared to succeed.
+		// Copy each surviving file back to its real directory before the
+		// temp dir is deleted — restish, `dci login`/`logout`, `dci ai`
+		// tool-call subprocesses, or a raw command dispatched from the
+		// `dci ai` TUI can all write one of these into the temp dir during
+		// the invocation (DCI_CONFIG_DIR/DCI_CACHE_DIR point there for its
+		// whole duration), and without this that change is silently
+		// discarded: the next invocation, override or not, finds the same
+		// stale real file and the change appears to have succeeded but
+		// didn't.
 		//
 		// Only writes back when the temp copy actually changed from what
 		// was seeded at the start of this invocation — not unconditionally
 		// on every override invocation's cleanup. An unconditional
-		// overwrite is a lost-update race: a concurrent plain `dci logout`
-		// (no override, real cache dir) in another terminal could clear
-		// the real cache.json while this invocation is still in flight, and
-		// this cleanup would then silently revive the old session on disk
-		// by writing back a snapshot that predates the logout.
-		if cacheData, err := os.ReadFile(filepath.Join(tempDir, "cache.json")); err == nil && !bytes.Equal(cacheData, originalCacheData) {
-			// oldCacheDir's own emptiness — not hadCacheDir — decides the
-			// fallback: restishCacheDir() (used above to seed
-			// originalCacheData from the real dir in the first place) and
-			// dciConfigDir() both treat an explicitly-empty DCI_CACHE_DIR as
-			// unset, falling back to os.UserCacheDir()+"/dci". Branching on
-			// hadCacheDir here instead would disagree with that and resolve
-			// to "" for a DCI_CACHE_DIR="" invocation — silently skipping
-			// the write-back below with no diagnostic at all.
-			realCacheDirPath := oldCacheDir
-			if realCacheDirPath == "" {
-				if userCacheDir, err := os.UserCacheDir(); err == nil {
-					realCacheDirPath = filepath.Join(userCacheDir, "dci")
-				}
+		// overwrite is a lost-update race: a concurrent plain invocation
+		// (no override, the real directory) could change the real file
+		// while this invocation is still in flight, and this cleanup would
+		// then silently revive the stale snapshot it seeded at the start.
+		for _, f := range survivingLocalStateFiles {
+			data, err := os.ReadFile(filepath.Join(tempDir, f.name))
+			if err != nil || bytes.Equal(data, originals[f.name]) {
+				continue
 			}
-			if realCacheDirPath == "" {
-				fmt.Fprintln(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (could not determine the real cache directory); you may need to log in again")
-			} else if err := os.MkdirAll(realCacheDirPath, 0o700); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
-			} else if err := os.WriteFile(filepath.Join(realCacheDirPath, "cache.json"), cacheData, 0o600); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: unable to persist the session refreshed under DCI_API_BASE_URL (%v); you may need to log in again\n", err)
+			realDir := f.realDir()
+			if realDir == "" {
+				fmt.Fprintf(os.Stderr, "warning: unable to persist %s changed under DCI_API_BASE_URL (could not determine the real directory)\n", f.warnOn)
+			} else if err := os.MkdirAll(realDir, 0o700); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: unable to persist %s changed under DCI_API_BASE_URL (%v)\n", f.warnOn, err)
+			} else if err := os.WriteFile(filepath.Join(realDir, f.name), data, 0o600); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: unable to persist %s changed under DCI_API_BASE_URL (%v)\n", f.warnOn, err)
 			}
 		}
 		if hadConfigDir {
@@ -1493,8 +1535,7 @@ func setupCompletion() {
 			return
 		}
 		apiLoaded = true
-		cacheDir, _ := os.UserCacheDir()
-		cacheFile := filepath.Join(cacheDir, "dci", "dci.cbor")
+		cacheFile := filepath.Join(restishCacheDir(), "dci.cbor")
 		if _, err := os.Stat(cacheFile); err != nil {
 			return
 		}
