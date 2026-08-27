@@ -186,7 +186,7 @@ func completionPreflight(args []string) (handled bool, exitCode int) {
 	if !ok || commandName == "" {
 		return false, 0
 	}
-	api, err := loadDCIOperationAPI()
+	api, err := loadDCIOperationAPIFromRealCache()
 	if err != nil || len(api.Operations) == 0 {
 		// The spec cache timestamp is valid but the spec itself is unusable:
 		// falling through would make restish re-fetch it — same browser risk.
