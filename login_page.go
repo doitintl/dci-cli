@@ -139,6 +139,13 @@ func execLoginRunSuggestion() {
 	cmd := exec.Command(executablePath(), loginRunSuggestion...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err := cmd.Run()
+	// os.Exit below never runs run()'s deferred cleanup, so it must be run
+	// explicitly first: under an active DCI_API_BASE_URL override, that
+	// cleanup is the only thing that copies the OAuth token this login just
+	// acquired (written into applyAPIBaseOverride's temp-dir cache.json)
+	// back to the real cache dir. Skipping it would make the just-completed
+	// login silently unsaved.
+	runPendingAPIBaseOverrideCleanup()
 	if err == nil {
 		os.Exit(0)
 	}
@@ -407,6 +414,11 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 
 	if code == "" {
 		fmt.Fprintln(os.Stderr, "Unable to get a code. See browser for details. Aborting!")
+		// No token was acquired here, but os.Exit still skips run()'s
+		// deferred cleanup — without this, an active DCI_API_BASE_URL
+		// override's temp dir (and its DCI_CONFIG_DIR/DCI_CACHE_DIR env
+		// redirection) would leak for the lifetime of the process tree.
+		runPendingAPIBaseOverrideCleanup()
 		os.Exit(1)
 	}
 
