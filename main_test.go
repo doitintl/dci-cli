@@ -778,6 +778,47 @@ func TestApplyAPIBaseOverrideCleanupPersistsRefreshedSession(t *testing.T) {
 	}
 }
 
+// TestApplyAPIBaseOverrideCleanupPersistsChangedCustomerContext guards two
+// Claude-review findings, both the same root cause via different
+// subprocess paths: `dci ai` run_dci_command tool calls (ai_tools.go) and
+// raw command dispatch from the `dci ai` TUI (ai_tui.go) both re-exec this
+// binary inheriting the override's temp-dir DCI_CONFIG_DIR, so a
+// `customer-context set ...` run by either writes into the temp dir. Unlike
+// cache.json, customer_context was never copied back on cleanup — so an
+// explicit customer-context change made mid-override-session was silently
+// discarded. It must be write-backed the same way cache.json already is.
+func TestApplyAPIBaseOverrideCleanupPersistsChangedCustomerContext(t *testing.T) {
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "apis.json"), []byte(`{"dci":{"base":"https://api.doit.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(customerContextPath(realDir), []byte("original.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DCI_API_BASE_URL", "https://dev.example.com")
+
+	cleanup := applyAPIBaseOverride(realDir, []string{"dci", "list-budgets"})
+	tempConfigDir := os.Getenv("DCI_CONFIG_DIR")
+
+	// Simulate a `dci ai` tool-call subprocess (or a raw TUI command
+	// dispatch) running `customer-context set changed.com` — it re-execs
+	// this binary, inherits DCI_CONFIG_DIR pointed at this same temp dir,
+	// and its own registerCustomerContextCommands writes here.
+	if err := os.WriteFile(customerContextPath(tempConfigDir), []byte("changed.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanup()
+
+	data, err := os.ReadFile(customerContextPath(realDir))
+	if err != nil {
+		t.Fatalf("real customer_context missing after cleanup: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "changed.com" {
+		t.Fatalf("real customer_context = %q, want the change made under the override persisted back", data)
+	}
+}
+
 // TestApplyAPIBaseOverrideCleanupSkipsUnchangedCacheWriteBack guards a
 // Claude-review finding: the cleanup used to write the temp dir's
 // cache.json back to the real cache dir unconditionally, on every override
