@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
@@ -317,5 +318,27 @@ func TestTruncateForConfirm(t *testing.T) {
 		if got := truncateForConfirm(c.in); got != c.want {
 			t.Errorf("truncateForConfirm(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestTUIFormEscAborts(t *testing.T) {
+	// Esc must cancel the form even while the select's filter is active —
+	// huh's default keymap reserved Esc for filter management, which left
+	// the shell pickers with Ctrl-C as the only cancel key while the
+	// `dci ai` session cancels on Esc.
+	selected := 0
+	field := huh.NewSelect[int]().
+		Options(huh.NewOption("first", 0), huh.NewOption("second", 1)).
+		Filtering(true).
+		Value(&selected)
+	form := tuiForm(field)
+	_ = form.Init()
+	updated, _ := form.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	aborted, ok := updated.(*huh.Form)
+	if !ok {
+		t.Fatalf("form update returned %T", updated)
+	}
+	if aborted.State != huh.StateAborted {
+		t.Fatalf("form state after Esc = %v, want StateAborted", aborted.State)
 	}
 }

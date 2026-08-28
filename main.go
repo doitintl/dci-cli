@@ -807,8 +807,12 @@ func run() (exitCode int) {
 		return reportExecutionError(err, 0, configDir)
 	}
 
-	if err := executeCLI(); err != nil {
-		return reportExecutionError(err, cli.GetLastStatus(), configDir)
+	executeErr := executeCLI()
+	// Chart under the table: the marshaler armed this while the table bytes
+	// were still in flight to stdout (see noteChartWidth); they've landed now.
+	flushPendingChart()
+	if executeErr != nil {
+		return reportExecutionError(executeErr, cli.GetLastStatus(), configDir)
 	}
 	// One exit-code taxonomy for every mode: the same failure maps to the same
 	// exit code whether the CLI is driven by a human, an agent, or a script.
@@ -843,6 +847,18 @@ func reportExecutionError(err error, status int, configDir string) int {
 			return exitSuccess
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// The `dci ai` session appends the reconstructed usage after an
+		// argument rejection; the shell showed the bare count error and
+		// nothing else. Same trailer, spelled the shell's way — including
+		// the body's shape, which cobra's Use never mentions. A session
+		// dispatch child (DCI_SESSION_RENDER=1 runs with DCI_AGENT_MODE=0,
+		// so it classifies as interactive) stays bare: the session itself
+		// appends the trailer spelled its way.
+		if agentUAMode == uaModeInteractive && !sessionRenderActive() && looksLikeArgvRejection(err.Error()) {
+			if trailer := argvUsageTrailer(shellInvocationArgv(os.Args), false); trailer != "" {
+				fmt.Fprintln(os.Stderr, trailer)
+			}
+		}
 		maybeHintDoerContext(code, status, configDir)
 		return code
 	}
@@ -3165,8 +3181,11 @@ func renderTable(rows []map[string]interface{}) ([]byte, error) {
 		return nil, err
 	}
 	// The first rendered line is the table's top border: its rune width is
-	// the exact table width, so the chart can line up with it.
-	maybeRenderChart(utf8.RuneCountInString(firstLine(out)))
+	// the exact table width, so the chart can line up with it. The chart
+	// itself renders after the command finishes (flushPendingChart): the
+	// marshaled table has not reached stdout yet, so printing here would put
+	// the chart above the table.
+	noteChartWidth(utf8.RuneCountInString(firstLine(out)))
 
 	if len(hidden) > 0 {
 		out += renderHiddenColumnsHint(keys, hidden)

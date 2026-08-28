@@ -507,3 +507,34 @@ func TestRequestOAuthToken(t *testing.T) {
 		})
 	}
 }
+
+func TestExecLoginRunSuggestionReplacesTheProcessImage(t *testing.T) {
+	// The suggestion must exec (replace the process image), not spawn a
+	// child: Token()'s manual-code goroutine is still parked in a read on
+	// the shared terminal after the browser flow wins, and a child sharing
+	// stdin raced it for every keystroke — the TUI saw only every second or
+	// third key. See execLoginRunSuggestion.
+	var gotPath string
+	var gotArgv []string
+	oldReplace := replaceLoginProcess
+	replaceLoginProcess = func(path string, argv, env []string) error {
+		gotPath = path
+		gotArgv = argv
+		return nil
+	}
+	t.Cleanup(func() { replaceLoginProcess = oldReplace })
+
+	execLoginRunSuggestion() // returns only via the stub; anything else exits the test process
+
+	if gotPath == "" {
+		t.Fatal("suggestion did not exec")
+	}
+	if len(gotArgv) != len(loginRunSuggestion)+1 || gotArgv[0] != gotPath {
+		t.Fatalf("exec argv = %v", gotArgv)
+	}
+	for i, want := range loginRunSuggestion {
+		if gotArgv[i+1] != want {
+			t.Fatalf("exec argv = %v, want suffix %v", gotArgv, loginRunSuggestion)
+		}
+	}
+}

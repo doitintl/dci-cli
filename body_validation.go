@@ -45,7 +45,7 @@ func (validationError requestBodyValidationError) AgentErrorRetryable() bool {
 }
 
 var shorthandBodyFieldPattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)\s*[.\[:{]`)
-var schemaBodyFieldPattern = regexp.MustCompile(`^  ([A-Za-z_][A-Za-z0-9_-]*)\*?:`)
+var schemaBodyFieldMarkedPattern = regexp.MustCompile(`^  ([A-Za-z_][A-Za-z0-9_-]*\*?):`)
 var currencyBodyFieldPattern = regexp.MustCompile(`(?:^|[,\s])config\.currency:\s*"?([A-Za-z]{3})"?`)
 var bufferedRequestBody []byte
 
@@ -108,6 +108,21 @@ func validateRequestBody(command *cobra.Command, args []string) error {
 }
 
 func requestSchemaTopLevelFields(longHelp string) map[string]bool {
+	list := requestSchemaTopLevelFieldList(longHelp)
+	if list == nil {
+		return nil
+	}
+	fields := make(map[string]bool, len(list))
+	for _, field := range list {
+		fields[strings.TrimSuffix(field, "*")] = true
+	}
+	return fields
+}
+
+// requestSchemaTopLevelFieldList returns the request body's top-level fields
+// in schema order, each keeping the schema's trailing `*` required marker.
+// nil when the help carries no object request schema.
+func requestSchemaTopLevelFieldList(longHelp string) []string {
 	_, afterHeading, found := strings.Cut(longHelp, "## Request Schema")
 	if !found {
 		return nil
@@ -117,7 +132,7 @@ func requestSchemaTopLevelFields(longHelp string) map[string]bool {
 		return nil
 	}
 	schemaBlock, _, _ = strings.Cut(schemaBlock, "```")
-	fields := map[string]bool{}
+	var fields []string
 	foundObject := false
 	for _, line := range strings.Split(schemaBlock, "\n") {
 		trimmedLine := strings.TrimSpace(line)
@@ -129,12 +144,15 @@ func requestSchemaTopLevelFields(longHelp string) map[string]bool {
 			}
 			continue
 		}
-		if match := schemaBodyFieldPattern.FindStringSubmatch(line); match != nil {
-			fields[match[1]] = true
+		if match := schemaBodyFieldMarkedPattern.FindStringSubmatch(line); match != nil {
+			fields = append(fields, match[1])
 		}
 	}
 	if !foundObject {
 		return nil
+	}
+	if fields == nil {
+		fields = []string{}
 	}
 	return fields
 }

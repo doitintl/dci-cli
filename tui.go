@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -75,13 +76,27 @@ func tuiWidth() int {
 }
 
 // tuiForm wraps a single huh field in a form with the house settings: output
-// on stderr, input from the terminal.
+// on stderr, input from the terminal, and Esc as a cancel key.
 func tuiForm(field huh.Field) *huh.Form {
+	// huh's default keymap quits only on Ctrl-C and reserves Esc for the
+	// select's filter management — which left the shell pickers with no
+	// visible cancel key while the `dci ai` session cancels on Esc. The
+	// form-level Quit binding is checked before the focused field sees the
+	// key, so Esc aborts every single-field prompt (picker, confirm) with
+	// huh.ErrUserAborted, exactly like Ctrl-C. The filter bindings lose
+	// their keys so the help footer stops advertising Esc for a filter
+	// action it can no longer reach (the pickers run with the filter always
+	// active anyway).
+	keyMap := huh.NewDefaultKeyMap()
+	keyMap.Quit = key.NewBinding(key.WithKeys("ctrl+c", "esc"), key.WithHelp("esc", "cancel"))
+	keyMap.Select.SetFilter = key.NewBinding(key.WithDisabled())
+	keyMap.Select.ClearFilter = key.NewBinding(key.WithDisabled())
 	return huh.NewForm(huh.NewGroup(field)).
 		WithOutput(os.Stderr).
 		WithInput(os.Stdin).
 		WithWidth(tuiWidth()).
-		WithShowHelp(true)
+		WithShowHelp(true).
+		WithKeyMap(keyMap)
 }
 
 // tuiSelectEntry runs a filter-as-you-type select over name cache entries on
