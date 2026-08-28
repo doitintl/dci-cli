@@ -253,9 +253,20 @@ func (h loginCallbackHandler) serveRun(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	offer.clickOnce.Do(func() { close(offer.clicked) })
+	// Deliver the running page BEFORE signaling the click: the signal wakes
+	// maybeWaitForRunClick, which execs the suggested command and tears down
+	// this whole process — HTTP server included. net/http only flushes the
+	// handler's buffered response after the handler returns, so signaling
+	// first raced the exec against the response and could abort the browser's
+	// request. Writing and explicitly flushing here pushes the page into the
+	// kernel's socket buffer, which the exec's graceful socket close still
+	// delivers.
 	w.Header().Set("Content-Type", "text/html")
 	_, _ = w.Write([]byte(loginRunningHTML))
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	offer.clickOnce.Do(func() { close(offer.clicked) })
 }
 
 // readManualCode waits for user input and sends it to the channel with the
