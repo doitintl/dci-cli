@@ -25,9 +25,11 @@ func registerAICommand(configDir string) {
 		Long: "Open an interactive session where plain text asks the AI about your cloud\n" +
 			"costs (it runs dci commands for you) and /commands run dci directly.\n" +
 			"With a question as the argument, answers once and exits.\n\n" +
-			"AI features need an Anthropic API key (yours): export ANTHROPIC_API_KEY or\n" +
-			"save it in the session's guided setup. Questions and command results are\n" +
-			"sent to Anthropic's API under your key.",
+			"DoiT employees need no setup: AI access is provided through their DoiT\n" +
+			"sign-in, and traffic runs under DoiT's Anthropic organization. Everyone\n" +
+			"else brings an Anthropic API key (yours): export ANTHROPIC_API_KEY or\n" +
+			"save it in the session's guided setup — questions and command results\n" +
+			"are then sent to Anthropic's API under your key.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			quiet, _ := command.Flags().GetBool("quiet")
@@ -85,13 +87,13 @@ func aiOneShotVerbosity(tty, quiet, forceVerbose bool) (narrate, verdict bool) {
 // destructive-approval verdict go to stderr per aiOneShotVerbosity.
 func runAIOneShot(configDir, question string, approveDestructive, quiet, forceVerbose bool) error {
 	settings := loadAISettings(configDir)
-	key := resolveAIKey(settings)
-	if key == "" {
+	creds := resolveAICredentials(settings)
+	if !creds.available() {
 		return errors.New("AI needs an Anthropic API key: export ANTHROPIC_API_KEY, run dci ai interactively to save one, or add {\"api_key\": \"…\"} to " + aiSettingsPath(configDir))
 	}
 	verbose, verdictShown := aiOneShotVerbosity(term.IsTerminal(int(os.Stderr.Fd())), quiet, forceVerbose)
 	stats := os.Getenv("DCI_AI_STATS") == "1"
-	session := newLocalAISession(configDir, key, resolveAIModel(settings), aiSessionCatalog())
+	session := newLocalAISession(configDir, creds, resolveAIModel(settings), aiSessionCatalog())
 	defer session.Close()
 	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: question}); err != nil {
 		return err

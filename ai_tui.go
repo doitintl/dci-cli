@@ -156,7 +156,11 @@ type aiModel struct {
 	session     conversationSession
 	sessionNote string
 	modelName   string
-	turnActive  bool
+	// credentialLabel names the banner's credential source ("API key from
+	// env", "DoiT-provided access", …) — resolved with the session, not
+	// re-derived at render time (ai_credentials.go).
+	credentialLabel string
+	turnActive      bool
 	// stream is the assistant text accumulated since the last commit or
 	// discard. A plain string on purpose: a strings.Builder must never live
 	// in a Bubble Tea model — the model is copied by value on every Update,
@@ -279,8 +283,9 @@ func newAIModel(configDir string) aiModel {
 	m.logo = picture.NewWithConfig(picture.Config{KittyID: aiLogoKittyID})
 	m.logo.SetSize(aiLogoKittyCols, aiLogoKittyRows)
 	m.identity = m.contextLabel()
-	if key := resolveAIKey(settings); key != "" {
-		m.session = newAIConversationSession(configDir, key, modelName, catalog)
+	if creds := resolveAICredentials(settings); creds.available() {
+		m.credentialLabel = creds.label()
+		m.session = newAIConversationSession(configDir, creds, modelName, catalog)
 	} else {
 		m.sessionNote = "AI needs an Anthropic API key — ask a question to set one up, or export ANTHROPIC_API_KEY"
 	}
@@ -345,8 +350,8 @@ func aiBannerBlock(m *aiModel) string {
 	switch {
 	case m.session == nil:
 		modelLine = "AI off — ask a question to set up a key"
-	case strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "":
-		modelLine += " · API key from env"
+	case m.credentialLabel != "":
+		modelLine += " · " + m.credentialLabel
 	default:
 		modelLine += " · API key from " + aiSettingsFileName
 	}
@@ -480,8 +485,8 @@ func (m *aiModel) contextLabel() string {
 
 // newAIConversationSession builds the session behind a var so tests can
 // substitute a fake without touching the Claude API.
-var newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
-	return newLocalAISession(configDir, apiKey, model, catalog)
+var newAIConversationSession = func(configDir string, creds aiCredentials, model string, catalog []aiCatalogEntry) conversationSession {
+	return newLocalAISession(configDir, creds, model, catalog)
 }
 
 func (m aiModel) Init() tea.Cmd {
@@ -1522,12 +1527,15 @@ func (m aiModel) handleKeyEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			_ = m.session.Close()
 			m.resetTurnState()
 		}
-		// The session runs on the resolved key, not the typed one verbatim:
-		// ANTHROPIC_API_KEY wins over the file everywhere else (resolveAIKey),
-		// and building on the typed key here would leave /key reporting a
-		// source the live session is not actually using.
-		activeKey := resolveAIKey(settings)
-		m.session = newAIConversationSession(m.configDir, activeKey, m.modelName, m.catalog)
+		// The session runs on the resolved credentials, not the typed key
+		// verbatim: ANTHROPIC_API_KEY wins over the file everywhere else
+		// (resolveAICredentials), and building on the typed key here would
+		// leave /key reporting a source the live session is not actually
+		// using.
+		creds := resolveAICredentials(settings)
+		activeKey := creds.key
+		m.credentialLabel = creds.label()
+		m.session = newAIConversationSession(m.configDir, creds, m.modelName, m.catalog)
 		m.sessionNote = ""
 		m.append(tuiSuccessStyle.Render("Key saved — AI is ready."))
 		if activeKey != key {
@@ -1643,8 +1651,9 @@ func (m aiModel) runVerb(route aiRoute) (tea.Model, tea.Cmd) {
 			_ = m.session.Close()
 			m.resetTurnState()
 			settings := loadAISettings(m.configDir)
-			if key := resolveAIKey(settings); key != "" {
-				m.session = newAIConversationSession(m.configDir, key, m.modelName, m.catalog)
+			if creds := resolveAICredentials(settings); creds.available() {
+				m.credentialLabel = creds.label()
+				m.session = newAIConversationSession(m.configDir, creds, m.modelName, m.catalog)
 				return m, aiListen(m.session)
 			}
 			m.session = nil
@@ -1974,6 +1983,11 @@ func aiFriendlyAPIError(configDir, message string) string {
 	lower := strings.ToLower(message)
 	switch {
 	case strings.Contains(lower, "authentication_error") || strings.Contains(lower, "401"):
+		if resolveAICredentials(loadAISettings(configDir)).source == aiCredsSourceProvided {
+			// A provided-mode 401 already survived the automatic re-vend and
+			// retry (ai_credentials.go) — this is persistent.
+			return "Anthropic rejected the DoiT-provided token even after refreshing it — run dci login again, or export ANTHROPIC_API_KEY."
+		}
 		source := "the key saved in " + aiSettingsPath(configDir)
 		if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
 			source = "the ANTHROPIC_API_KEY environment variable — it overrides any saved key"

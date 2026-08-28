@@ -604,9 +604,12 @@ func TestAIKeyOnboardingFlow(t *testing.T) {
 	m := aiTestModel(t)
 	fake := newFakeAISession()
 	oldFactory := newAIConversationSession
-	newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
-		if apiKey != "sk-ant-test-0123456789" {
-			t.Fatalf("factory received key %q", apiKey)
+	newAIConversationSession = func(configDir string, creds aiCredentials, model string, catalog []aiCatalogEntry) conversationSession {
+		if creds.key != "sk-ant-test-0123456789" {
+			t.Fatalf("factory received key %q", creds.key)
+		}
+		if creds.source != aiCredsSourceSettings {
+			t.Fatalf("factory received source %q", creds.source)
 		}
 		return fake
 	}
@@ -1508,7 +1511,7 @@ func TestAIKeySetupSlashDropsToCommandInput(t *testing.T) {
 
 func TestAISessionWithKeySkipsStartupKeySetup(t *testing.T) {
 	old := newAIConversationSession
-	newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
+	newAIConversationSession = func(configDir string, creds aiCredentials, model string, catalog []aiCatalogEntry) conversationSession {
 		return newFakeAISession()
 	}
 	defer func() { newAIConversationSession = old }()
@@ -1801,8 +1804,8 @@ func TestAIKeyEntryHonorsEnvPrecedence(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-env-0123456789")
 	var receivedKey string
 	oldFactory := newAIConversationSession
-	newAIConversationSession = func(configDir, apiKey, model string, catalog []aiCatalogEntry) conversationSession {
-		receivedKey = apiKey
+	newAIConversationSession = func(configDir string, creds aiCredentials, model string, catalog []aiCatalogEntry) conversationSession {
+		receivedKey = creds.key
 		return newFakeAISession()
 	}
 	t.Cleanup(func() { newAIConversationSession = oldFactory })
