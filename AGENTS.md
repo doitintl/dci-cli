@@ -51,6 +51,7 @@ Routine releases bump the **patch** digit (v2.3.0 → v2.3.1), even when they ca
 ### Key Files
 
 - CLI source: single `package main`, one file per chapter — `main.go` (core: config & onboarding, arg/completion normalization, usage branding & lockdown, auth & doer context, customer context, table rendering) plus sibling files for extracted chapters (`name_resolution.go`, `name_completion.go`, `list_views.go`, `pagination.go`, `response_transform.go`, `output_contract.go`, `error_contract.go`, `destructive_contract.go`, `skill_management.go`, `update.go`, and others), each with a matching `_test.go`
+- TUI end-to-end tests: `ai_tui_e2e_test.go` drives the real binary on a real pty (keystrokes in, rendered frames out), offline and Unix-only. When a session bug is fixed from user feedback, add its keystroke replay there — the file's header documents the harness and its two assertion rules. Run just these with `go test -run TestE2E .`
 - Build config: `.goreleaser.yaml`
 - Release workflows: `.github/workflows/release.yml`, `sync-manifests.yml`, `post-release-verify.yml`
 - Package templates: `packaging/`

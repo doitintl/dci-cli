@@ -12,7 +12,9 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.66.0
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/glamour v1.0.0
+	github.com/creack/pty v1.1.24
 	github.com/creativeprojects/go-selfupdate v1.6.0
+	github.com/gosimple/slug v1.13.1
 	github.com/guptarohit/asciigraph v0.10.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-runewidth v0.0.27
@@ -23,6 +25,8 @@ require (
 	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.44.0
+	golang.org/x/text v0.41.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -71,7 +75,6 @@ require (
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
-	github.com/gosimple/slug v1.13.1 // indirect
 	github.com/gosimple/unidecode v1.0.1 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
@@ -131,9 +134,7 @@ require (
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
