@@ -1,6 +1,6 @@
 # Design spec: argument-placeholder overlays in the `dci ai` completion
 
-Status: **phase 1 implemented** (same PR as this spec: `ai_placeholder.go` + tests, the `refreshGhost`/`ghostedInputRow` hooks in ai_tui.go, and the sketch-keeping schema parse in body_validation.go). Phase 2 remains design-only, gated on P1 dogfood. As-landed deviations from the draft are recorded at the end (§10).
+Status: **phases 1 and 2 implemented**. P1 (the passive ghost signature) landed with this spec; P2 (the argument Tab, §4) landed after the maintainer's scope decisions of 2026-08-28. As-landed deviations from the draft are recorded at the end (§10).
 
 Source: Alfredo's dogfood feedback (Slack, 2026-08-28), deferred out of [PR #133](https://github.com/doitintl/dci-cli/pull/133) ("worth its own spec if we want it"):
 
@@ -98,18 +98,17 @@ Phase 1 changes **zero** key handling. Explicitly:
 - **Narrow terminals**: the ghost is trimmed with `aiTrimTo` to the input row's remaining width — never wrapped (the textarea is one row; a wrapped ghost would corrupt the frame grid, §3.1 of AI-SPEC). Under ~4 remaining cells it disappears entirely, matching `aiTrimTo`'s own floor. `aiFitFrame` still clamps the composed row as a backstop.
 - **Terminals without faint support**: lipgloss degrades `Faint(true)` the same way it already does for `aiEchoStyle` everywhere else — no special handling.
 
-## 4. Phase 2 — guided field entry
+## 4. Phase 2 — argument Tab (as decided 2026-08-28, maintainer answers to the P2 questions)
 
-Phase 2 makes the ghost interactive. It ships only after phase 1 has dogfooded (§8), and its details are re-reviewable then; this section records the intended shape so phase 1's model doesn't paint it out.
+Phase 2 makes Tab, in argument position, mean **accept what the ghost offers next** (`aiTabActionFor`, ai_placeholder.go; `handleArgumentTab`, ai_tui.go). Decided scope, in the order the action resolves:
 
-- **Tab in argument position** (popup closed, ghost showing): accept the next placeholder.
-  - A **fixed token** — a body field's `name:` prefix — is inserted literally with a trailing space, cursor after it. This is Alfredo's "auto-inserts the fixed `tags:`".
-  - A **value placeholder** (path param, or a field's value) inserts nothing: the cursor is already where the value goes, and the ghost re-renders showing the *value* hint (the parameter's `Example` from the spec when present, else its type). Inserting example text as real input was considered and rejected: ghost-to-real-text promotion of a value the user didn't choose is how wrong IDs get submitted.
-- **Array-of-strings entry**: while the cursor is inside an array field's value (`tags: prod`), the ghost shows `▒, next-string▒` — a typed comma continues the array (restish shorthand already parses `tags: a, b`), and the ghost drops once any element exists, since the continuation is now self-evident.
-- **Popup precedence is absolute**: any state where the popup is open routes Tab/Enter to the popup exactly as today. Phase 2's Tab only fires when `len(m.completions) == 0`.
-- **Esc** keeps today's meaning (clear input / cancel turn) — it does not "exit placeholder mode" because there is no mode: phase 2 remains stateless in the same way phase 1 is; Tab is just an insertion convenience computed from the same pure model.
+- **The empty pickable slot → Tab submits like Enter**, opening the zero-argument name picker: the cue says "enter to pick from a list" and Tab agrees, so Tab always accepts the offer whatever kind it is. Implementation is literally `m.submit()` — the picker, echo, history, and fetch fallback all ride the existing path.
+- **A path value slot → hint only, never an insertion** (Q2 decided): the cursor is already where the value goes; Tab swaps the ghost to the parameter's spec example (`ticketid — e.g. 318240`) or its type (`report-name-or-id (string)`), from `operationPathParameters` — so beta ops (which never populate that map) keep Tab inert on value slots. Inserting example text as real input was rejected: ghost-to-real-text promotion of a value the user didn't choose is how wrong IDs get submitted. The hint is transient — the next keystroke recomputes the normal ghost.
+- **The next required body field → Tab inserts its fixed `name: ` prefix** — Alfredo's "auto-inserts the fixed `tags:`". The separator follows restish shorthand's comma-separated properties: a space after path arguments, `", "` once a body property is already on the line, bare after a trailing comma or space.
+- **Popup precedence**: with the popup open, Tab keeps accepting the highlighted completion (F1) — with one carve-out: when accepting would change nothing (the input already reads `/name ` and the exact-match popup is still open, because completions recompute on the trimmed input), Tab falls through to the argument action instead of no-opping.
+- **Esc** keeps today's meaning — there is no mode: phase 2 stays stateless like phase 1, every Tab decided per keypress from the same pure model, end-of-line only (the ghost's own cursor rule).
 
-Not in phase 2 either: a huh-style per-field form over the input, validation-on-Tab, or flag placeholders — see non-goals (§8).
+Descoped by the same decisions: the **array-continuation ghost** (`, …` while inside an array value) and **optional-field walking** (Tab past the required fields) — neither selected; revisit on dogfood feedback. Still out: a huh-style per-field form, validation-on-Tab, flag placeholders (§8).
 
 ## 5. Data: where placeholders come from and how they stay honest
 
@@ -182,7 +181,7 @@ In the style of the existing `_test.go` files:
 | Phase | Ships | Gate |
 |---|---|---|
 | **P1** | Ghost signature: `ai_placeholder.go` model + render, path params + required body fields, consumption, degradation (§3). Zero key-handling changes. **Implemented** (same PR; #133 merged first, as required by §5.2). | Maintainer review |
-| **P2** | Tab acceptance: fixed-token insertion, value-hint ghosts, array continuation (§4) | P1 dogfood verdict; re-review of §4's choices |
+| **P2** | Argument Tab: picker on the empty pickable slot, field-prefix insertion, value hints (§4). **Implemented** per the maintainer's 2026-08-28 scope decisions; array continuation and optional-field walking descoped. | Maintainer review |
 
 Versioning: both phases are session UX polish — `feat:` commits, routine **patch** releases per AGENTS.md (not the "new command group" minor-bump case).
 
@@ -215,3 +214,4 @@ Decisions taken at implementation, where the code deviates from or sharpens the 
 - **R1 held.** The splice (`aiSpliceGhost`) clamps the rendered row to prompt + text + one cursor cell with a cell-based `MaxWidth`, so both blink phases of the virtual cursor survive; covered by unit tests against a padded ANSI row and by an E2E keystroke replay (`TestE2EGhostSignatureAfterAcceptedCompletion`) on the real pty. The popup-footer fallback was not needed.
 - **R2 shipped as specced**: ghost and popup coexist; no suppression added.
 - **Picker cue (post-merge, maintainer feedback 2026-08-28).** The zero-argument name picker was invisible until someone stumbled into it, so a pickable slot's ghost now appends `(enter to pick from a list)` — gated by `aiPickerCueApplies` on the picker's own `aiPickerIntentFor` conditions, and placed at the ghost's tail so narrow panes drop the cue before the argument name (§3.2).
+- **P2 as landed (2026-08-28, maintainer scope decisions).** One PR: `aiTabActionFor` + `handleArgumentTab`, resolving in order — empty pickable slot submits (Tab = Enter, the picker opens); path value slot swaps the ghost for a hint (`Example` or type from `operationPathParameters`; beta ops therefore keep Tab inert there); next required body field inserts its `name: ` prefix with the shorthand comma separator. Q2 resolved as hint-only. Array-continuation ghost and optional-field walking: descoped, not selected. One popup carve-out beyond the draft: a Tab whose accept would change nothing (input already `/name ` with the exact-match popup open) falls through to the argument action instead of no-opping — without it, the typed-trailing-space state needed a wasted Tab.

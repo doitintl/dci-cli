@@ -29,6 +29,10 @@ func placeholderTestTree(t *testing.T) {
 		Use:  "create-thing",
 		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  config*: {\n    currency: string\n  }\n  name: string\n}\n```\n",
 	})
+	api.AddCommand(&cobra.Command{
+		Use:  "create-widget",
+		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  a*: string\n  b*: string\n}\n```\n",
+	})
 	api.AddCommand(&cobra.Command{Use: "get-report report-id"})
 	beta := &cobra.Command{Use: "beta"}
 	beta.AddCommand(&cobra.Command{Use: "run-report id"})
@@ -42,7 +46,14 @@ func placeholderTestTree(t *testing.T) {
 		"get-report":      {listPath: "/analytics/v1/reports", resource: "reports"},
 		"beta run-report": {listPath: "/analytics/v1/reports", resource: "reports", hasBody: true},
 	}
-	t.Cleanup(func() { cli.Root, resolutionIndex = oldRoot, oldIndex })
+	oldParameters := operationPathParameters
+	operationPathParameters = map[string][]*cli.Param{
+		"add-ticket-tags": {{Name: "ticketId", Type: "integer", Example: 318240}},
+		"get-report":      {{Name: "reportId", Type: "string"}},
+	}
+	t.Cleanup(func() {
+		cli.Root, resolutionIndex, operationPathParameters = oldRoot, oldIndex, oldParameters
+	})
 }
 
 func placeholderLabels(placeholders []aiPlaceholder) []string {
@@ -323,5 +334,101 @@ func TestAIGhostRendersInTheFrame(t *testing.T) {
 	m = updated.(aiModel)
 	if frame := stripANSI(m.View().Content); strings.Contains(frame, "ticketid tags*") {
 		t.Fatalf("ghost rendered during a mid-line edit:\n%s", frame)
+	}
+}
+
+func TestAITabActionFor(t *testing.T) {
+	placeholderTestTree(t)
+	cases := []struct {
+		input string
+		kind  aiTabActionKind
+		text  string // insert for aiTabInsert, hint for aiTabHint
+	}{
+		// The empty pickable slot submits so the picker opens (Tab = Enter).
+		{"/get-report", aiTabPicker, ""},
+		{"/get-report ", aiTabPicker, ""},
+		// A gated pickable slot degrades to the value hint (type: no example).
+		{"/get-report --id", aiTabHint, "report-name-or-id (string)"},
+		// A plain path value slot hints with the spec example.
+		{"/add-ticket-tags", aiTabHint, "ticketid — e.g. 318240"},
+		// Path filled → insert the next required field's prefix, separator
+		// depending on what the line already carries.
+		{"/add-ticket-tags 318240", aiTabInsert, " tags: "},
+		{"/add-ticket-tags 318240 ", aiTabInsert, "tags: "},
+		{"/create-thing", aiTabInsert, " config: "},
+		// Mid-body, shorthand properties are comma-separated.
+		{"/create-widget a: 1", aiTabInsert, ", b: "},
+		{"/create-widget a: 1,", aiTabInsert, " b: "},
+		{"/create-widget a: 1, ", aiTabInsert, "b: "},
+		// Nothing to offer → Tab stays inert.
+		{"/add-ticket-tags 318240 tags: prod", aiTabNone, ""},
+		{"/model", aiTabNone, ""},
+		{"/no-such-command", aiTabNone, ""},
+		{"plain question", aiTabNone, ""},
+		{`/add-ticket-tags "open`, aiTabNone, ""},
+	}
+	for _, testCase := range cases {
+		action := aiTabActionFor(testCase.input, nil)
+		if action.kind != testCase.kind {
+			t.Fatalf("tab(%q) kind = %v, want %v", testCase.input, action.kind, testCase.kind)
+		}
+		if got := action.insert + action.hint; got != testCase.text {
+			t.Fatalf("tab(%q) text = %q, want %q", testCase.input, got, testCase.text)
+		}
+	}
+	// A user-defined command shadowing nothing still gets no tab action.
+	if action := aiTabActionFor("/top5 ", map[string]aiUserCommand{"top5": {Command: "list-reports"}}); action.kind != aiTabNone {
+		t.Fatalf("tab on a user command = %v, want none", action.kind)
+	}
+}
+
+func TestAITabInsertsFieldPrefixInTheSession(t *testing.T) {
+	placeholderTestTree(t)
+	m := aiTestModel(t)
+	m = aiType(m, "/add-ticket-tags 318240")
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updated.(aiModel)
+	if got := m.input.Value(); got != "/add-ticket-tags 318240 tags: " {
+		t.Fatalf("input after Tab = %q", got)
+	}
+	if m.ghost != "" {
+		t.Fatalf("ghost after the prefix consumed its field = %q", m.ghost)
+	}
+
+	// On a value slot, Tab swaps the ghost for the hint and inserts nothing.
+	m.input.Reset()
+	m = aiType(m, "/add-ticket-tags ")
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updated.(aiModel)
+	if got := m.input.Value(); got != "/add-ticket-tags " {
+		t.Fatalf("value-slot Tab changed the input: %q", got)
+	}
+	if m.ghost != "ticketid — e.g. 318240" {
+		t.Fatalf("value-slot Tab ghost = %q", m.ghost)
+	}
+	// The hint is transient: the next keystroke recomputes the normal ghost
+	// (the typed digit starts the path value, consuming that slot).
+	m = aiType(m, "3")
+	if m.ghost != "tags*: [string]" {
+		t.Fatalf("ghost after typing past the hint = %q", m.ghost)
+	}
+}
+
+func TestAITabOnEmptyPickableSlotOpensThePickerPath(t *testing.T) {
+	placeholderTestTree(t)
+	m := aiTestModel(t)
+	// The submit path routes against the completion catalog; the fixture
+	// command must be in it or the dispatch is refused as unknown.
+	m.catalog = append(m.catalog, aiCatalogEntry{Path: "get-report"})
+	m = aiType(m, "/get-report ")
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	m = updated.(aiModel)
+	// No cached names in the test config dir: the submit path arms the
+	// async fetch, exactly as Enter would.
+	if m.fetchIntent == nil {
+		t.Fatal("Tab on the empty pickable slot did not take the picker path")
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input not submitted by Tab: %q", got)
 	}
 }

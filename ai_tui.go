@@ -1122,8 +1122,17 @@ func (m aiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.submit()
 
 	case "tab":
-		m.acceptCompletion()
-		return m, nil
+		// With the popup open, Tab accepts the highlighted completion (F1) —
+		// unless accepting would change nothing (the input already reads
+		// "/name ": the exact-match popup stays open because completions
+		// recompute on the trimmed input). A no-op accept falls through to
+		// the argument Tab (P2): accept what the ghost offers next.
+		if len(m.completions) > 0 &&
+			m.input.Value() != "/"+m.completions[m.completionIndex].Value+" " {
+			m.acceptCompletion()
+			return m, nil
+		}
+		return m.handleArgumentTab()
 
 	case "up":
 		if len(m.completions) > 0 {
@@ -1236,6 +1245,29 @@ func (m *aiModel) refreshGhost() {
 	}
 	remaining := aiPlaceholdersRemaining(signature, argv)
 	m.ghost = aiGhostText(remaining, signature.optionalBody, aiPickerCueApplies(remaining, argv), m.width)
+}
+
+// handleArgumentTab is Tab with the popup closed (AI-PLACEHOLDER-SPEC P2):
+// accept what the ghost offers next — submit an empty pickable slot so the
+// name picker opens (Tab and Enter agree there), insert the next required
+// body field's "name: " prefix, or swap the ghost to a value hint. Only at
+// the end of the line, the same rule as the ghost render (ghostedInputRow):
+// mid-line Tab stays inert rather than inserting at the edit point.
+func (m aiModel) handleArgumentTab() (tea.Model, tea.Cmd) {
+	if m.input.Line() != 0 || m.input.Column() < len([]rune(m.input.Value())) {
+		return m, nil
+	}
+	action := aiTabActionFor(m.input.Value(), m.userCommands)
+	switch action.kind {
+	case aiTabPicker:
+		return m.submit()
+	case aiTabInsert:
+		m.input.InsertString(action.insert)
+		m.setCompletions(aiCompletionsFor(strings.TrimSpace(m.input.Value()), m.catalog, m.userCommands, aiCompletionMatchCap))
+	case aiTabHint:
+		m.ghost = action.hint
+	}
+	return m, nil
 }
 
 func (m aiModel) answerApproval(approved bool) (tea.Model, tea.Cmd) {

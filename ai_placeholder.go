@@ -1,7 +1,7 @@
 package main
 
 // Argument-placeholder overlays for the `dci ai` session's input
-// (AI-PLACEHOLDER-SPEC, phase 1): the moment the input names a runnable
+// (AI-PLACEHOLDER-SPEC, phases 1–2): the moment the input names a runnable
 // command, the rest of the row shows the command's remaining arguments as
 // faint ghost text — path parameters first, then the required body fields —
 // consumed left-to-right as the user types real values. Everything here is
@@ -13,6 +13,7 @@ package main
 // in a sibling file per the AGENTS.md chapter-split guidance.
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -38,7 +39,8 @@ type aiPlaceholder struct {
 // walk and one schema-block parse are cheaper than the full-catalog scan
 // aiCompletionsFor already runs on the same keystroke.
 type aiCommandSignature struct {
-	words        int // how many argv words name the command ("beta run-report" = 2)
+	words        int    // how many argv words name the command ("beta run-report" = 2)
+	name         string // the session-spelled command key ("get-report", "beta run-report")
 	placeholders []aiPlaceholder
 	pathCount    int
 	hasBody      bool
@@ -82,6 +84,7 @@ func aiPlaceholderSignatureFor(argv []string) *aiCommandSignature {
 	pathWords := useWords[1:]
 	signature := &aiCommandSignature{
 		words:     matched,
+		name:      strings.Join(argv[:matched], " "),
 		pathCount: len(pathWords),
 		// The leaf's own flags only — inherited persistent flags (--output)
 		// are invisible here, the same limitation the picker's
@@ -94,7 +97,7 @@ func aiPlaceholderSignatureFor(argv []string) *aiCommandSignature {
 	// slot (ai_picker.go mirrors resolvePathArguments), so the ghost offers
 	// the resource noun instead of nagging for the ID. Keyed the session's
 	// way: "beta run-report" for beta subcommands.
-	target, resolvable := resolutionIndex[strings.Join(argv[:matched], " ")]
+	target, resolvable := resolutionIndex[signature.name]
 	signature.resolvable = resolvable && len(pathWords) == 1
 	for index, word := range pathWords {
 		placeholder := aiPlaceholder{label: word}
@@ -158,11 +161,20 @@ func aiNormalizeSchemaSketch(sketch string) string {
 //     nothing — words of a multi-word name on a resolvable command, or an
 //     argument the child will reject either way.
 func aiPlaceholdersRemaining(signature *aiCommandSignature, argv []string) []aiPlaceholder {
+	remaining, _ := aiConsumePlaceholders(signature, argv)
+	return remaining
+}
+
+// aiConsumePlaceholders is the consumption proper; bodyStarted additionally
+// reports whether any body-shaped token has been typed, which decides the
+// separator a Tab field-prefix insertion needs (aiTabActionFor): shorthand
+// properties are comma-separated, so mid-body the prefix arrives as
+// ", field: " while the first one needs only a space.
+func aiConsumePlaceholders(signature *aiCommandSignature, argv []string) (remaining []aiPlaceholder, bodyStarted bool) {
 	if signature == nil {
-		return nil
+		return nil, false
 	}
 	pathConsumed := 0
-	bodyStarted := false
 	wholeBody := false
 	consumed := map[string]bool{}
 	for _, index := range aiPositionalIndexes(argv, signature.flags, signature.words) {
@@ -185,7 +197,6 @@ func aiPlaceholdersRemaining(signature *aiCommandSignature, argv []string) []aiP
 			}
 		}
 	}
-	var remaining []aiPlaceholder
 	pathSeen := 0
 	for _, placeholder := range signature.placeholders {
 		if !placeholder.body {
@@ -201,7 +212,7 @@ func aiPlaceholdersRemaining(signature *aiCommandSignature, argv []string) []aiP
 		}
 		remaining = append(remaining, placeholder)
 	}
-	return remaining
+	return remaining, bodyStarted
 }
 
 // aiTokenStartsBody reports whether a positional token is body input:
@@ -292,4 +303,124 @@ func aiSpliceGhost(row string, keep int, ghost string, width int) string {
 		return row
 	}
 	return lipgloss.NewStyle().MaxWidth(keep).Render(row) + aiEchoStyle.Render(trimmed)
+}
+
+// --- Tab in argument position (AI-PLACEHOLDER-SPEC P2) -----------------------
+
+type aiTabActionKind int
+
+const (
+	aiTabNone   aiTabActionKind = iota
+	aiTabInsert                 // insert text at the end of the line (a body-field prefix)
+	aiTabPicker                 // submit the line as-is: it opens the zero-argument name picker
+	aiTabHint                   // replace the ghost with a value hint; insert nothing
+)
+
+// aiTabAction is what Tab should do with the popup closed, decided per
+// keypress from the same pure model the ghost renders from.
+type aiTabAction struct {
+	kind   aiTabActionKind
+	insert string // aiTabInsert: the text, separator included
+	hint   string // aiTabHint: the replacement ghost
+}
+
+// aiTabActionFor decides Tab's argument-position behavior (P2): accept what
+// the ghost offers next. In order:
+//
+//   - the empty pickable slot → submit as-is, which opens the picker (Tab
+//     and Enter agree there, so Tab always means "accept the offer");
+//   - a path value slot → a hint, never an insertion: the cursor is already
+//     where the value goes, and text the user didn't type must never become
+//     submittable input (the value hint is the parameter's spec example or
+//     type, from the same offline metadata the picker loads);
+//   - the next required body field → insert its fixed "name: " prefix, with
+//     the comma separator shorthand needs once a body property is already
+//     on the line.
+//
+// Everything else — verbs, user-defined commands, unknown or fully-satisfied
+// commands, unparseable lines — is aiTabNone, keeping Tab inert exactly as
+// it was before P2.
+func aiTabActionFor(input string, userCommands map[string]aiUserCommand) aiTabAction {
+	// The raw input (trailing whitespace included) decides the insertion's
+	// separator; only the parse works on the trimmed line.
+	trimmed := strings.TrimSpace(input)
+	if !strings.HasPrefix(trimmed, "/") {
+		return aiTabAction{}
+	}
+	argv, err := splitCommandLine(strings.TrimPrefix(trimmed, "/"))
+	if err != nil || len(argv) == 0 {
+		return aiTabAction{}
+	}
+	if _, isVerb := aiLookupVerb(argv[0]); isVerb {
+		return aiTabAction{}
+	}
+	if _, isUserCommand := userCommands[argv[0]]; isUserCommand {
+		return aiTabAction{}
+	}
+	signature := aiPlaceholderSignatureFor(argv)
+	if signature == nil {
+		return aiTabAction{}
+	}
+	remaining, bodyStarted := aiConsumePlaceholders(signature, argv)
+	if len(remaining) == 0 {
+		return aiTabAction{}
+	}
+	if aiPickerCueApplies(remaining, argv) {
+		return aiTabAction{kind: aiTabPicker}
+	}
+	next := remaining[0]
+	if !next.body {
+		if hint := aiPathValueHint(signature, remaining, next); hint != "" {
+			return aiTabAction{kind: aiTabHint, hint: hint}
+		}
+		return aiTabAction{}
+	}
+	return aiTabAction{kind: aiTabInsert, insert: aiFieldPrefixInsertion(input, bodyStarted, next.name)}
+}
+
+// aiPathValueHint builds the value hint for the next path slot: the
+// parameter's spec example when the metadata carries one, its type
+// otherwise, from operationPathParameters — GA operations only (beta ops
+// never populate the map, §5.3), keyed by the plain command name. "" means
+// no metadata: Tab stays inert rather than hinting nothing.
+func aiPathValueHint(signature *aiCommandSignature, remaining []aiPlaceholder, next aiPlaceholder) string {
+	parameters := operationPathParameters[signature.name]
+	// The next slot's parameter index: how many path slots are already
+	// consumed = declared minus still-remaining.
+	pathRemaining := 0
+	for _, placeholder := range remaining {
+		if !placeholder.body {
+			pathRemaining++
+		}
+	}
+	index := signature.pathCount - pathRemaining
+	if index < 0 || index >= len(parameters) {
+		return ""
+	}
+	parameter := parameters[index]
+	if parameter.Example != nil {
+		return fmt.Sprintf("%s — e.g. %v", next.label, parameter.Example)
+	}
+	if parameter.Type != "" {
+		return next.label + " (" + parameter.Type + ")"
+	}
+	return ""
+}
+
+// aiFieldPrefixInsertion spells the "name: " token Tab inserts for the next
+// required body field, separator included: a space after the path arguments,
+// a comma once a body property is already on the line (restish shorthand
+// separates properties with commas), and just a space when the line already
+// ends with one.
+func aiFieldPrefixInsertion(input string, bodyStarted bool, field string) string {
+	prefix := field + ": "
+	trimmed := strings.TrimRight(input, " \t")
+	switch {
+	case bodyStarted && !strings.HasSuffix(trimmed, ","):
+		return ", " + prefix
+	case len(trimmed) == len(input):
+		return " " + prefix
+	default:
+		return prefix
+	}
 }
