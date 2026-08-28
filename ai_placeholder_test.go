@@ -151,20 +151,58 @@ func TestAIPlaceholdersRemaining(t *testing.T) {
 
 func TestAIGhostText(t *testing.T) {
 	remaining := []aiPlaceholder{{label: "ticketid"}, {label: "tags*: [string]", body: true, name: "tags"}}
-	if got := aiGhostText(remaining, false, 80); got != "ticketid tags*: [string]" {
+	if got := aiGhostText(remaining, false, false, 80); got != "ticketid tags*: [string]" {
 		t.Fatalf("ghost = %q", got)
 	}
-	if got := aiGhostText(remaining, true, 80); got != "ticketid tags*: [string] …" {
+	if got := aiGhostText(remaining, true, false, 80); got != "ticketid tags*: [string] …" {
 		t.Fatalf("ghost with ellipsis = %q", got)
 	}
-	if got := aiGhostText(remaining, false, 12); got != "ticketid ta…" {
+	if got := aiGhostText(remaining, false, false, 12); got != "ticketid ta…" {
 		t.Fatalf("trimmed ghost = %q", got)
 	}
-	if got := aiGhostText(remaining, false, 3); got != "" {
+	if got := aiGhostText(remaining, false, false, 3); got != "" {
 		t.Fatalf("ghost under the legibility floor = %q", got)
 	}
-	if got := aiGhostText(nil, true, 80); got != "" {
+	if got := aiGhostText(nil, true, true, 80); got != "" {
 		t.Fatalf("ghost with nothing remaining = %q", got)
+	}
+	pickable := []aiPlaceholder{{label: "report-name-or-id", pickable: true}}
+	if got := aiGhostText(pickable, false, true, 80); got != "report-name-or-id "+aiPickerCue {
+		t.Fatalf("ghost with the picker cue = %q", got)
+	}
+	// The cue sits at the tail, so a narrow pane trims it before the
+	// argument name.
+	if got := aiGhostText(pickable, false, true, 20); got != "report-name-or-id (…" {
+		t.Fatalf("trimmed cue ghost = %q", got)
+	}
+}
+
+func TestAIPickerCueApplies(t *testing.T) {
+	placeholderTestTree(t)
+	cue := func(line string) bool {
+		t.Helper()
+		argv, err := splitCommandLine(line)
+		if err != nil {
+			t.Fatalf("splitCommandLine(%q): %v", line, err)
+		}
+		signature := aiPlaceholderSignatureFor(argv)
+		return aiPickerCueApplies(aiPlaceholdersRemaining(signature, argv), argv)
+	}
+	if !cue("get-report") {
+		t.Fatal("no cue on the zero-argument pickable command")
+	}
+	if cue("get-report --id") {
+		t.Fatal("cue despite --id suppressing the picker")
+	}
+	if cue("add-ticket-tags") {
+		t.Fatal("cue on a non-resolvable command")
+	}
+	if cue("beta run-report") {
+		t.Fatal("cue on a bodied resolvable command — the zero-argument picker never opens there")
+	}
+	t.Setenv("DCI_NO_RESOLVE", "1")
+	if cue("get-report") {
+		t.Fatal("cue despite DCI_NO_RESOLVE suppressing the picker")
 	}
 }
 
@@ -254,12 +292,15 @@ func TestAIGhostGates(t *testing.T) {
 		t.Fatalf("ghost for a user command = %q, want none", m.ghost)
 	}
 
-	// Esc clears the input and the ghost with it.
+	// A pickable command's ghost carries the picker cue, so the
+	// zero-argument list stops being a feature users find by accident.
 	m.input.Reset()
 	m = aiType(m, "/get-report")
-	if m.ghost == "" {
-		t.Fatal("no ghost for a resolvable command")
+	if m.ghost != "report-name-or-id "+aiPickerCue {
+		t.Fatalf("pickable ghost = %q, want the picker cue appended", m.ghost)
 	}
+
+	// Esc clears the input and the ghost with it.
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = updated.(aiModel)
 	if m.ghost != "" {

@@ -25,6 +25,11 @@ type aiPlaceholder struct {
 	label string // "report-id", "tags*: [string]", "widget-name-or-id"
 	body  bool   // body field (vs path parameter)
 	name  string // body field name, marker stripped; "" for path slots
+	// pickable marks a resolvable path slot whose empty submission opens the
+	// session's zero-argument name picker (aiPickerIntentFor: single path
+	// parameter, no request body) — the ghost cues it so the picker stops
+	// being a feature users only find by accident.
+	pickable bool
 }
 
 // aiCommandSignature is the per-command placeholder model, derived from the
@@ -92,11 +97,15 @@ func aiPlaceholderSignatureFor(argv []string) *aiCommandSignature {
 	target, resolvable := resolutionIndex[strings.Join(argv[:matched], " ")]
 	signature.resolvable = resolvable && len(pathWords) == 1
 	for index, word := range pathWords {
-		label := word
+		placeholder := aiPlaceholder{label: word}
 		if signature.resolvable && index == 0 {
-			label = singularResourceName(target.resource) + "-name-or-id"
+			placeholder.label = singularResourceName(target.resource) + "-name-or-id"
+			// The zero-argument picker only opens for body-less operations
+			// (aiPickerIntentFor mirrors zeroArgPickerApplies), so only
+			// those earn the cue.
+			placeholder.pickable = !target.hasBody
 		}
-		signature.placeholders = append(signature.placeholders, aiPlaceholder{label: label})
+		signature.placeholders = append(signature.placeholders, placeholder)
 	}
 	// Body fields, in schema order, from the same parse body validation and
 	// the usage trailer trust. Required fields become placeholders; optional
@@ -225,18 +234,43 @@ func aiBodyTokenFields(token string) (whole bool, fields []string) {
 	return false, nil
 }
 
+// aiPickerCue is what the ghost appends when submitting the line as-is would
+// open the name picker — the same vocabulary as the picker's own transcript
+// line ("picked Dev Widget").
+const aiPickerCue = "(enter to pick from a list)"
+
+// aiPickerCueApplies reports whether the ghost should carry the picker cue:
+// the one unconsumed slot is a pickable path slot AND the line as typed
+// would actually open the zero-argument picker on submit. The intent check
+// (aiPickerIntentFor) re-applies the picker's own gates — --id typed on the
+// line, DCI_NO_RESOLVE — so the cue never promises a picker a gate would
+// suppress; intent.input stays empty exactly when no name words are typed,
+// which is the "enter lists everything" case the cue describes.
+func aiPickerCueApplies(remaining []aiPlaceholder, argv []string) bool {
+	if len(remaining) != 1 || !remaining[0].pickable {
+		return false
+	}
+	intent := aiPickerIntentFor(argv)
+	return intent != nil && intent.input == ""
+}
+
 // aiGhostText renders the unconsumed placeholders as the ghost string for
-// the given cell budget: labels joined by spaces, a trailing "…" when the
-// schema has optional fields the ghost is not listing, trimmed like the
-// status line trims (aiTrimTo — under 4 cells nothing legible fits). Empty
-// when nothing remains: silence is the "you can press Enter" signal.
-func aiGhostText(remaining []aiPlaceholder, ellipsis bool, width int) string {
+// the given cell budget: labels joined by spaces, the picker cue when
+// applicable, a trailing "…" when the schema has optional fields the ghost
+// is not listing, trimmed like the status line trims (aiTrimTo — under 4
+// cells nothing legible fits; the cue sits at the tail, so a narrow pane
+// drops it before any argument name). Empty when nothing remains: silence
+// is the "you can press Enter" signal.
+func aiGhostText(remaining []aiPlaceholder, ellipsis, pickerCue bool, width int) string {
 	if len(remaining) == 0 {
 		return ""
 	}
 	labels := make([]string, 0, len(remaining)+1)
 	for _, placeholder := range remaining {
 		labels = append(labels, placeholder.label)
+	}
+	if pickerCue {
+		labels = append(labels, aiPickerCue)
 	}
 	if ellipsis {
 		labels = append(labels, "…")

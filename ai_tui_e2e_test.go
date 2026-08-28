@@ -815,7 +815,8 @@ func TestE2EDefaultHelpRoutesBareInvocation(t *testing.T) {
 // the harness rules allow matching it — and that row carries the faint
 // signature of the accepted command's remaining arguments. get-widget is
 // resolvable against the forged spec's widgets collection, so the path
-// slot ghosts as the resource noun, not the raw parameter name.
+// slot ghosts as the resource noun with the picker cue appended (the
+// empty submission would open the zero-argument name picker).
 func TestE2EGhostSignatureAfterAcceptedCompletion(t *testing.T) {
 	session := startTUISession(t, tuiSessionConfig{prepare: func(_, cacheDir string) {
 		seedCachedSpec(t, cacheDir)
@@ -823,5 +824,5 @@ func TestE2EGhostSignatureAfterAcceptedCompletion(t *testing.T) {
 	session.send("/get-wid")
 	session.waitFor("Get one widget")
 	session.send(keyTab)
-	session.waitFor("widget-name-or-id")
+	session.waitFor("widget-name-or-id " + aiPickerCue)
 }
