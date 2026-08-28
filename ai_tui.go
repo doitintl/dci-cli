@@ -104,6 +104,11 @@ type aiModel struct {
 
 	completions     []aiCompletion
 	completionIndex int
+	// ghost is the input row's argument-placeholder overlay
+	// (AI-PLACEHOLDER-SPEC P1): the typed command's remaining arguments,
+	// recomputed with the completions on every input change (refreshGhost)
+	// and spliced after the cursor by View.
+	ghost string
 
 	history    []string
 	historyPos int
@@ -1191,6 +1196,45 @@ func (m *aiModel) setCompletions(completions []aiCompletion) {
 			break
 		}
 	}
+	m.refreshGhost()
+}
+
+// refreshGhost recomputes the input row's placeholder overlay
+// (AI-PLACEHOLDER-SPEC P1) from the current input. Rides setCompletions so
+// the ghost and the popup share one lifecycle: both change exactly when the
+// input text changes. Session verbs and user-defined commands show no ghost
+// — their argument surfaces are one-line usages and free-form expansions,
+// not spec-derived signatures. A line that does not parse (an open quote,
+// a trailing backslash) freezes the ghost as-is: the user is mid-token.
+func (m *aiModel) refreshGhost() {
+	input := strings.TrimSpace(m.input.Value())
+	if !strings.HasPrefix(input, "/") {
+		m.ghost = ""
+		return
+	}
+	argv, err := splitCommandLine(strings.TrimPrefix(input, "/"))
+	if err != nil {
+		return
+	}
+	if len(argv) == 0 {
+		m.ghost = ""
+		return
+	}
+	if _, isVerb := aiLookupVerb(argv[0]); isVerb {
+		m.ghost = ""
+		return
+	}
+	if _, isUserCommand := m.userCommands[argv[0]]; isUserCommand {
+		m.ghost = ""
+		return
+	}
+	signature := aiPlaceholderSignatureFor(argv)
+	if signature == nil {
+		m.ghost = ""
+		return
+	}
+	remaining := aiPlaceholdersRemaining(signature, argv)
+	m.ghost = aiGhostText(remaining, signature.optionalBody, m.width)
 }
 
 func (m aiModel) answerApproval(approved bool) (tea.Model, tea.Cmd) {
@@ -2206,7 +2250,7 @@ func (m aiModel) View() tea.View {
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
-		b.WriteString(m.input.View())
+		b.WriteString(m.ghostedInputRow())
 	}
 	b.WriteString("\n")
 	b.WriteString(aiRule(m.width, ""))
@@ -2221,6 +2265,26 @@ func (m aiModel) View() tea.View {
 		view.MouseMode = tea.MouseModeCellMotion
 	}
 	return view
+}
+
+// ghostedInputRow renders the input line with the placeholder overlay
+// spliced after the cursor (AI-PLACEHOLDER-SPEC P1). The ghost renders only
+// while the cursor sits at the end of the line — the composing state; a
+// mid-line edit hides it rather than drawing ghost text under the cursor —
+// and only while the row has room beyond the typed content (a soft-wrapped
+// input keeps the plain view). keep counts the prompt, the typed text, and
+// the virtual cursor's one cell, so the splice lands right after the block.
+func (m aiModel) ghostedInputRow() string {
+	row := m.input.View()
+	value := m.input.Value()
+	if m.ghost == "" || m.input.Line() != 0 || m.input.Column() < len([]rune(value)) {
+		return row
+	}
+	keep := lipgloss.Width(m.input.Prompt) + lipgloss.Width(value) + 1
+	if keep >= m.width-4 {
+		return row
+	}
+	return aiSpliceGhost(row, keep, m.ghost, m.width)
 }
 
 // aiFitFrame pins the frame to the terminal's cell grid exactly: every line

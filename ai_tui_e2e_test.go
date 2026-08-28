@@ -809,3 +809,19 @@ func TestE2EDefaultHelpRoutesBareInvocation(t *testing.T) {
 	help.waitFor("(interactive AI session)") // the help screen's own example line
 	help.expectCleanExit()
 }
+
+// The argument-placeholder ghost (AI-PLACEHOLDER-SPEC P1): accepting a
+// completion rewrites the input row in one frame — a one-shot render, so
+// the harness rules allow matching it — and that row carries the faint
+// signature of the accepted command's remaining arguments. get-widget is
+// resolvable against the forged spec's widgets collection, so the path
+// slot ghosts as the resource noun, not the raw parameter name.
+func TestE2EGhostSignatureAfterAcceptedCompletion(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(_, cacheDir string) {
+		seedCachedSpec(t, cacheDir)
+	}})
+	session.send("/get-wid")
+	session.waitFor("Get one widget")
+	session.send(keyTab)
+	session.waitFor("widget-name-or-id")
+}
