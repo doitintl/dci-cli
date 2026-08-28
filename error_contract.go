@@ -409,3 +409,131 @@ var ansiPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
 func stripANSI(s string) string {
 	return ansiPattern.ReplaceAllString(s, "")
 }
+
+// looksLikeArgvRejection reports whether an error (or a failed dispatch's
+// output) is cobra's own argument/flag rejection — the only usage failures
+// where a reconstructed usage line answers the error. exitUsage is shared by
+// richer domain errors (an ambiguous name listing its candidates, a
+// body-validation message naming the field) that already explain themselves;
+// a usage line after those would misdirect the reader toward the argument
+// count.
+func looksLikeArgvRejection(text string) bool {
+	lower := strings.ToLower(text)
+	for _, fragment := range []string{
+		"accepts ",
+		"requires at least",
+		"requires exactly",
+		"unknown flag",
+		"unknown shorthand flag",
+	} {
+		if strings.Contains(lower, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+// argvUsageTrailer reconstructs a rejected invocation's usage from the live
+// cobra tree, as the lines to print after the rejection itself. argv is the
+// invocation after the `dci` word (the same shape the session dispatches).
+// sessionSpelling picks the surface: "/add-ticket-tags …" for the `dci ai`
+// session, "dci add-ticket-tags …" for the shell — the shell previously
+// printed nothing here while the session printed its usage line, which is
+// exactly the inconsistency this trailer removes.
+//
+// Cobra's Use names only the path parameters, so for an operation that takes
+// a request body the one-liner looked complete while the required body was
+// missing entirely. When the command's help declares a request schema (or
+// carries a spec example), the trailer says so: a [body fields] marker on
+// the usage line, then the spec's own example when there is one, or the
+// schema's top-level field list with its required markers.
+func argvUsageTrailer(argv []string, sessionSpelling bool) string {
+	if len(argv) == 0 || cli.Root == nil {
+		return ""
+	}
+	command := findChildCommand(findDCICommand(), argv[0])
+	if command == nil {
+		command = findChildCommand(cli.Root, argv[0])
+	}
+	if command == nil {
+		return ""
+	}
+	// Descend while the following words name subcommands ("beta run-report",
+	// "customer-context set"); the matched words become the usage's prefix.
+	matched := 1
+	for matched < len(argv) {
+		child := findChildCommand(command, argv[matched])
+		if child == nil {
+			break
+		}
+		command = child
+		matched++
+	}
+	if len(command.Commands()) > 0 || strings.TrimSpace(command.Use) == "" {
+		return ""
+	}
+	prefix := "dci "
+	if sessionSpelling {
+		prefix = "/"
+	}
+	if matched > 1 {
+		prefix += strings.Join(argv[:matched-1], " ") + " "
+	}
+	usage := "usage: " + prefix + command.Use
+
+	bodyFields := requestSchemaTopLevelFieldList(command.Long)
+	example := firstUsageExample(command.Example, sessionSpelling)
+	if len(bodyFields) == 0 && example == "" {
+		return usage
+	}
+	lines := []string{usage + " [body fields]"}
+	if example != "" {
+		lines = append(lines, "example: "+example)
+	} else if len(bodyFields) > 0 {
+		lines = append(lines, "body fields (* = required): "+bodyFieldSummary(bodyFields))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// firstUsageExample extracts the first spec-provided example invocation from
+// a command's cobra Example block (restish renders one "  dci <use> <body>"
+// line per spec example), respelled for the session when asked.
+func firstUsageExample(example string, sessionSpelling bool) string {
+	for _, line := range strings.Split(example, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if sessionSpelling {
+			if rest, ok := strings.CutPrefix(line, "dci "); ok {
+				line = "/" + rest
+			}
+		}
+		return line
+	}
+	return ""
+}
+
+// bodyFieldSummary joins the schema's top-level fields for the trailer,
+// capped so a wide schema doesn't turn the trailer into a second help page.
+func bodyFieldSummary(fields []string) string {
+	const maxListedBodyFields = 10
+	if len(fields) > maxListedBodyFields {
+		fields = append(append([]string{}, fields[:maxListedBodyFields]...), "…")
+	}
+	return strings.Join(fields, ", ")
+}
+
+// shellInvocationArgv strips the process word — and the "dci" group word
+// normalizeArgs inserts before API operations — off os.Args, yielding the
+// argv shape argvUsageTrailer expects. Local root commands
+// (customer-context, login, …) arrive without the inserted group word.
+func shellInvocationArgv(args []string) []string {
+	if len(args) < 2 {
+		return nil
+	}
+	if args[1] == "dci" {
+		return args[2:]
+	}
+	return args[1:]
+}

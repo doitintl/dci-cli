@@ -31,7 +31,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/NimbleMarkets/ntcharts/v2/picture"
 	"github.com/charmbracelet/glamour"
-	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -1984,60 +1983,20 @@ func renderAIMarkdown(text string, width int, style string) string {
 }
 
 // aiOutputIsArgvError reports whether a failed dispatch's output is cobra's
-// own argument/flag rejection — the only exit-2 failures where the one-line
-// usage answers the error. exitUsage is shared by richer domain errors (an
-// ambiguous name listing its candidates, a body-validation message naming
-// the field) that already explain themselves; a usage line after those would
-// misdirect the reader toward the argument count.
+// own argument/flag rejection — the only exit-2 failures where the usage
+// trailer answers the error (looksLikeArgvRejection, shared with the shell's
+// reporter in error_contract.go).
 func aiOutputIsArgvError(output string) bool {
-	lower := strings.ToLower(output)
-	for _, fragment := range []string{
-		"accepts ",
-		"requires at least",
-		"requires exactly",
-		"unknown flag",
-		"unknown shorthand flag",
-	} {
-		if strings.Contains(lower, fragment) {
-			return true
-		}
-	}
-	return false
+	return looksLikeArgvRejection(output)
 }
 
-// aiUsageLineFor reconstructs a failed dispatch's one-line usage from the
+// aiUsageLineFor reconstructs a failed dispatch's usage trailer from the
 // live cobra tree, spelled the session's way ("/beta run-report id"). Only
 // leaf commands get one: a group's own help already lists its subcommands.
+// Shared with the shell's error reporter (argvUsageTrailer) so both surfaces
+// answer a rejected invocation the same way.
 func aiUsageLineFor(argv []string) string {
-	if len(argv) == 0 || cli.Root == nil {
-		return ""
-	}
-	command := findChildCommand(findDCICommand(), argv[0])
-	if command == nil {
-		command = findChildCommand(cli.Root, argv[0])
-	}
-	if command == nil {
-		return ""
-	}
-	// Descend while the following words name subcommands ("beta run-report",
-	// "customer-context set"); the matched words become the usage's prefix.
-	matched := 1
-	for matched < len(argv) {
-		child := findChildCommand(command, argv[matched])
-		if child == nil {
-			break
-		}
-		command = child
-		matched++
-	}
-	if len(command.Commands()) > 0 || strings.TrimSpace(command.Use) == "" {
-		return ""
-	}
-	prefix := "/"
-	if matched > 1 {
-		prefix = "/" + strings.Join(argv[:matched-1], " ") + " "
-	}
-	return "usage: " + prefix + command.Use
+	return argvUsageTrailer(argv, true)
 }
 
 // findChildCommand returns parent's direct subcommand matching name (or one
