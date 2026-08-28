@@ -221,6 +221,65 @@ func TestServeRun(t *testing.T) {
 			t.Error("click not signaled")
 		}
 	})
+	t.Run("running page is written and flushed before the click signals", func(t *testing.T) {
+		// The signal wakes maybeWaitForRunClick, whose exec tears down the
+		// whole process (HTTP server included); signaling before the flush
+		// raced the exec against the response and could abort the browser's
+		// request instead of showing the running page.
+		offer := armTestOffer(t)
+		close(offer.exchangeDone)
+		rec := &clickOrderRecorder{ResponseRecorder: httptest.NewRecorder(), clicked: offer.clicked}
+		req := httptest.NewRequest(http.MethodGet, "/run?t="+offer.token, nil)
+		loginCallbackHandler{c: make(chan string, 1)}.ServeHTTP(rec, req)
+		if rec.clickedBeforeWrite {
+			t.Error("click signaled before the running page was written")
+		}
+		if !rec.flushed {
+			t.Error("running page was not flushed")
+		}
+		if rec.clickedBeforeFlush {
+			t.Error("click signaled before the running page was flushed")
+		}
+		select {
+		case <-offer.clicked:
+		default:
+			t.Error("click not signaled at all")
+		}
+	})
+}
+
+// clickOrderRecorder records whether the run offer's clicked channel was
+// already closed when the handler wrote or flushed the response.
+type clickOrderRecorder struct {
+	*httptest.ResponseRecorder
+	clicked            <-chan struct{}
+	flushed            bool
+	clickedBeforeWrite bool
+	clickedBeforeFlush bool
+}
+
+func (rec *clickOrderRecorder) clickedAlready() bool {
+	select {
+	case <-rec.clicked:
+		return true
+	default:
+		return false
+	}
+}
+
+func (rec *clickOrderRecorder) Write(b []byte) (int, error) {
+	if rec.clickedAlready() {
+		rec.clickedBeforeWrite = true
+	}
+	return rec.ResponseRecorder.Write(b)
+}
+
+func (rec *clickOrderRecorder) Flush() {
+	if rec.clickedAlready() {
+		rec.clickedBeforeFlush = true
+	}
+	rec.flushed = true
+	rec.ResponseRecorder.Flush()
 }
 
 func TestMaybeWaitForRunClick(t *testing.T) {
