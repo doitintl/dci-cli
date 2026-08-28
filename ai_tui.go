@@ -1167,7 +1167,16 @@ func (m aiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // setCompletions swaps the popup and relayouts, since the popup borrows rows
-// from the viewport.
+// from the viewport. The highlight restarts at the top of the rebuilt list —
+// setCompletions only runs when the input text changed (arrow keys move the
+// highlight without coming through here), and a highlight carried across
+// different content pointed at whatever row number the old list happened to
+// share. Then it snaps to the row the input already names exactly, wherever
+// the bucket order put it: user commands and verbs list before catalog
+// prefix matches, so a saved command extending a catalog name
+// ("get-report-custom") would otherwise sit highlighted above a fully typed
+// "get-report" and make Enter rewrite the input instead of submitting it
+// (aiCompletionExact follows the highlight).
 func (m *aiModel) setCompletions(completions []aiCompletion) {
 	if len(completions) != len(m.completions) {
 		m.completions = completions
@@ -1175,8 +1184,13 @@ func (m *aiModel) setCompletions(completions []aiCompletion) {
 	} else {
 		m.completions = completions
 	}
-	if m.completionIndex >= len(m.completions) {
-		m.completionIndex = 0
+	m.completionIndex = 0
+	token := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "/")
+	for index, completion := range m.completions {
+		if completion.Value == token {
+			m.completionIndex = index
+			break
+		}
 	}
 }
 
