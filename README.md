@@ -207,8 +207,10 @@ dci list-anomalies --table-mode interactive
 # Show only specific columns
 dci list-budgets --table-columns id,name,amount
 
-# Draw an ASCII graph of report period totals under the table
+# Draw a chart of the report under the table: stacked columns per group
+# (the default), or line, sparkline, heatmap, or treemap of group shares
 dci query <query.json --chart
+dci query <query.json --chart=treemap
 ```
 
 ### Row Ordering

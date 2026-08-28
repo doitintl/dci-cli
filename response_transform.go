@@ -100,6 +100,10 @@ func transformSuccessBody(body interface{}) interface{} {
 		}
 	}
 
+	// A result with no time dimension cannot pivot, but its group totals are
+	// exactly what --chart=treemap draws; other modes keep their note.
+	setTreemapSeriesFromFlatRows(rows, schema)
+
 	if limit := effectiveMaxRows(); limit > 0 && len(rows) > limit {
 		total := len(rows)
 		rows = rows[:limit]
