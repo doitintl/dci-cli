@@ -14,6 +14,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/creack/pty v1.1.24
 	github.com/creativeprojects/go-selfupdate v1.6.0
+	github.com/fxamacker/cbor/v2 v2.4.0
 	github.com/gosimple/slug v1.13.1
 	github.com/guptarohit/asciigraph v0.10.0
 	github.com/mattn/go-isatty v0.0.20
@@ -67,7 +68,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/eliukblau/pixterm v1.3.1 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.4.0 // indirect
 	github.com/gbl08ma/httpcache v1.0.2 // indirect
 	github.com/go-fed/httpsig v1.1.0 // indirect
 	github.com/google/btree v1.1.2 // indirect
