@@ -826,3 +826,24 @@ func TestE2EGhostSignatureAfterAcceptedCompletion(t *testing.T) {
 	session.send(keyTab)
 	session.waitFor("widget-name-or-id " + aiPickerCue)
 }
+
+// Tab in argument position (AI-PLACEHOLDER-SPEC P2): on the empty pickable
+// slot, Tab accepts what the ghost's cue offers — it submits like Enter and
+// the zero-argument name picker opens from the seeded cache. The first Tab
+// accepts the completion; the second is the argument Tab.
+func TestE2ETabOpensPickerOnEmptyPickableSlot(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(configDir, cacheDir string) {
+		seedCachedSpec(t, cacheDir)
+		seedWidgetNames(t, configDir)
+	}})
+	session.send("/get-wid")
+	session.waitFor("Get one widget")
+	session.send(keyTab)
+	session.waitFor("widget-name-or-id " + aiPickerCue)
+	session.send(keyTab)
+	session.waitFor("Select a widget")
+	session.send("dev")
+	session.send(keyEnter)
+	session.waitFor("picked Dev Widget")
+	session.waitFor("dci get-widget wDev00000000000000002")
+}
