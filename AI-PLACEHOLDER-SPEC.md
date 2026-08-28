@@ -118,7 +118,7 @@ Not in phase 2 either: a huh-style per-field form over the input, validation-on-
 The signature builder takes the typed argv words and walks the live cobra tree (the `argvUsageTrailer` descent), reading:
 
 - `command.Use` → path-parameter names (and arity),
-- `operationPathParameters[name]` → types/examples for those parameters (GA; keyed with the `"beta "` prefix where registered — today only `beta run-report` via `registerBetaResolutionMetadata`, beta_commands.go),
+- `operationPathParameters[name]` → types/examples for those parameters (GA operations only, keyed by the plain operation name, `setOperationPathParameters`, path_validation.go — beta ops never populate this map, so their placeholders fall back to the `Use` word, §5.3),
 - `command.Long` → body field list with markers and value sketches (§5.2),
 - `command.Example` → the first spec example (phase 2 value hints),
 - `resolutionIndex[name]` → whether the path slot accepts names (§3.2).
