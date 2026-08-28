@@ -1,7 +1,7 @@
 # Design spec: configurable terminal-friendly output ordering in `dci`
 
 Status: **draft for maintainer review**.
-Audited at commit `0cbe012`; every claim cites the function and file it is based on, line numbers approximate at that commit. Builds on the chart-placement fix in [PR #133](https://github.com/doitintl/dci-cli/pull/133) (`noteChartWidth`/`flushPendingChart`, charts.go), which this spec assumes lands first.
+Audited at commit `0cbe012`; every claim cites the function and file it is based on, line numbers approximate at that commit. Builds on the chart-placement fix in [PR #133](https://github.com/doitintl/dci-cli/pull/133), which this spec assumes lands first — `noteChartWidth`/`flushPendingChart` exist on that PR's head (`1eb5385`, charts.go), **not yet on main**: at the audited commit the chart still prints *above* the table (`maybeRenderChart` runs inside `renderTable` before the marshaled bytes reach stdout, main.go:3169), which is exactly what #133 fixes.
 
 Scope: the ordering of *rows* in human-terminal output — which end of a table carries the content the reader came for. Everything here is **human-presentation only**: agent mode, machine formats (json, yaml, csv, toon), and piped output are byte-for-byte unchanged, same discipline as TUI-SPEC §3.1 and TIMEZONE-SPEC §4.3. Per the maintainer's steer, the configuration surface is a first-class part of the design (§6), not an afterthought.
 
@@ -13,7 +13,7 @@ The originating feedback (Alfredo, dogfood session, 2026-08-28, verbatim):
 
 > It might sound unorthodox, but as the terminal is scroll-up by default (on contrary to web UIs that are scroll-down), what if we invert the output defaults? For example, table values ascending instead of descending, chart last instead of up there, etc. (`dci get-report --chart "Customers by Cloud Spend"` as an example of heavy scroll up for meaning content). Maybe the direction could be contextual, depending on the lines of output VS. the terminal height.
 
-The chart half is already fixed: PR #133 moved the `--chart` render to after the table reaches stdout, so the chart now sits under the table, next to the prompt. This spec covers the deferred half — the ordering of the data itself — which was split out because it changes data presentation for every consumer and deserves its own decision.
+The chart half is fixed by PR #133 (open at audit time; see the header note for the exact state on main): it moves the `--chart` render to after the table reaches stdout, so the chart sits under the table, next to the prompt. This spec covers the deferred half — the ordering of the data itself — which was split out because it changes data presentation for every consumer and deserves its own decision.
 
 | # | Decision | Recommendation |
 |---|----------|----------------|
@@ -59,7 +59,7 @@ Orderings that are already terminal-shaped (unchanged in both modes):
 |------|----------|----------|
 | Flat report rows | `sortReportRows` (response_transform.go:617) | Ascending cell-by-cell, time leads → newest period last |
 | Pivot `TOTAL` rows | pivot.go:135–147 | Appended after the group rows — bottom of the table |
-| `--chart` | `noteChartWidth`/`flushPendingChart` (charts.go, PR #133) | Renders after the table is on screen |
+| `--chart` | `noteChartWidth`/`flushPendingChart` (charts.go on PR #133's head `1eb5385`; on main the pre-fix `maybeRenderChart` call still renders it above the table, main.go:3169) | Renders after the table is on screen once #133 lands |
 | Hidden-columns hint | `renderHiddenColumnsHint` (main.go:3171) | Appended under the table |
 | Update notice | deferred `maybeNotifyUpdate` (main.go:723, update.go:70) | Last thing printed, on stderr |
 
@@ -122,7 +122,7 @@ Alfredo's "maybe the direction could be contextual, depending on the lines of ou
 3. **The threshold is unknowable before rendering.** Row count is known pre-render, but rendered *line* count is not: `-M wrap` multiplies lines per row (main.go:2092), the chart adds 12–15 lines after the fact, and the hidden-columns hint wraps. Any pre-render estimate misclassifies near the boundary — and near the boundary is where a short table would suddenly flip.
 4. **Short output makes the flip harmless anyway.** When everything fits on screen, both orderings are fully visible; the cost of `terminal` ordering on a 5-row table is one glance upward. A heuristic would spend its complexity budget on the case where the choice matters least.
 
-The value spelling `auto` is **reserved** (rejected at parse time with a "not supported yet" error rather than treated as a typo) so the door stays open without committing to semantics now. If it is ever built, the measurement should mirror the width precedent: `term.GetSize` on stdout for height, `LINES` fallback, and a `LINES=<height>` entry in `aiDispatchEnv`.
+The value spelling `auto` is **reserved** so the door stays open without committing to semantics now: it is handled like any other unaccepted value under the one parsing rule in §6.1 (flag hard-errors, env/file warn and fall through), with error/warning text that says "reserved, not supported yet" instead of listing it as a typo. If it is ever built, the measurement should mirror the width precedent: `term.GetSize` on stdout for height, `LINES` fallback, and a `LINES=<height>` entry in `aiDispatchEnv`.
 
 ---
 
@@ -133,7 +133,8 @@ The maintainer's explicit requirement: configurable, first-class. Three layers, 
 ### 6.1 Naming and values
 
 - **Flag**: `--output-order <terminal|classic>`, a persistent string flag on the `dci` command group, registered in `addOutputFlag` (main.go:2085) beside `--output`/`--table-mode`, with static completion via `registerStaticFlagCompletions` (main.go:2122).
-- **Env var**: `DCI_OUTPUT_ORDER=<terminal|classic>`. Value-carrying (not boolish) because the domain is an enum with a reserved third value; precedent for value-carrying `DCI_*` vars: `DCI_TZ` (main.go:3672), `DCI_AI_EFFORT` (ai_session.go:151). An unrecognized value warns once on stderr and falls through to the next layer — the `DCI_AGENT_MODE` typo rule (main.go:689–693) and the `DCI_TZ` fallback rule, not a hard error.
+- **Env var**: `DCI_OUTPUT_ORDER=<terminal|classic>`. Value-carrying (not boolish) because the domain is an enum with a reserved third value; precedent for value-carrying `DCI_*` vars: `DCI_TZ` (main.go:3672), `DCI_AI_EFFORT` (ai_session.go:151).
+- **One parsing rule** (authoritative; §5 and §9.1 defer to it), matching how the CLI already splits the two cases: a value the layer does not accept — a typo or the reserved `auto` — is a **hard usage error on the flag** (an explicit per-invocation ask fails loudly, exactly like invalid `--output`, main.go:2145) and a **warn-once-and-fall-through in the env var and the persisted file** (ambient configuration must not break every invocation over a typo — the `DCI_AGENT_MODE` rule, main.go:689–693, and the `DCI_TZ` fallback, main.go:3674). `auto` differs only in wording: "reserved, not supported yet" rather than the unknown-value message.
 - **Persisted setting**: `{"output_order": "classic"}` in a new `cli_settings.json` in the config dir (`dciConfigDir()`, main.go:131), handled exactly like `ai_settings.json` (ai_session.go:75–95): read-tolerant, `0o600`, absent file = defaults. A new file rather than a new key in `ai_settings.json` because that file is the AI session's chapter and this setting governs the whole CLI; rather than restish's `apis.json` because `ensureConfig` (main.go:171) treats that file as restish's contract.
 - **Setter**: `dci config output-order <terminal|classic>` (and bare `dci config` printing the resolved values with their sources). A small command in the new chapter file, following the `registerStatusCommands` pattern (main.go:1733). Editing JSON by hand must never be the only path to a persisted preference. `dci status` gains one line — `Output order: terminal (default)` / `… (DCI_OUTPUT_ORDER)` / `… (cli_settings.json)` — matching how it attributes the API base and customer context today (main.go:1751, :1773).
 
@@ -159,7 +160,7 @@ The `DCI_NO_*` negative-toggle convention (`DCI_NO_TUI`, `DCI_NO_RESOLVE`) fits 
 
 ### 7.1 `--chart`
 
-Already terminal-ordered by PR #133: the chart renders after the table is on stdout. Two consistency points this spec pins:
+Terminal-ordered once PR #133 lands: the chart renders after the table is on stdout. Two consistency points this spec pins:
 
 - Chart **period axis** stays oldest→newest left→right in both orderings — time on a chart axis is not a scroll-direction question.
 - The stacked chart's **group fold** consumes `groupOrder` largest-first to keep the top `chartMaxGroups` and fold the tail into "other" (`setChartSeries`, charts.go:58–82; pivot.go:154–168). The pivot must therefore build the chart series from the **classic** (descending) ranking and reverse only the emitted rows — reversing before the fold would chart the five *smallest* groups. This is the one real footgun in the implementation and gets a dedicated test (§9.3).
@@ -207,13 +208,16 @@ Everything stays inside `package main`, chapter-per-file (AGENTS.md).
 ### 9.1 New sibling `output_order.go` (~120 lines)
 
 ```go
-// parseOutputOrder validates a spelling: "terminal", "classic",
-// "" (unset), or a reserved/unknown value (warn + fall through).
+// parseOutputOrder validates a spelling: "terminal", "classic", or
+// "" (unset); anything else (typos and the reserved "auto" alike) is
+// not accepted — the caller decides the severity per §6.1's rule:
+// usage error on the flag, warn-and-fall-through for env/file.
 func parseOutputOrder(v string) (order string, ok bool)
 
 // resolveOutputOrder applies flag > env > cli_settings.json > default
-// once per invocation; called from the PersistentPreRunE.
-func resolveOutputOrder(flagValue string) string
+// once per invocation; called from the PersistentPreRunE. Returns an
+// error only for an invalid flag value (§6.1).
+func resolveOutputOrder(flagValue string) (string, error)
 
 // terminalOrderActive is the single question the sort sites ask:
 // resolved order == "terminal" AND the §4.2 gate holds.
@@ -237,7 +241,7 @@ No restish, transport, or renderer changes; `renderTable` never learns about ord
 
 ### 9.3 Testing plan (style of the existing `_test.go` siblings)
 
-- `output_order_test.go`: parse table (valid, unset, typo-warns-and-falls-through, reserved `auto`); precedence table across flag/env/file/default (`t.Setenv`, temp config dir — the `resolveAIEffort` test pattern); gate truth table over `tuiActive`/`sessionRenderActive`/agent/format.
+- `output_order_test.go`: parse table (valid, unset, typo, reserved `auto` — asserting §6.1's split: flag → usage error, env/file → warn once and fall through); precedence table across flag/env/file/default (`t.Setenv`, temp config dir — the `resolveAIEffort` test pattern); gate truth table over `tuiActive`/`sessionRenderActive`/agent/format.
 - `list_views_test.go`: one view with `sortField` asserted both directions; a view without `sortField` asserted **unchanged** under `terminal` (the §3 "never scramble API order" rule).
 - `response_transform_test.go`: insights ranking both directions; JSON bytes identical under `terminal` (machine-format invariant).
 - `pivot_test.go`: group rows reversed, `TOTAL` still last, heatmap `pivot-total-rows` still correct; **the chart-fold test** — with >`chartMaxGroups` groups and `terminal` ordering, `setChartSeries` still receives the largest-first series and folds the tail.
