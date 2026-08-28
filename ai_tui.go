@@ -737,7 +737,11 @@ func (m aiModel) handleLoginDone(msg aiLoginDoneMsg) (tea.Model, tea.Cmd) {
 		m.append(aiErrorStyle.Render("login failed: " + msg.err.Error()))
 		return m, nil
 	}
-	m.append(tuiSuccessStyle.Render(fmt.Sprintf("Logged in — %d commands available.", len(m.catalog))))
+	// The login child skipped the success page's click-to-run offer
+	// (aiLoginCommand marks it), so the session carries the "try next"
+	// suggestion instead, spelled its own way.
+	m.append(tuiSuccessStyle.Render(fmt.Sprintf("Logged in — %d commands available.", len(m.catalog))) + "\n" +
+		aiEchoStyle.Render("Try /"+strings.Join(loginRunSuggestion, " ")))
 	// refreshAuthState blanked the resolved display name; the fresh
 	// credentials (and the just-hydrated get-customer operation) can resolve
 	// it again. Logout skips this: without credentials the lookup can't run.
@@ -1104,9 +1108,9 @@ func (m aiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// With the popup open, Enter accepts the highlighted completion —
 		// parity with Claude Code's picker (F1; dogfood: Enter submitting the
 		// still-partial token reads as the picker ignoring the selection). An
-		// input that already names a completion exactly submits, so /quit⏎
-		// never needs a double-Enter.
-		if len(m.completions) > 0 && !aiCompletionExact(m.input.Value(), m.completions) {
+		// input that already names the highlighted completion exactly submits,
+		// so /quit⏎ never needs a double-Enter.
+		if len(m.completions) > 0 && !aiCompletionExact(m.input.Value(), m.completions, m.completionIndex) {
 			m.acceptCompletion()
 			return m, nil
 		}
@@ -1290,7 +1294,7 @@ func (m aiModel) submit() (tea.Model, tea.Cmd) {
 		// headless error. The child also re-fetches and caches the API spec,
 		// so aiLoginDoneMsg can rebuild the catalog.
 		if route.argv[0] == "login" {
-			return m, tea.ExecProcess(exec.Command(aiExecutablePath(), route.argv...), func(err error) tea.Msg {
+			return m, tea.ExecProcess(aiLoginCommand(route.argv), func(err error) tea.Msg {
 				return aiLoginDoneMsg{err: err}
 			})
 		}
@@ -1887,6 +1891,23 @@ func aiFriendlyAPIError(configDir, message string) string {
 		return "The selected model was not accepted — check /model. (" + message + ")"
 	}
 	return message
+}
+
+// aiSessionEnvMarker tells a child handed the real terminal via
+// tea.ExecProcess that the `dci ai` session is waiting to resume behind it.
+// login uses it to disarm the success page's click-to-run offer
+// (armLoginRunOffer): the session repaints the alternate screen the instant
+// the child exits, so a login that lingered through the grace window ended in
+// "login failed" on Ctrl-C, and a clicked suggestion's output was painted
+// over as soon as it appeared. The session offers its own "try next" instead.
+const aiSessionEnvMarker = "DCI_AI_SESSION"
+
+// aiLoginCommand builds the /login child that runs on the session's own
+// terminal, marked so it skips the click-to-run grace window.
+func aiLoginCommand(argv []string) *exec.Cmd {
+	command := exec.Command(aiExecutablePath(), argv...)
+	command.Env = append(os.Environ(), aiSessionEnvMarker+"=1")
+	return command
 }
 
 // aiExecutablePath resolves the binary to re-exec: the running executable,

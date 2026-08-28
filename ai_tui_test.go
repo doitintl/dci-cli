@@ -1297,6 +1297,50 @@ func TestAIEnterSubmitsExactCompletion(t *testing.T) {
 	}
 }
 
+func TestAIEnterAcceptsHighlightedRowOverExactInput(t *testing.T) {
+	// "/beta" is itself a completion, but with the highlight moved to a
+	// subcommand, Enter must accept that row — it used to re-submit the bare
+	// /beta because exactness was checked against the whole list.
+	m := aiTestModel(t)
+	m.catalog = []aiCatalogEntry{
+		{Path: "beta", Summary: "Early-access commands"},
+		{Path: "beta run-report", Summary: "(beta) Run a report"},
+	}
+	m = aiType(m, "/beta")
+	if len(m.completions) != 2 {
+		t.Fatalf("completions = %+v", m.completions)
+	}
+	m, _ = aiPress(m, tea.KeyDown)
+	m, _ = aiPress(m, tea.KeyEnter)
+	if got := m.input.Value(); got != "/beta run-report " {
+		t.Fatalf("input after enter = %q, want the highlighted subcommand", got)
+	}
+	if len(m.history) != 0 {
+		t.Fatalf("enter submitted instead of accepting: history = %v", m.history)
+	}
+}
+
+func TestAIEnterCompletesPartialSecondToken(t *testing.T) {
+	// "/beta run" used to leave the popup hidden, stranding the user until
+	// they finished the subcommand by hand.
+	m := aiTestModel(t)
+	m.catalog = []aiCatalogEntry{
+		{Path: "beta", Summary: "Early-access commands"},
+		{Path: "beta run-report", Summary: "(beta) Run a report"},
+	}
+	m = aiType(m, "/beta run")
+	if len(m.completions) != 1 || m.completions[0].Value != "beta run-report" {
+		t.Fatalf("completions = %+v", m.completions)
+	}
+	m, _ = aiPress(m, tea.KeyEnter)
+	if got := m.input.Value(); got != "/beta run-report " {
+		t.Fatalf("input after enter = %q, want the completed subcommand", got)
+	}
+	if len(m.history) != 0 {
+		t.Fatalf("enter submitted the partial token: history = %v", m.history)
+	}
+}
+
 func TestAIBellWorthy(t *testing.T) {
 	if aiBellWorthy(aiTurnDone{Wall: time.Second}) {
 		t.Fatal("a fast toolless turn must not ring")
@@ -1513,12 +1557,35 @@ func TestAILoginDispatchSuspendsForTerminal(t *testing.T) {
 	}
 }
 
+func TestAILoginCommandMarksTheSessionChild(t *testing.T) {
+	// The marker disarms the success page's click-to-run offer
+	// (armLoginRunOffer): the session repaints the alt screen the instant the
+	// child exits, so the grace window and the clicked suggestion's output
+	// have nowhere to live.
+	command := aiLoginCommand([]string{"login"})
+	found := false
+	for _, entry := range command.Env {
+		if entry == aiSessionEnvMarker+"=1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("login child env lacks %s=1", aiSessionEnvMarker)
+	}
+	if len(command.Args) < 2 || command.Args[1] != "login" {
+		t.Fatalf("login child argv = %v", command.Args)
+	}
+}
+
 func TestAILoginDoneRefreshesAndReports(t *testing.T) {
 	m := aiTestModel(t)
 	updated, _ := m.Update(aiLoginDoneMsg{})
 	m = updated.(aiModel)
 	if !strings.Contains(aiTranscriptText(m), "Logged in") {
 		t.Fatal("login success missing from the transcript")
+	}
+	if !strings.Contains(aiTranscriptText(m), "Try /"+strings.Join(loginRunSuggestion, " ")) {
+		t.Fatal("session-shaped try-next suggestion missing after login")
 	}
 	updated, _ = m.Update(aiLoginDoneMsg{err: errors.New("exit status 1")})
 	m = updated.(aiModel)

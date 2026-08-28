@@ -174,6 +174,53 @@ func TestAICompletionsFor(t *testing.T) {
 	}
 }
 
+func TestAIGroupCompletions(t *testing.T) {
+	catalog := []aiCatalogEntry{
+		{Path: "beta", Summary: "Early-access commands"},
+		{Path: "beta list-flags", Summary: "(beta) List flags"},
+		{Path: "beta run-report", Summary: "(beta) Run a report"},
+		{Path: "customer-context set", Summary: "Set the default customerContext"},
+		{Path: "get-report", Summary: "Get a report"},
+	}
+
+	// A partial second token completes against the group's paths — "/beta run"
+	// used to strand the user with the popup hidden.
+	got := aiCompletionsFor("/beta run", catalog, nil, 6)
+	if len(got) != 1 || got[0].Value != "beta run-report" {
+		t.Fatalf("prefix group completion = %v", got)
+	}
+	// Substring on the last token within the committed group, like the
+	// single-token popup's substring tier.
+	got = aiCompletionsFor("/beta report", catalog, nil, 6)
+	if len(got) != 1 || got[0].Value != "beta run-report" {
+		t.Fatalf("substring group completion = %v", got)
+	}
+	// Case-insensitive and whitespace-normalized like the rest of the popup.
+	got = aiCompletionsFor("/BETA  Run", catalog, nil, 6)
+	if len(got) != 1 || got[0].Value != "beta run-report" {
+		t.Fatalf("normalized group completion = %v", got)
+	}
+	// Deeper groups complete the same way.
+	got = aiCompletionsFor("/customer-context s", catalog, nil, 6)
+	if len(got) != 1 || got[0].Value != "customer-context set" {
+		t.Fatalf("nested group completion = %v", got)
+	}
+	// A fully typed group path still shows (Enter submits it — exactness).
+	got = aiCompletionsFor("/beta run-report", catalog, nil, 6)
+	if len(got) != 1 || got[0].Value != "beta run-report" {
+		t.Fatalf("exact group completion = %v", got)
+	}
+	// Arguments and flags after a leaf never resurrect the popup.
+	for _, input := range []string{"/get-report abc", "/beta run-report abc", "/get-report --chart"} {
+		if got := aiCompletionsFor(input, catalog, nil, 6); len(got) != 0 {
+			t.Fatalf("popup after a leaf for %q = %v", input, got)
+		}
+	}
+	if got := aiCompletionsFor("/beta xyz", catalog, nil, 6); len(got) != 0 {
+		t.Fatalf("no-match group completion = %v", got)
+	}
+}
+
 func TestAIHistoryRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 
@@ -256,17 +303,33 @@ func TestAIHistoryPathStaysInConfigDir(t *testing.T) {
 
 func TestAICompletionExact(t *testing.T) {
 	completions := []aiCompletion{{Value: "quit"}, {Value: "customer-context set"}}
-	if !aiCompletionExact("/quit", completions) {
+	if !aiCompletionExact("/quit", completions, 0) {
 		t.Fatal("fully typed command should be exact")
 	}
-	if aiCompletionExact("/qui", completions) {
+	if aiCompletionExact("/qui", completions, 0) {
 		t.Fatal("partial token is not exact")
 	}
-	if aiCompletionExact("/QUIT", completions) {
+	if aiCompletionExact("/QUIT", completions, 0) {
 		t.Fatal("case-mismatched token is not exact — Enter should correct it")
 	}
-	if aiCompletionExact("", nil) {
+	if aiCompletionExact("", nil, 0) {
 		t.Fatal("empty input is never exact")
+	}
+	// The typed text matching SOME row is not enough: with the highlight moved
+	// to another row, Enter must accept that row, not re-submit the input —
+	// "/beta" + ↓ to a subcommand used to run the bare /beta again.
+	group := []aiCompletion{{Value: "beta"}, {Value: "beta run-report"}}
+	if !aiCompletionExact("/beta", group, 0) {
+		t.Fatal("input naming the highlighted row is exact")
+	}
+	if aiCompletionExact("/beta", group, 1) {
+		t.Fatal("highlight on a different row must accept it, not submit the input")
+	}
+	if aiCompletionExact("/beta run-report", group, 0) {
+		t.Fatal("exactness follows the highlight, not membership")
+	}
+	if aiCompletionExact("/quit", completions, 5) {
+		t.Fatal("out-of-range highlight is never exact")
 	}
 }
 

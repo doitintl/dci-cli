@@ -259,11 +259,21 @@ func readCacheExpiry(cacheDir, key string) time.Time {
 }
 
 func authenticationRequiredPreflightError() error {
+	message := "no credentials available and this session cannot open a browser to log in"
+	hint := "Set DCI_API_KEY to a DoiT API token, or run dci login from an interactive terminal"
+	if sessionRenderActive() {
+		// This child really cannot open a browser, but the `dci ai` session it
+		// renders for can: /login suspends the session and hands the browser
+		// flow the real terminal. Say that, not the shell-shaped remedy — the
+		// human-mode error prints only the message, so it must carry the fix.
+		message = "you're not signed in — run /login to sign in"
+		hint = "Run /login to sign in"
+	}
 	return invocationPreflightError{
 		detail: structuredError{
 			Code:      "AUTHENTICATION_REQUIRED",
-			Message:   "no credentials available and this session cannot open a browser to log in",
-			Hint:      "Set DCI_API_KEY to a DoiT API token, or run dci login from an interactive terminal",
+			Message:   message,
+			Hint:      hint,
 			Retryable: false,
 		},
 		exitCode: exitAuthentication,

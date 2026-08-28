@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -81,11 +82,21 @@ var (
 func armLoginRunOffer() {
 	// Scripted and agent invocations must keep today's prompt-returns-
 	// immediately behavior; the offer (and its grace window) is a human,
-	// interactive-terminal affordance only.
-	if agentUAMode == uaModeAgent || !stderrIsTTY() {
+	// interactive-terminal affordance only. A login handed the terminal by
+	// the `dci ai` session (aiLoginCommand) skips it too: the session resumes
+	// and repaints the alternate screen the moment this child exits, so the
+	// grace window only delayed the resume and a clicked suggestion's output
+	// was immediately painted over — the session shows its own "try next".
+	if agentUAMode == uaModeAgent || !stderrIsTTY() || aiSessionLoginActive() {
 		return
 	}
 	loginRunOffer = newRunOffer()
+}
+
+// aiSessionLoginActive reports that this process was spawned by the `dci ai`
+// session with the real terminal on loan (tea.ExecProcess).
+func aiSessionLoginActive() bool {
+	return os.Getenv(aiSessionEnvMarker) == "1"
 }
 
 func newRunOffer() *runOffer {
@@ -111,9 +122,22 @@ func renderLoginSuccessPage() string {
 	return strings.Replace(loginSuccessHTML, "$TRYNEXT", chip, 1)
 }
 
+// notifyRunSkip arms the grace window's Ctrl-C skip: while it is armed, an
+// interrupt lands on the returned channel instead of killing the process. A
+// var so tests can inject a channel without raising a real signal.
+var notifyRunSkip = func() (<-chan os.Signal, func()) {
+	skip := make(chan os.Signal, 1)
+	signal.Notify(skip, os.Interrupt)
+	return skip, func() { signal.Stop(skip) }
+}
+
 // maybeWaitForRunClick holds the login command open for the grace window so a
 // click on the success page chip can run the suggested command in this
 // terminal. No-op unless the browser flow actually completed an exchange.
+// Ctrl-C skips the wait gracefully: without the handler, the default SIGINT
+// disposition killed the (successfully logged-in) process with exit 130 —
+// which the `dci ai` session, and any script checking the exit code, read as
+// "login failed".
 func maybeWaitForRunClick() {
 	offer := loginRunOffer
 	if offer == nil {
@@ -124,11 +148,15 @@ func maybeWaitForRunClick() {
 	default:
 		return // cached/refresh token — no browser page was served
 	}
+	skip, stop := notifyRunSkip()
+	defer stop()
 	fmt.Fprintf(os.Stderr, "Waiting %d seconds in case you click the suggested command in the browser — Ctrl-C to skip.\n", int(runClickGraceWindow.Seconds()))
 	select {
 	case <-offer.clicked:
 		runSuggestedCommand()
 	case <-time.After(runClickGraceWindow):
+	case <-skip:
+		fmt.Fprintln(os.Stderr, "Skipped.")
 	}
 }
 
@@ -318,6 +346,12 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 	// (dci query < query.json) with a human still present, and must keep the
 	// browser flow — e.g. for re-auth after a stale refresh token.
 	if loginFlowHeadless() {
+		if sessionRenderActive() {
+			// The `dci ai` session's dispatch child: the session itself can
+			// run the browser flow via /login (it suspends and hands over the
+			// real terminal), so point there instead of at the shell.
+			return nil, errors.New("you're not signed in — run /login to sign in")
+		}
 		return nil, errors.New("no credentials available and this session cannot open a browser to log in: set DCI_API_KEY, or run dci login from an interactive terminal")
 	}
 
