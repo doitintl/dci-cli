@@ -221,6 +221,65 @@ func TestServeRun(t *testing.T) {
 			t.Error("click not signaled")
 		}
 	})
+	t.Run("running page is written and flushed before the click signals", func(t *testing.T) {
+		// The signal wakes maybeWaitForRunClick, whose exec tears down the
+		// whole process (HTTP server included); signaling before the flush
+		// raced the exec against the response and could abort the browser's
+		// request instead of showing the running page.
+		offer := armTestOffer(t)
+		close(offer.exchangeDone)
+		rec := &clickOrderRecorder{ResponseRecorder: httptest.NewRecorder(), clicked: offer.clicked}
+		req := httptest.NewRequest(http.MethodGet, "/run?t="+offer.token, nil)
+		loginCallbackHandler{c: make(chan string, 1)}.ServeHTTP(rec, req)
+		if rec.clickedBeforeWrite {
+			t.Error("click signaled before the running page was written")
+		}
+		if !rec.flushed {
+			t.Error("running page was not flushed")
+		}
+		if rec.clickedBeforeFlush {
+			t.Error("click signaled before the running page was flushed")
+		}
+		select {
+		case <-offer.clicked:
+		default:
+			t.Error("click not signaled at all")
+		}
+	})
+}
+
+// clickOrderRecorder records whether the run offer's clicked channel was
+// already closed when the handler wrote or flushed the response.
+type clickOrderRecorder struct {
+	*httptest.ResponseRecorder
+	clicked            <-chan struct{}
+	flushed            bool
+	clickedBeforeWrite bool
+	clickedBeforeFlush bool
+}
+
+func (rec *clickOrderRecorder) clickedAlready() bool {
+	select {
+	case <-rec.clicked:
+		return true
+	default:
+		return false
+	}
+}
+
+func (rec *clickOrderRecorder) Write(b []byte) (int, error) {
+	if rec.clickedAlready() {
+		rec.clickedBeforeWrite = true
+	}
+	return rec.ResponseRecorder.Write(b)
+}
+
+func (rec *clickOrderRecorder) Flush() {
+	if rec.clickedAlready() {
+		rec.clickedBeforeFlush = true
+	}
+	rec.flushed = true
+	rec.ResponseRecorder.Flush()
 }
 
 func TestMaybeWaitForRunClick(t *testing.T) {
@@ -505,5 +564,36 @@ func TestRequestOAuthToken(t *testing.T) {
 				t.Errorf("Expiry %v not ~90s out", token.Expiry)
 			}
 		})
+	}
+}
+
+func TestExecLoginRunSuggestionReplacesTheProcessImage(t *testing.T) {
+	// The suggestion must exec (replace the process image), not spawn a
+	// child: Token()'s manual-code goroutine is still parked in a read on
+	// the shared terminal after the browser flow wins, and a child sharing
+	// stdin raced it for every keystroke — the TUI saw only every second or
+	// third key. See execLoginRunSuggestion.
+	var gotPath string
+	var gotArgv []string
+	oldReplace := replaceLoginProcess
+	replaceLoginProcess = func(path string, argv, env []string) error {
+		gotPath = path
+		gotArgv = argv
+		return nil
+	}
+	t.Cleanup(func() { replaceLoginProcess = oldReplace })
+
+	execLoginRunSuggestion() // returns only via the stub; anything else exits the test process
+
+	if gotPath == "" {
+		t.Fatal("suggestion did not exec")
+	}
+	if len(gotArgv) != len(loginRunSuggestion)+1 || gotArgv[0] != gotPath {
+		t.Fatalf("exec argv = %v", gotArgv)
+	}
+	for i, want := range loginRunSuggestion {
+		if gotArgv[i+1] != want {
+			t.Fatalf("exec argv = %v, want suffix %v", gotArgv, loginRunSuggestion)
+		}
 	}
 }

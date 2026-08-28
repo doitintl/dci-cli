@@ -41,7 +41,37 @@ type chartSeriesData struct {
 
 var chartSeries *chartSeriesData
 
-func resetChartState() { chartSeries = nil }
+// pendingChartWidth defers the chart render until after restish has written
+// the table to stdout. The table marshaler records the rendered table's
+// width here (noteChartWidth) instead of printing the chart inline: printing
+// from inside the marshaler put the chart ABOVE the table on the terminal —
+// stderr flushed before the marshaled bytes reached stdout — so on a long
+// report the chart scrolled far out of view and the reader landed on the
+// table's tail. run() flushes it (flushPendingChart) once the command's
+// output is on screen, so the chart sits under the table, next to the
+// prompt. -1 means no table was rendered.
+var pendingChartWidth = -1
+
+func resetChartState() {
+	chartSeries = nil
+	pendingChartWidth = -1
+}
+
+// noteChartWidth records that a table of the given width was rendered, arming
+// the post-command chart flush.
+func noteChartWidth(tableWidth int) { pendingChartWidth = tableWidth }
+
+// flushPendingChart renders the requested chart under the command's output.
+// A no-op unless a table was rendered this invocation (matching the old
+// inline behavior: no table, no chart and no note).
+func flushPendingChart() {
+	if pendingChartWidth < 0 {
+		return
+	}
+	width := pendingChartWidth
+	pendingChartWidth = -1
+	maybeRenderChart(width)
+}
 
 func chartRequested() bool { return viper.GetBool("chart-requested") }
 

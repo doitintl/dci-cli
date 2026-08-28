@@ -77,6 +77,7 @@ var (
 	runClickGraceWindow = 60 * time.Second
 	runExchangeWait     = 10 * time.Second
 	runSuggestedCommand = execLoginRunSuggestion
+	replaceLoginProcess = replaceProcess
 )
 
 func armLoginRunOffer() {
@@ -160,20 +161,38 @@ func maybeWaitForRunClick() {
 	}
 }
 
-// execLoginRunSuggestion runs the fixed suggestion in this terminal and exits
-// with its status; the login process becomes a thin wrapper around it.
+// execLoginRunSuggestion runs the fixed suggestion in this terminal; the
+// login process becomes a thin wrapper around it.
+//
+// On Unix it replaces the process image outright rather than spawning a
+// child: Token()'s manual-code goroutine is still parked in a read on this
+// terminal (the browser callback won the select, but that pending read
+// cannot be cancelled), and a child sharing stdin raced it for every
+// keystroke — the kernel handed alternating bytes to each reader, so the
+// suggested command's TUI saw only every second or third key. exec kills
+// the reader with the rest of the old image. Windows has no execve, so it
+// keeps the child-process fallback (and, with it, the leftover reader).
 func execLoginRunSuggestion() {
 	fmt.Fprintf(os.Stderr, "$ dci %s\n", strings.Join(loginRunSuggestion, " "))
-	cmd := exec.Command(executablePath(), loginRunSuggestion...)
+	// The cleanup must run before the exec (which never returns) for the
+	// same reason it ran before os.Exit: under an active DCI_API_BASE_URL
+	// override it is the only thing that copies the OAuth token this login
+	// just acquired (written into applyAPIBaseOverride's temp-dir
+	// cache.json) back to the real cache dir, and it restores the
+	// DCI_CONFIG_DIR/DCI_CACHE_DIR env redirection. The re-exec'd command
+	// then re-applies the override for itself, seeded from the real cache
+	// that now holds the fresh token — so the ordering is equivalent for
+	// the child-process fallback too.
+	exe := executablePath()
+	runPendingAPIBaseOverrideCleanup()
+	if err := replaceLoginProcess(exe, append([]string{exe}, loginRunSuggestion...), os.Environ()); err == nil {
+		return // unreachable with the real exec; lets tests stub it
+	}
+
+	// Only reached when exec is unavailable (Windows) or failed.
+	cmd := exec.Command(exe, loginRunSuggestion...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err := cmd.Run()
-	// os.Exit below never runs run()'s deferred cleanup, so it must be run
-	// explicitly first: under an active DCI_API_BASE_URL override, that
-	// cleanup is the only thing that copies the OAuth token this login just
-	// acquired (written into applyAPIBaseOverride's temp-dir cache.json)
-	// back to the real cache dir. Skipping it would make the just-completed
-	// login silently unsaved.
-	runPendingAPIBaseOverrideCleanup()
 	if err == nil {
 		os.Exit(0)
 	}
@@ -234,9 +253,20 @@ func (h loginCallbackHandler) serveRun(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	offer.clickOnce.Do(func() { close(offer.clicked) })
+	// Deliver the running page BEFORE signaling the click: the signal wakes
+	// maybeWaitForRunClick, which execs the suggested command and tears down
+	// this whole process — HTTP server included. net/http only flushes the
+	// handler's buffered response after the handler returns, so signaling
+	// first raced the exec against the response and could abort the browser's
+	// request. Writing and explicitly flushing here pushes the page into the
+	// kernel's socket buffer, which the exec's graceful socket close still
+	// delivers.
 	w.Header().Set("Content-Type", "text/html")
 	_, _ = w.Write([]byte(loginRunningHTML))
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	offer.clickOnce.Do(func() { close(offer.clicked) })
 }
 
 // readManualCode waits for user input and sends it to the channel with the

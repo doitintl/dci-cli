@@ -439,3 +439,36 @@ func TestActiveChartThemePresetAndDefault(t *testing.T) {
 		t.Fatalf("preset theme = %+v ok=%v, want the embedded ocean-night palette", theme, ok)
 	}
 }
+
+func TestChartFlushRendersAfterTheTableAndOnlyOnce(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	t.Cleanup(resetChartState)
+	viper.Set("chart-requested", true)
+	setChartSeries("cost", []string{"W1", "W2"}, map[string]float64{"W1": 1, "W2": 2}, nil)
+
+	// The marshaler only records the width; the chart must not print while
+	// the table bytes are still on their way to stdout (printing here is what
+	// put the chart above the table).
+	if out := captureStderr(t, func() { noteChartWidth(40) }); out != "" {
+		t.Fatalf("noteChartWidth printed: %q", out)
+	}
+	out := captureStderr(t, flushPendingChart)
+	if !strings.Contains(out, "cost by period — W1 → W2") {
+		t.Fatalf("flushed chart missing its caption: %q", out)
+	}
+	if out := captureStderr(t, flushPendingChart); out != "" {
+		t.Fatalf("second flush must be a no-op, got %q", out)
+	}
+}
+
+func TestChartFlushIsNoOpWithoutARenderedTable(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	t.Cleanup(resetChartState)
+	viper.Set("chart-requested", true)
+
+	// No table marshaled (the command failed before rendering): no chart and
+	// no "no chart rendered" note, matching the old inline behavior.
+	if out := captureStderr(t, flushPendingChart); out != "" {
+		t.Fatalf("flush without a table printed: %q", out)
+	}
+}

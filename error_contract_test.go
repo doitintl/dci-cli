@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -300,5 +302,129 @@ func TestNonInteractiveExecutionKeepsFrameworkOutput(t *testing.T) {
 	}
 	if stderr.String() != "framework error" {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+// usageTrailerTestTree installs a fake cobra tree with a bodied operation
+// (schema + spec example), a schema-only operation, and a no-body operation,
+// restoring cli.Root afterwards.
+func usageTrailerTestTree(t *testing.T) {
+	t.Helper()
+	oldRoot := cli.Root
+	root := &cobra.Command{Use: "dci"}
+	api := &cobra.Command{Use: "dci"}
+	api.AddCommand(&cobra.Command{Use: "get-report report-id"})
+	api.AddCommand(&cobra.Command{
+		Use:     "add-ticket-tags ticketid",
+		Long:    "Add tags.\n\n## Request Schema (application/json)\n\n```schema\n{\n  tags*: [string]\n}\n```\n",
+		Example: "  dci add-ticket-tags ticketid tags: tag1, tag2\n",
+	})
+	api.AddCommand(&cobra.Command{
+		Use:  "create-thing",
+		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  config*: object\n  name: string\n}\n```\n",
+	})
+	root.AddCommand(api)
+	cli.Root = root
+	t.Cleanup(func() { cli.Root = oldRoot })
+}
+
+func TestArgvUsageTrailerShowsBodyShapeInBothSpellings(t *testing.T) {
+	usageTrailerTestTree(t)
+	cases := []struct {
+		argv    string
+		session bool
+		want    string
+	}{
+		{"get-report", false, "usage: dci get-report report-id"},
+		{"get-report", true, "usage: /get-report report-id"},
+		{
+			"add-ticket-tags", false,
+			"usage: dci add-ticket-tags ticketid [body fields]\nexample: dci add-ticket-tags ticketid tags: tag1, tag2",
+		},
+		{
+			"add-ticket-tags", true,
+			"usage: /add-ticket-tags ticketid [body fields]\nexample: /add-ticket-tags ticketid tags: tag1, tag2",
+		},
+		{
+			"create-thing", false,
+			"usage: dci create-thing [body fields]\nbody fields (* = required): config*, name",
+		},
+		{"no-such-command", false, ""},
+	}
+	for _, testCase := range cases {
+		got := argvUsageTrailer(strings.Fields(testCase.argv), testCase.session)
+		if got != testCase.want {
+			t.Fatalf("argvUsageTrailer(%q, session=%v) = %q, want %q",
+				testCase.argv, testCase.session, got, testCase.want)
+		}
+	}
+}
+
+func TestShellInvocationArgv(t *testing.T) {
+	if got := shellInvocationArgv([]string{"/bin/dci", "dci", "get-report", "--chart"}); !slices.Equal(got, []string{"get-report", "--chart"}) {
+		t.Fatalf("argv = %v", got)
+	}
+	if got := shellInvocationArgv([]string{"/bin/dci", "customer-context", "set"}); !slices.Equal(got, []string{"customer-context", "set"}) {
+		t.Fatalf("local command argv = %v", got)
+	}
+	if got := shellInvocationArgv([]string{"/bin/dci"}); got != nil {
+		t.Fatalf("bare invocation argv = %v", got)
+	}
+}
+
+func TestReportExecutionErrorAppendsUsageTrailerForHumans(t *testing.T) {
+	usageTrailerTestTree(t)
+	oldAgentMode, oldUAMode, oldArgs := agentMode, agentUAMode, os.Args
+	agentMode = false
+	agentUAMode = uaModeInteractive
+	os.Args = []string{"/bin/dci", "dci", "add-ticket-tags"}
+	t.Cleanup(func() {
+		agentMode = oldAgentMode
+		agentUAMode = oldUAMode
+		os.Args = oldArgs
+	})
+
+	out := captureStderr(t, func() {
+		if code := reportExecutionError(errors.New("requires at least 1 arg(s), only received 0"), 0, t.TempDir()); code != exitUsage {
+			t.Errorf("exit code = %d, want %d", code, exitUsage)
+		}
+	})
+	for _, want := range []string{
+		"Error: requires at least 1 arg(s), only received 0",
+		"usage: dci add-ticket-tags ticketid [body fields]",
+		"example: dci add-ticket-tags ticketid tags: tag1, tag2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, out)
+		}
+	}
+
+	// A non-argv usage error (a domain message that explains itself) gets no
+	// trailer, and neither does the non-interactive shell (pipes keep today's
+	// framework output untouched).
+	out = captureStderr(t, func() {
+		reportExecutionError(errors.New("invalid argument: profile selection is currently disabled"), 0, t.TempDir())
+	})
+	if strings.Contains(out, "usage:") {
+		t.Fatalf("domain error grew a usage trailer:\n%s", out)
+	}
+	agentUAMode = uaModeNonInteractive
+	out = captureStderr(t, func() {
+		reportExecutionError(errors.New("accepts 1 arg(s), received 0"), 0, t.TempDir())
+	})
+	if strings.Contains(out, "usage:") {
+		t.Fatalf("non-interactive error grew a usage trailer:\n%s", out)
+	}
+
+	// A `dci ai` dispatch child classifies as interactive (DCI_AGENT_MODE=0)
+	// but must stay bare: the session appends the trailer spelled its way,
+	// and a child-side one would double it in the transcript.
+	agentUAMode = uaModeInteractive
+	t.Setenv("DCI_SESSION_RENDER", "1")
+	out = captureStderr(t, func() {
+		reportExecutionError(errors.New("accepts 1 arg(s), received 0"), 0, t.TempDir())
+	})
+	if strings.Contains(out, "usage:") {
+		t.Fatalf("session dispatch child grew a usage trailer:\n%s", out)
 	}
 }
