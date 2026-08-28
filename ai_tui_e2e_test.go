@@ -282,6 +282,13 @@ func TestE2EBetaPopupEnterAcceptsHighlightedSubcommand(t *testing.T) {
 	if strings.Contains(text, "Beta commands") {
 		t.Fatal("Enter re-submitted the bare /beta instead of accepting the highlighted subcommand")
 	}
+	// The sibling's dispatch header contains the wanted one as a substring
+	// ("dci beta run-report-config"), so its absence is what pins WHICH row
+	// the highlight was on. Popup rows spell it "/beta run-report-config",
+	// so this header never legitimately renders here.
+	if strings.Contains(text, "dci beta run-report-config") {
+		t.Fatal("Enter accepted the row after the highlighted one")
+	}
 }
 
 // "/beta run" — a partial second token — must keep completing: prefix
@@ -297,6 +304,11 @@ func TestE2EBetaPartialSecondTokenCompletes(t *testing.T) {
 	text := session.waitFor("dci beta run-report")
 	if strings.Contains(text, "Beta commands") {
 		t.Fatal("Enter fell back to the bare /beta instead of completing the partial token")
+	}
+	// See the highlighted-subcommand test: the sibling's header contains
+	// this one as a substring, so only its absence pins the selected row.
+	if strings.Contains(text, "dci beta run-report-config") {
+		t.Fatal("Enter completed to the sibling row instead of the prefix tier's first match")
 	}
 }
 
