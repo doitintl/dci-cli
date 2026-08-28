@@ -126,6 +126,12 @@ func maybeRenderChart(tableWidth int) {
 		fmt.Fprintln(os.Stderr, "note: --chart needs a report result with at least two time periods (the pivot view); no chart rendered")
 		return
 	}
+	// Chart lines occupy the screen like table lines do, so they count
+	// toward the scroll-overflow hint (output_order.go).
+	printChart := func(w io.Writer, rendered string) {
+		noteRenderedText(rendered)
+		fmt.Fprintln(w, rendered)
+	}
 	// The styled writer owns color degradation for every styled mode:
 	// lipgloss v2 styles emit truecolor as-is, and 256/16-color terminals
 	// need the writer to downsample it (tui.go). Modes whose gate fails
@@ -134,15 +140,15 @@ func maybeRenderChart(tableWidth int) {
 	switch viper.GetString("chart-mode") {
 	case "stacked":
 		if stackedChartRenderable(series) {
-			fmt.Fprintln(tuiStyledStderr(), "\n"+renderStackedChart(series, chartRenderWidth(tableWidth)))
+			printChart(tuiStyledStderr(), "\n"+renderStackedChart(series, chartRenderWidth(tableWidth)))
 			return
 		}
 	case "sparkline":
-		fmt.Fprintln(tuiStyledStderr(), "\n"+renderSparklineChart(series, chartRenderWidth(tableWidth)))
+		printChart(tuiStyledStderr(), "\n"+renderSparklineChart(series, chartRenderWidth(tableWidth)))
 		return
 	case "heatmap":
 		if heatmapChartRenderable(series) {
-			fmt.Fprintln(tuiStyledStderr(), "\n"+renderHeatmapChart(series, chartRenderWidth(tableWidth)))
+			printChart(tuiStyledStderr(), "\n"+renderHeatmapChart(series, chartRenderWidth(tableWidth)))
 			return
 		}
 	}
@@ -153,7 +159,7 @@ func maybeRenderChart(tableWidth int) {
 		asciigraph.Width(max(chartRenderWidth(tableWidth)-12, 20)),
 		asciigraph.Caption(chartCaption(series)),
 	)
-	fmt.Fprintln(os.Stderr, "\n"+graph)
+	printChart(os.Stderr, "\n"+graph)
 }
 
 // renderSparklineChart draws the period totals as a one-line sparkline in

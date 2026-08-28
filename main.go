@@ -687,6 +687,7 @@ func run() (exitCode int) {
 	resetDestructiveContractState()
 	resetPathValidationState()
 	resetNameResolutionState()
+	resetRenderedLineCount()
 
 	// Resolve agent mode once up front. Downstream behavior — color, default
 	// output format, stderr routing, and the User-Agent mode token — all key off
@@ -746,6 +747,9 @@ func run() (exitCode int) {
 	cli.Defaults()
 	overrideTableOutput()
 	installOutputGuard()
+	// After cli.Init reset cli.Stdout: count rendered lines for the
+	// scroll-overflow hint.
+	installRenderedLineCounter()
 	installResponseGuard()
 	installDestructiveActionSummaryGuard()
 	registerAgentFlags()
@@ -821,6 +825,9 @@ func run() (exitCode int) {
 	if executeErr != nil {
 		return reportExecutionError(executeErr, cli.GetLastStatus(), configDir)
 	}
+	// With everything on screen (table and chart alike), say when the output
+	// overflowed the terminal so the reader knows to scroll up.
+	maybeHintScrollOverflow()
 	// One exit-code taxonomy for every mode: the same failure maps to the same
 	// exit code whether the CLI is driven by a human, an agent, or a script.
 	code := exitCodeForProcessStatus(cli.GetLastStatus())

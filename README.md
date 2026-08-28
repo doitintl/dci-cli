@@ -219,6 +219,8 @@ came for land nearest the prompt — the newest list entries last, the biggest
 report groups just above the totals row, the top insight at the bottom.
 Machine formats (`json`, `yaml`, `csv`, `toon`), agent mode, and piped
 output always keep the classic web ordering, so scripts are unaffected.
+When the output is taller than your screen, a dim `↑ N more lines above —
+scroll up` line next to the prompt says so, so nothing above goes unnoticed.
 
 Prefer the classic ordering (most important row first, like the DoiT
 console)? It's configurable at three levels — flag beats env beats the
