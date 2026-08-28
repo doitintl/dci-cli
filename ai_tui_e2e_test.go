@@ -22,9 +22,11 @@ package main
 // fresh session with isolated config/cache dirs and a from-scratch
 // environment, so no credentials, agent markers, or proxy settings leak
 // in — and the suite stays fully offline: the beta subtree hydrates from
-// the embedded spec, dispatch children either succeed locally (/logout),
-// fail at parsing or preflight by design, or are the harness's scripted
-// fake (tuiE2EFakeChild). Choose dispatch commands with care: anything
+// the embedded spec, the GA catalog from a forged spec cache
+// (seedCachedSpec), and dispatch children either succeed locally
+// (/logout), fail at parsing or preflight by design, or are the
+// harness's scripted fake (tuiE2EFakeChild). Choose dispatch commands
+// with care: anything
 // under a resolvable command is intercepted by the session's name picker
 // (a network fetch), and beta commands tolerate unknown flags and relax
 // arity, so their offline failures are auth-shaped, not argv-shaped.
@@ -57,6 +59,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/fxamacker/cbor/v2"
+	"github.com/rest-sh/restish/cli"
 )
 
 // tuiE2EChildMarker routes the re-exec: when set, TestMain hands the
@@ -125,10 +129,13 @@ type tuiSession struct {
 // tuiSessionConfig shapes one session under test. The zero value is the
 // common case: `dci ai`, fresh isolated dirs, no fakes.
 type tuiSessionConfig struct {
-	args      []string               // CLI argv after the binary; nil means {"ai"}
-	configDir string                 // reuse a config dir across restarts; "" = fresh
-	extraEnv  []string               // e.g. the tuiE2EFakeChild selector
-	prepare   func(configDir string) // seed the config dir before launch
+	args      []string                         // CLI argv after the binary; nil means {"ai"}
+	configDir string                           // reuse a config dir across restarts; "" = fresh
+	extraEnv  []string                         // e.g. the tuiE2EFakeChild selector
+	prepare   func(configDir, cacheDir string) // seed the dirs before launch
+	// rawFrame skips the session-frame startup waits, for invocations that
+	// do not open the session at all (bare `dci` with /default help).
+	rawFrame bool
 }
 
 // startTUISession boots the CLI on a fresh pty with isolated config and
@@ -147,8 +154,9 @@ func startTUISession(t *testing.T, cfg tuiSessionConfig) *tuiSession {
 	if configDir == "" {
 		configDir = t.TempDir()
 	}
+	cacheDir := t.TempDir()
 	if cfg.prepare != nil {
-		cfg.prepare(configDir)
+		cfg.prepare(configDir, cacheDir)
 	}
 	args := cfg.args
 	if args == nil {
@@ -162,7 +170,7 @@ func startTUISession(t *testing.T, cfg tuiSessionConfig) *tuiSession {
 		"TERM=xterm-256color", // no Kitty signal: the logo probe stays off
 		tuiE2EChildMarker + "=1",
 		"DCI_CONFIG_DIR=" + configDir,
-		"DCI_CACHE_DIR=" + t.TempDir(),
+		"DCI_CACHE_DIR=" + cacheDir,
 		"DCI_AGENT_MODE=0",
 	}, cfg.extraEnv...)
 	tty, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 40, Cols: 140})
@@ -180,6 +188,9 @@ func startTUISession(t *testing.T, cfg tuiSessionConfig) *tuiSession {
 	}()
 	go session.pump()
 	t.Cleanup(session.stop)
+	if cfg.rawFrame {
+		return session // not a session frame: the test does its own waiting
+	}
 	// Wait for the WHOLE first frame, not just the banner: keys written
 	// while the terminal is still being set up (background-color probe,
 	// raw-mode switch) are silently swallowed by the line discipline. The
@@ -189,6 +200,58 @@ func startTUISession(t *testing.T, cfg tuiSessionConfig) *tuiSession {
 	session.waitFor("paste your key · enter save")
 	time.Sleep(150 * time.Millisecond)
 	return session
+}
+
+// seedCachedSpec forges the on-disk artifacts a real login leaves behind:
+// restish's CBOR spec cache plus the expiry stamp it validates, shaped
+// exactly as cli.Load writes them. This is how the suite reaches the
+// logged-out-with-hydrated-catalog state — the state the v2.7.0 "21
+// commands" regression corrupted — without any network. The operation
+// pair is deliberately resolver-shaped: get-widget takes the single
+// trailing path parameter of list-widgets' collection, so the name
+// resolution metadata derives a picker target for it.
+func seedCachedSpec(t *testing.T, cacheDir string) {
+	t.Helper()
+	api := cli.API{
+		Operations: []cli.Operation{
+			{Name: "list-widgets", Short: "List widgets", Method: "GET",
+				URITemplate: "https://api.doit.com/analytics/v1/widgets"},
+			{Name: "get-widget", Short: "Get one widget", Method: "GET",
+				URITemplate: "https://api.doit.com/analytics/v1/widgets/{widgetId}",
+				PathParams:  []*cli.Param{{Name: "widgetId", Type: "string"}}},
+		},
+	}
+	blob, err := cbor.Marshal(api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "dci.cbor"), blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expiry := fmt.Sprintf(`{"dci":{"expires":%q}}`+"\n", time.Now().Add(time.Hour).Format(time.RFC3339))
+	if err := os.WriteFile(filepath.Join(cacheDir, "cache.json"), []byte(expiry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedWidgetNames writes the resolver's name cache for the fixture's
+// widget resource (no customer context), so the session's picker opens
+// from disk instead of fetching.
+func seedWidgetNames(t *testing.T, configDir string) {
+	t.Helper()
+	cache := nameCacheFile{
+		Version:   nameCacheVersion,
+		FetchedAt: time.Now(),
+		Resources: map[string][]nameCacheEntry{
+			"widgets": {
+				{ID: "wProd0000000000000001", Name: "Prod Widget"},
+				{ID: "wDev00000000000000002", Name: "Dev Widget"},
+			},
+		},
+	}
+	if err := writeNameCache(configDir, cache); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // pump drains the pty into the transcript buffer and answers the one
@@ -391,7 +454,7 @@ func TestE2EBareBetaEnterSubmitsAndListsSessionStyle(t *testing.T) {
 // popup must snap the highlight to the exact row so Enter still submits
 // the fully typed command instead of rewriting it into the saved one.
 func TestE2ESavedCommandShadowStillSubmitsExactInput(t *testing.T) {
-	session := startTUISession(t, tuiSessionConfig{prepare: func(configDir string) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(configDir, _ string) {
 		commands := `{"beta-mine": {"command": "beta", "summary": "saved shadow"}}`
 		if err := os.WriteFile(filepath.Join(configDir, aiUserCommandsFileName), []byte(commands), 0o600); err != nil {
 			t.Fatal(err)
@@ -635,4 +698,114 @@ func TestE2EResizeAndRedrawSurvive(t *testing.T) {
 // the harness's own startup waits assert the banner and first frame.
 func TestE2EBareInvocationOpensSession(t *testing.T) {
 	startTUISession(t, tuiSessionConfig{args: []string{}})
+}
+
+// A cached spec hydrates the API half of the catalog with no login — the
+// state the v2.7.0 regression corrupted ("21 commands" no matter what).
+// The banner must show the plain count line, the GA operation must
+// complete in the popup, and dispatching it logged out must produce the
+// session-shaped sign-in error — the exact screenshot-1 report from the
+// second feedback round, replayed on a GA command instead of beta.
+func TestE2ECachedSpecHydratesCatalogOffline(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(_, cacheDir string) {
+		seedCachedSpec(t, cacheDir)
+	}})
+	session.waitFor("commands · /help for how this works")
+	if strings.Contains(session.snapshot(), "API commands appear after /login") {
+		t.Fatal("banner shows the cold-cache line despite a warm spec cache")
+	}
+	session.send("/list-w")
+	session.waitFor("List widgets") // the fixture operation completes in the popup
+	session.send(keyEnter, keyEnter)
+	session.waitFor("dci list-widgets")
+	session.waitFor("you're not signed in — run /login to sign in")
+	session.waitFor(fmt.Sprintf("exit %d", exitAuthentication))
+}
+
+// The zero-argument name picker, from the on-disk name cache: dispatching
+// a resolvable command without its argument opens the selection, typing
+// filters it, and Enter dispatches with the chosen entry's ID.
+func TestE2EPickerSelectsCachedName(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(configDir, cacheDir string) {
+		seedCachedSpec(t, cacheDir)
+		seedWidgetNames(t, configDir)
+	}})
+	session.send("/get-widget", keyEnter)
+	session.waitFor("Select a widget")
+	session.waitFor("Prod Widget")
+	session.send("dev") // filter narrows to the Dev entry
+	session.send(keyEnter)
+	session.waitFor("picked Dev Widget")
+	session.waitFor("dci get-widget wDev00000000000000002") // the picked ID dispatched
+}
+
+// The /key lifecycle without editing any file by hand (the round-1
+// feedback): guided entry saves a key and turns AI on, bare /key names
+// the source, /key clear turns AI back off.
+func TestE2EKeyManageLifecycle(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/key set", keyEnter)
+	session.send("sk-ant-e2e-0123456789", keyEnter)
+	session.waitFor("Key saved — AI is ready.")
+	session.send("/key", keyEnter)
+	session.waitFor("saved in " + aiSettingsFileName)
+	session.send("/key clear", keyEnter)
+	session.waitFor("Saved key cleared — AI is off.")
+}
+
+// /model shows the roster and applies a change live.
+func TestE2EModelShowAndSet(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/model", keyEnter)
+	session.waitFor("Available: " + strings.Join(aiKnownModels, ", "))
+	session.send("/model "+aiKnownModels[len(aiKnownModels)-1], keyEnter)
+	session.waitFor("Model set to " + aiKnownModels[len(aiKnownModels)-1])
+}
+
+// Every way out of the session: the /exit alias, the bare "exit" shell
+// instinct (no slash), and ctrl+d on an empty input.
+func TestE2EExitPaths(t *testing.T) {
+	alias := startTUISession(t, tuiSessionConfig{})
+	alias.send("/exit", keyEnter)
+	alias.expectCleanExit()
+
+	bare := startTUISession(t, tuiSessionConfig{})
+	bare.leaveKeyOnboarding()
+	bare.send("exit", keyEnter)
+	bare.expectCleanExit()
+
+	eof := startTUISession(t, tuiSessionConfig{})
+	eof.leaveKeyOnboarding()
+	eof.send("\x04") // ctrl+d
+	eof.expectCleanExit()
+}
+
+// The full /help block renders only for the first session ever; later
+// sessions get it on demand. Seeding history makes this a later session,
+// so the block's absence at startup is a valid never-rendered negative.
+func TestE2EHelpOnDemandAfterFirstSession(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(configDir, _ string) {
+		if err := os.WriteFile(filepath.Join(configDir, aiHistoryFileName), []byte("/status\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}})
+	if strings.Contains(session.snapshot(), "How this session works") {
+		t.Fatal("a session with history still opened with the first-timer help block")
+	}
+	session.send("/help", keyEnter)
+	session.waitFor("How this session works")
+}
+
+// /default help persists the bare-dci opt-out: the next bare invocation
+// prints the help screen and exits instead of opening the session.
+func TestE2EDefaultHelpRoutesBareInvocation(t *testing.T) {
+	configDir := t.TempDir()
+	session := startTUISession(t, tuiSessionConfig{configDir: configDir})
+	session.send("/default help", keyEnter)
+	session.waitFor("bare dci shows the help screen")
+	session.stop()
+
+	help := startTUISession(t, tuiSessionConfig{configDir: configDir, args: []string{}, rawFrame: true})
+	help.waitFor("(interactive AI session)") // the help screen's own example line
+	help.expectCleanExit()
 }
