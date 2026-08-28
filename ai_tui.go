@@ -66,6 +66,7 @@ type aiRunState struct {
 	// same tenant the status line shows ("" = no override).
 	sessionCustomer string
 	width           int
+	height          int
 }
 
 // aiCmdDoneMsg reports a finished user dispatch back into the Update loop.
@@ -1429,6 +1430,7 @@ func (m *aiModel) startDispatch(argv []string) tea.Cmd {
 		customer:        m.effectiveCustomer(),
 		sessionCustomer: m.sessionCustomer,
 		width:           m.width,
+		height:          m.height,
 	}
 	return tea.Batch(m.spin.Tick, aiDispatchCommand(ctx, m.running))
 }
@@ -1890,24 +1892,31 @@ func (m aiModel) modelInfoText() string {
 // DCI_AGENT_MODE=0 (the non-TTY soft signal would flip it to TOON output and
 // agent error envelopes), DCI_SESSION_RENDER=1 (human-shaped hints, colored
 // tables, stacked charts despite the pipe), CLICOLOR_FORCE=1 + COLOR=1
-// (lipgloss and restish emit color on the pipe), COLUMNS (the child cannot
-// measure the terminal, so it inherits the session's width), and DCI_NO_TUI
-// (no interactive prompt from a child that has no terminal to ask on).
-func aiDispatchEnv(width int, customer string) []string {
-	extras := append([]string{
+// (lipgloss and restish emit color on the pipe), COLUMNS and LINES (the
+// child cannot measure the terminal, so it inherits the session's width and,
+// for the scroll-overflow hint, its height — 0 height, before the first
+// window-size message, stays unexported so the child skips the hint rather
+// than trusting a guess), and DCI_NO_TUI (no interactive prompt from a child
+// that has no terminal to ask on).
+func aiDispatchEnv(width, height int, customer string) []string {
+	extras := []string{
 		"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "DCI_SESSION_RENDER=1",
 		"COLOR=1", "CLICOLOR_FORCE=1",
 		fmt.Sprintf("COLUMNS=%d", width),
-	}, aiCustomerEnv(customer)...)
+	}
+	if height > 0 {
+		extras = append(extras, fmt.Sprintf("LINES=%d", height))
+	}
+	extras = append(extras, aiCustomerEnv(customer)...)
 	return aiChildEnv(extras)
 }
 
 func aiDispatchCommand(ctx context.Context, run *aiRunState) tea.Cmd {
-	argv, started, customer, width := run.argv, run.started, run.customer, run.width
+	argv, started, customer, width, height := run.argv, run.started, run.customer, run.width, run.height
 	sessionCustomer := run.sessionCustomer
 	return func() tea.Msg {
 		command := exec.CommandContext(ctx, aiExecutablePath(), argv...)
-		command.Env = aiDispatchEnv(width, sessionCustomer)
+		command.Env = aiDispatchEnv(width, height, sessionCustomer)
 		output, err := command.CombinedOutput()
 		msg := aiCmdDoneMsg{argv: argv, output: string(output), elapsed: time.Since(started), customer: customer}
 		if ctx.Err() == context.Canceled {

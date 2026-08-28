@@ -232,8 +232,8 @@ func TestAIPickerEscCancels(t *testing.T) {
 }
 
 func TestAIDispatchEnvForcesHumanMode(t *testing.T) {
-	env := aiDispatchEnv(132, "")
-	for _, want := range []string{"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "DCI_SESSION_RENDER=1", "COLOR=1", "CLICOLOR_FORCE=1", "COLUMNS=132"} {
+	env := aiDispatchEnv(132, 40, "")
+	for _, want := range []string{"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "DCI_SESSION_RENDER=1", "COLOR=1", "CLICOLOR_FORCE=1", "COLUMNS=132", "LINES=40"} {
 		found := false
 		for _, entry := range env {
 			if entry == want {
@@ -249,6 +249,16 @@ func TestAIDispatchEnvForcesHumanMode(t *testing.T) {
 			t.Fatalf("no override set, but dispatch env carries %s", entry)
 		}
 	}
+
+	// Before the first window-size message the model's height is 0 — the
+	// child must not receive a fabricated LINES value. Pin the parent env so
+	// an inherited LINES can't mask (or fake) the assertion.
+	t.Setenv("LINES", "99")
+	for _, entry := range aiDispatchEnv(132, 0, "") {
+		if strings.HasPrefix(entry, "LINES=") && entry != "LINES=99" {
+			t.Fatalf("zero height exported %s", entry)
+		}
+	}
 }
 
 func TestAIDispatchEnvCarriesSessionCustomer(t *testing.T) {
@@ -256,7 +266,7 @@ func TestAIDispatchEnvCarriesSessionCustomer(t *testing.T) {
 	// exactly once, with any inherited value replaced, since getenv semantics
 	// on duplicate entries are platform-defined.
 	t.Setenv("DCI_CUSTOMER_CONTEXT", "stale.example.com")
-	env := aiDispatchEnv(132, "csp.doit.com")
+	env := aiDispatchEnv(132, 40, "csp.doit.com")
 	count := 0
 	for _, entry := range env {
 		if strings.HasPrefix(entry, "DCI_CUSTOMER_CONTEXT=") {
@@ -275,7 +285,7 @@ func TestAIDispatchEnvInheritsOutputOrder(t *testing.T) {
 	// The ordering setting reaches dispatch children through the inherited
 	// environment (OUTPUT-ORDER-SPEC §6.3) — no dedicated plumbing.
 	t.Setenv(outputOrderEnvName, "classic")
-	env := aiDispatchEnv(132, "")
+	env := aiDispatchEnv(132, 40, "")
 	found := false
 	for _, entry := range env {
 		if entry == outputOrderEnvName+"=classic" {

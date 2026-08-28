@@ -185,6 +185,10 @@ Both already sit at the terminal-friendly end — the hint is appended under the
 
 `-M interactive` is out of scope (§8): a full-screen viewport has no scrollback problem, and its own sort keys already let the user choose direction. The pivot heatmap's totals-row detection keys off the *last* `pivot-total-rows` rows (main.go:4048) — totals stay last in both orderings, so the shading logic is untouched.
 
+### 7.7 Scroll-overflow hint (phase 1 follow-up)
+
+Landing the key rows at the prompt cuts both ways: when the output is taller than the screen, the reader may not notice there is more above — in the worst case a `--chart` fills the screen exactly and the table goes entirely unseen (Alfredo's dogfood follow-up, 2026-08-28). The mitigation is one dim stderr line printed next to the prompt when the rendered output overflows the terminal height: `↑ N more lines above — scroll up`. Rendered lines are counted at the source — a newline-counting wrapper around restish's stdout writer (`cli.Stdout`, reset by `cli.Init` each run, so the wrapper installs right after it) plus the chart's own stderr lines (`noteRenderedText` in `maybeRenderChart`). Height mirrors the width precedent: `term.GetSize` on stdout, `LINES` fallback — the `dci ai` dispatcher exports `LINES` to its children the way it already exports `COLUMNS` — and an unknown height renders no hint rather than a guess. Human rendering only (`tuiActive() || sessionRenderActive()`, never agent mode); it fires in both orderings, since a tall classic table hides its tail the same way. This is the measurement half of the reserved `auto` mode (§5), so if `auto` is ever built, it starts from here.
+
 ---
 
 ## 8. Non-goals and scope cuts

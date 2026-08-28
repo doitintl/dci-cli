@@ -10,15 +10,19 @@ package main
 // the AGENTS.md chapter-split guidance.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/term"
 )
 
 const (
@@ -185,4 +189,78 @@ func registerConfigCommand(configDir string) {
 	}
 	configCmd.AddCommand(setCmd)
 	cli.Root.AddCommand(configCmd)
+}
+
+// --- Scroll-overflow hint ---------------------------------------------------
+//
+// Terminal ordering lands the key rows nearest the prompt, which cuts both
+// ways: when a command's output is taller than the screen, the reader may not
+// notice there is more above — in the worst case a --chart fills the screen
+// exactly and the table goes entirely unseen (Alfredo's dogfood follow-up,
+// 2026-08-28). The hint is one dim stderr line next to the prompt, printed
+// only when the rendered output actually overflows the terminal height, in
+// human rendering only — agent mode, machine consumers, and pipes never see
+// it, per the decoration contract.
+
+// renderedLineCount tallies the lines this invocation put on the terminal:
+// stdout data lines via the counting writer below, chart lines via
+// noteRenderedText. Reset per run().
+var renderedLineCount int
+
+func resetRenderedLineCount() { renderedLineCount = 0 }
+
+// noteRenderedText counts a block printed outside the stdout path (the
+// --chart render on stderr), as Fprintln prints it: its newlines plus the
+// trailing one.
+func noteRenderedText(s string) { renderedLineCount += strings.Count(s, "\n") + 1 }
+
+// lineCountingWriter tallies newlines on their way to restish's stdout writer,
+// so the overflow hint knows how tall the rendered response was.
+type lineCountingWriter struct{ next io.Writer }
+
+func (w lineCountingWriter) Write(p []byte) (int, error) {
+	renderedLineCount += bytes.Count(p, []byte{'\n'})
+	return w.next.Write(p)
+}
+
+// installRenderedLineCounter wraps cli.Stdout — the writer restish's
+// formatter hands every rendered body to. cli.Init resets cli.Stdout each
+// run, so this is installed right after it; the type check keeps a stray
+// double install from counting lines twice.
+func installRenderedLineCounter() {
+	if _, installed := cli.Stdout.(lineCountingWriter); installed {
+		return
+	}
+	cli.Stdout = lineCountingWriter{next: cli.Stdout}
+}
+
+// detectTerminalHeight mirrors detectTerminalWidth: the stdout terminal's
+// height, the LINES variable as the fallback (the dci ai session exports it
+// to dispatch children the way it already exports COLUMNS), and 0 when
+// neither is known — unknown height renders no hint rather than a guess.
+func detectTerminalHeight() int {
+	if _, height, err := term.GetSize(int(os.Stdout.Fd())); err == nil && height > 0 {
+		return height
+	}
+	if lines := os.Getenv("LINES"); lines != "" {
+		if n, err := strconv.Atoi(lines); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// maybeHintScrollOverflow prints the one-line "more above" hint when this
+// invocation's rendered output overflows the terminal height. Human rendering
+// only; a height of 0 (undetectable) stays silent.
+func maybeHintScrollOverflow() {
+	if agentMode || (!tuiActive() && !sessionRenderActive()) {
+		return
+	}
+	height := detectTerminalHeight()
+	if height <= 0 || renderedLineCount <= height {
+		return
+	}
+	above := renderedLineCount - height
+	fmt.Fprintln(tuiStyledStderr(), tuiDimStyle.Render(fmt.Sprintf("↑ %d more lines above — scroll up", above)))
 }

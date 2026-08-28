@@ -265,3 +265,86 @@ func TestConfigOutputOrderCommandPersists(t *testing.T) {
 		t.Fatalf("rejected value overwrote the setting: %q", got)
 	}
 }
+
+func TestDetectTerminalHeightFallsBackToLINES(t *testing.T) {
+	// Under go test stdout is not a terminal, so the LINES fallback decides.
+	t.Setenv("LINES", "42")
+	if got := detectTerminalHeight(); got != 42 {
+		t.Fatalf("detectTerminalHeight() = %d, want 42 from LINES", got)
+	}
+	t.Setenv("LINES", "bogus")
+	if got := detectTerminalHeight(); got != 0 {
+		t.Fatalf("detectTerminalHeight() = %d, want 0 for an unparsable LINES", got)
+	}
+	t.Setenv("LINES", "")
+	if got := detectTerminalHeight(); got != 0 {
+		t.Fatalf("detectTerminalHeight() = %d, want 0 when height is unknown", got)
+	}
+}
+
+func TestLineCountingWriter(t *testing.T) {
+	resetRenderedLineCount()
+	t.Cleanup(resetRenderedLineCount)
+	var sink strings.Builder
+	writer := lineCountingWriter{next: &sink}
+	if _, err := writer.Write([]byte("row one\nrow two\npartial")); err != nil {
+		t.Fatal(err)
+	}
+	if renderedLineCount != 2 {
+		t.Fatalf("renderedLineCount = %d, want 2", renderedLineCount)
+	}
+	if sink.String() != "row one\nrow two\npartial" {
+		t.Fatalf("wrapped writer altered the bytes: %q", sink.String())
+	}
+	noteRenderedText("\nspark\ncaption")
+	if renderedLineCount != 5 {
+		t.Fatalf("renderedLineCount = %d after noteRenderedText, want 5 (block plus Fprintln's newline)", renderedLineCount)
+	}
+}
+
+func TestMaybeHintScrollOverflow(t *testing.T) {
+	oldAgent := agentMode
+	t.Cleanup(func() {
+		agentMode = oldAgent
+		resetRenderedLineCount()
+	})
+
+	cases := []struct {
+		name    string
+		lines   string
+		count   int
+		agent   bool
+		tui     bool
+		session bool
+		want    string // "" = no hint
+	}{
+		{"overflow at a tty", "10", 25, false, true, false, "↑ 15 more lines above — scroll up"},
+		{"overflow in session render", "10", 25, false, false, true, "↑ 15 more lines above — scroll up"},
+		{"fits on screen", "10", 10, false, true, false, ""},
+		{"agent mode", "10", 25, true, true, false, ""},
+		{"piped", "10", 25, false, false, false, ""},
+		{"unknown height", "", 25, false, true, false, ""},
+	}
+	for _, tc := range cases {
+		agentMode = tc.agent
+		forceTUI(t, tc.tui)
+		t.Setenv("LINES", tc.lines)
+		if tc.session {
+			t.Setenv("DCI_SESSION_RENDER", "1")
+		} else {
+			t.Setenv("DCI_SESSION_RENDER", "")
+		}
+		resetRenderedLineCount()
+		renderedLineCount = tc.count
+		stderr := captureStderr(t, maybeHintScrollOverflow)
+		if tc.want == "" {
+			if strings.Contains(stderr, "scroll up") {
+				t.Errorf("%s: unexpected hint %q", tc.name, stderr)
+			}
+			continue
+		}
+		if !strings.Contains(stderr, tc.want) {
+			t.Errorf("%s: stderr = %q, want it to contain %q", tc.name, stderr, tc.want)
+		}
+	}
+}

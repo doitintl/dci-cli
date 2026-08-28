@@ -472,3 +472,23 @@ func TestChartFlushIsNoOpWithoutARenderedTable(t *testing.T) {
 		t.Fatalf("flush without a table printed: %q", out)
 	}
 }
+
+func TestChartLinesCountTowardOverflowHint(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Cleanup(resetChartState)
+	t.Cleanup(resetRenderedLineCount)
+	originalAgent := agentMode
+	agentMode = false
+	t.Cleanup(func() { agentMode = originalAgent })
+
+	viper.Set("chart-requested", true)
+	viper.Set("chart-mode", "sparkline")
+	chartSeries = &chartSeriesData{metric: "cost", periods: []string{"W1", "W2"}, values: []float64{1, 2}}
+	resetRenderedLineCount()
+	_ = captureStderr(t, func() { maybeRenderChart(40) })
+	// "\n" + sparkline + caption printed via Fprintln = 3 screen lines.
+	if renderedLineCount != 3 {
+		t.Fatalf("renderedLineCount = %d after the chart render, want 3", renderedLineCount)
+	}
+}
