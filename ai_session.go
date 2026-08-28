@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // --- Settings (D1: user-supplied key; D2: model choice) ----------------------
@@ -56,6 +55,9 @@ var aiKnownModels = []string{
 type aiSettings struct {
 	APIKey string `json:"api_key,omitempty"`
 	Model  string `json:"model,omitempty"`
+	// Provided set to "off" disables DoiT-provided access (ai_credentials.go)
+	// — the DCI_AI_PROVIDED env var wins over this field.
+	Provided string `json:"provided,omitempty"`
 	// Effort caps the model's reasoning depth ("low", "medium", "high";
 	// "default" = uncapped API default; empty = aiDefaultEffort). Analytical
 	// questions can reason server-side for a minute-plus before the first
@@ -252,10 +254,10 @@ type localAISession struct {
 // errAITurnRunning is returned by Send(chat) while a turn is in flight.
 var errAITurnRunning = errors.New("a turn is already running — wait for it or press esc to cancel")
 
-// newLocalAISession builds the local session. The key must already be
-// resolved and non-empty; renderers gate on aiSessionAvailable first.
-func newLocalAISession(configDir, apiKey, model string, catalog []aiCatalogEntry) *localAISession {
-	client := anthropic.NewClient(option.WithAPIKey(apiKey))
+// newLocalAISession builds the local session. The credentials must already
+// be resolved and available (resolveAICredentials, ai_credentials.go);
+// renderers gate on creds.available() first.
+func newLocalAISession(configDir string, creds aiCredentials, model string, catalog []aiCatalogEntry) *localAISession {
 	isDoer := cachedTokenIsDoer()
 	tenantAware := isDoer || readCustomerContext(configDir) != ""
 	return &localAISession{
@@ -264,7 +266,7 @@ func newLocalAISession(configDir, apiKey, model string, catalog []aiCatalogEntry
 		effort:       resolveAIEffort(loadAISettings(configDir)),
 		tenantAware:  tenantAware,
 		stablePrompt: aiSystemPrompt(catalog, tenantAware, isDoer),
-		streamer:     newAnthropicStreamer(client),
+		streamer:     creds.streamer(),
 		executor:     newAIToolExecutor(configDir),
 		events:       make(chan aiEvent, 64),
 		approvals:    make(chan aiUserInput, 1),
