@@ -1234,7 +1234,7 @@ func (m *aiModel) refreshGhost() {
 		return
 	}
 	remaining := aiPlaceholdersRemaining(signature, argv)
-	m.ghost = aiGhostText(remaining, signature.optionalBody, m.width)
+	m.ghost = aiGhostText(remaining, signature.optionalBody, aiPickerCueApplies(remaining, argv), m.width)
 }
 
 func (m aiModel) answerApproval(approved bool) (tea.Model, tea.Cmd) {
