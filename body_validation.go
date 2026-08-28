@@ -45,7 +45,7 @@ func (validationError requestBodyValidationError) AgentErrorRetryable() bool {
 }
 
 var shorthandBodyFieldPattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)\s*[.\[:{]`)
-var schemaBodyFieldMarkedPattern = regexp.MustCompile(`^  ([A-Za-z_][A-Za-z0-9_-]*\*?):`)
+var schemaBodyFieldSketchPattern = regexp.MustCompile(`^  ([A-Za-z_][A-Za-z0-9_-]*)(\*?): ?(.*)$`)
 var currencyBodyFieldPattern = regexp.MustCompile(`(?:^|[,\s])config\.currency:\s*"?([A-Za-z]{3})"?`)
 var bufferedRequestBody []byte
 
@@ -123,6 +123,35 @@ func requestSchemaTopLevelFields(longHelp string) map[string]bool {
 // in schema order, each keeping the schema's trailing `*` required marker.
 // nil when the help carries no object request schema.
 func requestSchemaTopLevelFieldList(longHelp string) []string {
+	sketches := requestSchemaTopLevelFieldSketches(longHelp)
+	if sketches == nil {
+		return nil
+	}
+	fields := make([]string, 0, len(sketches))
+	for _, field := range sketches {
+		name := field.name
+		if field.required {
+			name += "*"
+		}
+		fields = append(fields, name)
+	}
+	return fields
+}
+
+// bodyFieldSketch is one top-level request-schema field with the raw one-line
+// value sketch to the right of its colon ("[string]", "{", "string"), for the
+// session's placeholder ghost (ai_placeholder.go).
+type bodyFieldSketch struct {
+	name     string
+	required bool
+	sketch   string
+}
+
+// requestSchemaTopLevelFieldSketches is the parse behind
+// requestSchemaTopLevelFieldList, keeping the required marker and value
+// sketch separate. Same contract: nil when the help carries no object
+// request schema, an empty non-nil slice for an object with no fields.
+func requestSchemaTopLevelFieldSketches(longHelp string) []bodyFieldSketch {
 	_, afterHeading, found := strings.Cut(longHelp, "## Request Schema")
 	if !found {
 		return nil
@@ -132,7 +161,7 @@ func requestSchemaTopLevelFieldList(longHelp string) []string {
 		return nil
 	}
 	schemaBlock, _, _ = strings.Cut(schemaBlock, "```")
-	var fields []string
+	var fields []bodyFieldSketch
 	foundObject := false
 	for _, line := range strings.Split(schemaBlock, "\n") {
 		trimmedLine := strings.TrimSpace(line)
@@ -144,15 +173,19 @@ func requestSchemaTopLevelFieldList(longHelp string) []string {
 			}
 			continue
 		}
-		if match := schemaBodyFieldMarkedPattern.FindStringSubmatch(line); match != nil {
-			fields = append(fields, match[1])
+		if match := schemaBodyFieldSketchPattern.FindStringSubmatch(line); match != nil {
+			fields = append(fields, bodyFieldSketch{
+				name:     match[1],
+				required: match[2] == "*",
+				sketch:   strings.TrimSpace(match[3]),
+			})
 		}
 	}
 	if !foundObject {
 		return nil
 	}
 	if fields == nil {
-		fields = []string{}
+		fields = []bodyFieldSketch{}
 	}
 	return fields
 }

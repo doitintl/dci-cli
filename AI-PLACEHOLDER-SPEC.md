@@ -1,6 +1,6 @@
 # Design spec: argument-placeholder overlays in the `dci ai` completion
 
-Status: **draft for maintainer review**. Spec only — nothing here is implemented.
+Status: **phase 1 implemented** (same PR as this spec: `ai_placeholder.go` + tests, the `refreshGhost`/`ghostedInputRow` hooks in ai_tui.go, and the sketch-keeping schema parse in body_validation.go). Phase 2 remains design-only, gated on P1 dogfood. As-landed deviations from the draft are recorded at the end (§10).
 
 Source: Alfredo's dogfood feedback (Slack, 2026-08-28), deferred out of [PR #133](https://github.com/doitintl/dci-cli/pull/133) ("worth its own spec if we want it"):
 
@@ -181,7 +181,7 @@ In the style of the existing `_test.go` files:
 
 | Phase | Ships | Gate |
 |---|---|---|
-| **P1** | Ghost signature: `ai_placeholder.go` model + render, path params + required body fields, consumption, degradation (§3). Zero key-handling changes. | PR #133 merged first (§5.2); maintainer review of this spec |
+| **P1** | Ghost signature: `ai_placeholder.go` model + render, path params + required body fields, consumption, degradation (§3). Zero key-handling changes. **Implemented** (same PR; #133 merged first, as required by §5.2). | Maintainer review |
 | **P2** | Tab acceptance: fixed-token insertion, value-hint ghosts, array continuation (§4) | P1 dogfood verdict; re-review of §4's choices |
 
 Versioning: both phases are session UX polish — `feat:` commits, routine **patch** releases per AGENTS.md (not the "new command group" minor-bump case).
@@ -202,3 +202,15 @@ Versioning: both phases are session UX polish — `feat:` commits, routine **pat
 - **Q1 — required-only body fields in the ghost** (§3.2), with `…` marking the rest: is that the right cut, or should the ghost show every field the way the trailer's capped list does? Required-only is proposed because the ghost's job is "what must I still type", not "what could I type".
 - **Q2 — phase 2's Tab on a value slot** inserts nothing and shows the example as a hint (§4). The alternative — inserting the spec example as editable text — is faster for exploration but risks submitted example IDs. Proposed: hint-only; revisit with dogfood evidence.
 - **Q3 — sequencing with PR #133**: this spec assumes #133 merges substantially as-is. If review reshapes `requestSchemaTopLevelFieldList` or the trailer vocabulary, this spec follows that outcome, not the other way around.
+
+## 10. As-landed notes (P1)
+
+Decisions taken at implementation, where the code deviates from or sharpens the draft above:
+
+- **One schema parser, extended in place.** `requestSchemaTopLevelFieldSketches` (body_validation.go) is the sketch-keeping parse §5.2 asked for; `requestSchemaTopLevelFieldList` (#133, merged) is now derived from it, so validation, the trailer, and the ghost share one parse. Sketches are normalized for the one-row ghost (`aiNormalizeSchemaSketch`): a nested-object opener renders as `object`, an array-of-objects opener as `[…]`.
+- **No memoization.** §5.1's per-command cache was dropped: building a signature is one cobra-child walk plus one schema-block parse, cheaper than the full-catalog scan `aiCompletionsFor` already runs on the same keystroke. This also removes the invalidation surface (`refreshAuthState` has nothing extra to clear).
+- **Flag skipping uses the leaf's own flag set** (`command.Flags()`), not the picker's `aiOperationFlagSet` lookup — the builder holds the command anyway. Same accepted limitation as the picker: inherited persistent flags (`--output`) are invisible, so an unknown value-taking flag's value transiently reads as a positional and costs one ghost slot until the line is corrected — never a wrong dispatch.
+- **Positional order wins over body shape for open path slots** (refining §3.2's "first body-shaped token switches"): `add-ticket-tags tags: a` consumes the *path* slot with `tags: a`'s first token, exactly as the CLI parses that argv. Body-name consumption starts only once the path slots are filled.
+- **The ghost shows as soon as the input names a leaf** — no trailing space required: `/get-report` ghosts immediately, and extending the token (`/get-report-x`) clears it on the next recompute.
+- **R1 held.** The splice (`aiSpliceGhost`) clamps the rendered row to prompt + text + one cursor cell with a cell-based `MaxWidth`, so both blink phases of the virtual cursor survive; covered by unit tests against a padded ANSI row and by an E2E keystroke replay (`TestE2EGhostSignatureAfterAcceptedCompletion`) on the real pty. The popup-footer fallback was not needed.
+- **R2 shipped as specced**: ghost and popup coexist; no suppression added.
