@@ -9,10 +9,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -86,7 +88,12 @@ const chartMaxGroups = 5
 // than re-deriving either from raw rows. Groups beyond chartMaxGroups fold
 // into "other".
 func setChartSeries(metric string, periods []string, totals map[string]float64, groups []chartGroupSeries) {
-	if !chartRequested() || len(periods) < 2 {
+	if !chartRequested() || len(periods) == 0 {
+		return
+	}
+	// Every mode but the treemap draws a time axis, so a single period has
+	// nothing to chart; the treemap draws shares of a total and charts fine.
+	if len(periods) < 2 && viper.GetString("chart-mode") != "treemap" {
 		return
 	}
 	values := make([]float64, len(periods))
@@ -122,8 +129,27 @@ func maybeRenderChart(tableWidth int) {
 	}
 	series := chartSeries
 	chartSeries = nil
-	if series == nil || len(series.values) < 2 {
-		fmt.Fprintln(os.Stderr, "note: --chart needs a report result with at least two time periods (the pivot view); no chart rendered")
+	mode := viper.GetString("chart-mode")
+	if series == nil || len(series.values) == 0 {
+		if mode == "treemap" {
+			fmt.Fprintln(os.Stderr, "note: --chart=treemap needs a report result with group and metric columns; no chart rendered")
+		} else {
+			fmt.Fprintln(os.Stderr, "note: --chart needs a report result with at least two time periods (the pivot view); no chart rendered")
+		}
+		return
+	}
+	// The treemap dispatches before the two-period gate: it draws shares of a
+	// total, not a time axis, so a single-period (or time-less) result charts.
+	if mode == "treemap" && treemapChartRenderable(series) {
+		fmt.Fprintln(tuiStyledStderr(), "\n"+renderTreemapChart(series, chartRenderWidth(tableWidth)))
+		return
+	}
+	if len(series.values) < 2 {
+		if mode == "treemap" {
+			fmt.Fprintln(os.Stderr, "note: --chart=treemap needs a color terminal and at least two groups; no chart rendered")
+		} else {
+			fmt.Fprintln(os.Stderr, "note: --chart needs a report result with at least two time periods (the pivot view); no chart rendered")
+		}
 		return
 	}
 	// Chart lines occupy the screen like table lines do, so they count
@@ -137,7 +163,7 @@ func maybeRenderChart(tableWidth int) {
 	// need the writer to downsample it (tui.go). Modes whose gate fails
 	// (colorless terminal, too few groups) fall back to the line of period
 	// totals rather than erroring.
-	switch viper.GetString("chart-mode") {
+	switch mode {
 	case "stacked":
 		if stackedChartRenderable(series) {
 			printChart(tuiStyledStderr(), "\n"+renderStackedChart(series, chartRenderWidth(tableWidth)))
@@ -506,6 +532,14 @@ func renderStackedChart(series *chartSeriesData, width int) string {
 	chart.Draw()
 
 	lines := []string{strings.TrimRight(chart.View(), "\n"), chartCaption(series)}
+	sums, grand := chartGroupSums(series)
+	lines = append(lines, chartLegend(series, palette, sums, grand)...)
+	return strings.Join(lines, "\n")
+}
+
+// chartGroupSums returns each group's cross-period sum (index-parallel with
+// series.groups) and the grand total across all groups.
+func chartGroupSums(series *chartSeriesData) ([]float64, float64) {
 	grand := 0.0
 	sums := make([]float64, len(series.groups))
 	for j, group := range series.groups {
@@ -514,6 +548,14 @@ func renderStackedChart(series *chartSeriesData, width int) string {
 		}
 		grand += sums[j]
 	}
+	return sums, grand
+}
+
+// chartLegend renders one swatch + label + share line per group. Shares come
+// from the true sums, so segments a chart cannot draw (negative cells, rects
+// too small for a label) still report their exact share here.
+func chartLegend(series *chartSeriesData, palette []lipgloss.Style, sums []float64, grand float64) []string {
+	lines := make([]string, 0, len(series.groups))
 	for j, group := range series.groups {
 		share := ""
 		if grand != 0 {
@@ -521,7 +563,7 @@ func renderStackedChart(series *chartSeriesData, width int) string {
 		}
 		lines = append(lines, palette[j%len(palette)].Render("█")+" "+chartGroupLabel(group.name)+share)
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 // chartGroupLabel bounds a legend entry to one readable line.
@@ -530,6 +572,252 @@ func chartGroupLabel(name string) string {
 		return string(runes[:47]) + "…"
 	}
 	return name
+}
+
+// treemapChartRenderable gates the treemap on what makes it legible: at least
+// two groups whose totals are positive (rect areas are shares of positive
+// spend — negatives cannot occupy area) and a terminal where color renders —
+// rects are told apart by background color alone. table-color covers the
+// policy gates; the profile check covers terminals lipgloss would strip
+// anyway, same as the stacked view.
+func treemapChartRenderable(series *chartSeriesData) bool {
+	if !viper.GetBool("table-color") || !chartColorCapable() {
+		return false
+	}
+	sums, _ := chartGroupSums(series)
+	positive := 0
+	for _, sum := range sums {
+		if sum > 0 {
+			positive++
+		}
+	}
+	return positive >= 2
+}
+
+// treemapChartHeight matches the stacked chart's canvas so the two heavy
+// views take the same vertical room under the table.
+const treemapChartHeight = 12
+
+// renderTreemapChart draws each group's share of the total as a proportional
+// rectangle — the console's treemap renderer, in terminal cells. Groups with
+// non-positive totals (credit-dominated) cannot occupy area and are left to
+// the legend, whose shares come from the true sums. Labels render inside
+// rects that fit them; the legend under the caption always carries the full
+// names and exact shares.
+func renderTreemapChart(series *chartSeriesData, width int) string {
+	palette := chartThemePalette()
+	sums, grand := chartGroupSums(series)
+
+	// Groups arrive ranked largest-first from the pivot; the layout depends
+	// on that order to keep big rects together (and re-sorts defensively for
+	// series stashed by other paths).
+	items := make([]int, 0, len(series.groups))
+	for j := range series.groups {
+		if sums[j] > 0 {
+			items = append(items, j)
+		}
+	}
+	sort.SliceStable(items, func(a, b int) bool { return sums[items[a]] > sums[items[b]] })
+	weights := make([]float64, len(items))
+	for i, j := range items {
+		weights[i] = sums[j]
+	}
+
+	rects := make([]treemapRect, 0, len(items))
+	treemapSplit(items, weights, 0, 0, width, treemapChartHeight, &rects)
+
+	grid := make([][]int, treemapChartHeight)
+	text := make([][]rune, treemapChartHeight)
+	for y := range grid {
+		grid[y] = make([]int, width)
+		text[y] = make([]rune, width)
+		for x := range grid[y] {
+			grid[y][x] = -1
+			text[y][x] = ' '
+		}
+	}
+	for _, rect := range rects {
+		for y := rect.y; y < rect.y+rect.h; y++ {
+			for x := rect.x; x < rect.x+rect.w; x++ {
+				grid[y][x] = rect.item
+			}
+		}
+		share := ""
+		if grand != 0 {
+			share = fmt.Sprintf("%.0f%%", sums[rect.item]/grand*100)
+		}
+		label := treemapLabel(series.groups[rect.item].name, share, rect.w-2)
+		if runes := []rune(label); len(runes) > 0 {
+			copy(text[rect.y][rect.x+1:], runes)
+			// A rect too narrow for "name share%" on one line can still
+			// carry the share on its second row.
+			if share != "" && !strings.HasSuffix(label, " "+share) && rect.h >= 2 && len([]rune(share)) <= rect.w-2 {
+				copy(text[rect.y+1][rect.x+1:], []rune(share))
+			}
+		}
+	}
+
+	lines := make([]string, 0, treemapChartHeight+1+len(series.groups))
+	for y := 0; y < treemapChartHeight; y++ {
+		var line strings.Builder
+		for x := 0; x < width; {
+			item := grid[y][x]
+			start := x
+			for x < width && grid[y][x] == item {
+				x++
+			}
+			segment := string(text[y][start:x])
+			if item < 0 {
+				line.WriteString(segment)
+				continue
+			}
+			background := palette[item%len(palette)].GetForeground()
+			line.WriteString(lipgloss.NewStyle().Background(background).Foreground(treemapTextColor(background)).Render(segment))
+		}
+		lines = append(lines, line.String())
+	}
+	lines = append(lines, treemapChartCaption(series))
+	lines = append(lines, chartLegend(series, palette, sums, grand)...)
+	return strings.Join(lines, "\n")
+}
+
+// treemapRect is one group's tile in cell coordinates.
+type treemapRect struct {
+	item       int // index into series.groups
+	x, y, w, h int
+}
+
+// treemapSplit tiles the rectangle with one rect per item, area proportional
+// to weight: the item list is split into two runs of roughly equal weight,
+// the rectangle is split along its visually longer axis (a terminal cell is
+// about twice as tall as wide, so height counts double), and both halves
+// recurse. Weights are index-parallel with items and expected largest-first;
+// every rect keeps at least one cell in the split dimension.
+func treemapSplit(items []int, weights []float64, x, y, w, h int, out *[]treemapRect) {
+	if len(items) == 0 || w < 1 || h < 1 {
+		return
+	}
+	if len(items) == 1 {
+		*out = append(*out, treemapRect{item: items[0], x: x, y: y, w: w, h: h})
+		return
+	}
+	total := 0.0
+	for _, weight := range weights {
+		total += weight
+	}
+	splitAt, acc := 1, weights[0]
+	for splitAt < len(items)-1 && acc+weights[splitAt] <= total/2 {
+		acc += weights[splitAt]
+		splitAt++
+	}
+	fraction := 0.5
+	if total > 0 {
+		fraction = acc / total
+	}
+	// A cell renders ~1:2 (width:height), so compare w against 2h to split
+	// across the visually longer axis; a dimension of one cell cannot split.
+	if (w >= 2*h && w > 1) || h == 1 {
+		left := int(float64(w)*fraction + 0.5)
+		left = min(max(left, 1), w-1)
+		treemapSplit(items[:splitAt], weights[:splitAt], x, y, left, h, out)
+		treemapSplit(items[splitAt:], weights[splitAt:], x+left, y, w-left, h, out)
+		return
+	}
+	top := int(float64(h)*fraction + 0.5)
+	top = min(max(top, 1), h-1)
+	treemapSplit(items[:splitAt], weights[:splitAt], x, y, w, top, out)
+	treemapSplit(items[splitAt:], weights[splitAt:], x, y+top, w, h-top, out)
+}
+
+// treemapLabel fits "name share%" into width cells, dropping the share and
+// truncating the name as the rect narrows. Empty when nothing legible fits.
+func treemapLabel(name, share string, width int) string {
+	if width < 3 {
+		return ""
+	}
+	runes := []rune(name)
+	if share != "" && len(runes)+1+len(share) <= width {
+		return name + " " + share
+	}
+	if len(runes) > width {
+		return string(runes[:width-1]) + "…"
+	}
+	return name
+}
+
+// treemapTextColor picks black or white for label text over a tile color, by
+// the tile's relative luminance — the theme palettes span pale pastels to
+// near-black, so neither constant reads on both.
+func treemapTextColor(background color.Color) color.Color {
+	r, g, b, _ := background.RGBA()
+	luminance := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+	if luminance > 0.55*65535 {
+		return lipgloss.Color("#000000")
+	}
+	return lipgloss.Color("#FFFFFF")
+}
+
+// treemapChartCaption mirrors chartCaption for the share-of-total view: the
+// empty period key marks a result with no time dimension (the flat-rows
+// path), which has no period range to report.
+func treemapChartCaption(series *chartSeriesData) string {
+	first, last := series.periods[0], series.periods[len(series.periods)-1]
+	switch {
+	case first == "":
+		return series.metric + " by group"
+	case first == last:
+		return fmt.Sprintf("%s by group — %s", series.metric, first)
+	default:
+		return fmt.Sprintf("%s by group — %s → %s", series.metric, first, last)
+	}
+}
+
+// setTreemapSeriesFromFlatRows stashes a treemap series for report results
+// the pivot cannot reshape (no time dimension, so no period columns): the
+// treemap draws group shares of a total, which flat group totals carry
+// already. Other chart modes need a time axis and keep their "no chart"
+// note. Ranking and the top-group fold mirror the pivot path: largest total
+// first, smallest groups folded into "other" by setChartSeries.
+func setTreemapSeriesFromFlatRows(rows []interface{}, schema []reportColumn) {
+	if !chartRequested() || viper.GetString("chart-mode") != "treemap" || chartSeries != nil {
+		return
+	}
+	_, groupIdx, metricIdx := classifyPivotColumns(schema)
+	if len(groupIdx) == 0 || len(metricIdx) == 0 {
+		return
+	}
+	metricColumn := metricIdx[0]
+	totals := map[string]float64{}
+	order := []string{}
+	for _, raw := range rows {
+		cells, ok := raw.([]interface{})
+		if !ok {
+			return
+		}
+		if metricColumn >= len(cells) {
+			continue
+		}
+		n, ok := numericCell(cells[metricColumn])
+		if !ok {
+			continue
+		}
+		group := pivotGroup(cells, groupIdx)
+		if _, seen := totals[group]; !seen {
+			order = append(order, group)
+		}
+		totals[group] += n
+	}
+	if len(order) == 0 {
+		return
+	}
+	sort.SliceStable(order, func(i, j int) bool { return totals[order[i]] > totals[order[j]] })
+	grand := 0.0
+	groups := make([]chartGroupSeries, 0, len(order))
+	for _, name := range order {
+		groups = append(groups, chartGroupSeries{name: name, values: []float64{totals[name]}})
+		grand += totals[name]
+	}
+	setChartSeries(schema[metricColumn].Name, []string{""}, map[string]float64{"": grand}, groups)
 }
 
 // augmentTableViewColumns derives table-only columns (TUI-SPEC F6.1).

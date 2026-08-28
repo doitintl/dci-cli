@@ -346,6 +346,214 @@ func TestStackedChartRenderingAndFallbacks(t *testing.T) {
 	}
 }
 
+func TestTreemapChartRenderingAndFallback(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Cleanup(resetChartState)
+	viper.Set("chart-requested", true)
+	viper.Set("chart-mode", "treemap")
+	viper.Set("table-color", true)
+	forceChartColor(t, true)
+
+	series := &chartSeriesData{
+		metric:  "cost",
+		periods: []string{"W1", "W2"},
+		values:  []float64{30, 60},
+		groups: []chartGroupSeries{
+			{name: "svc-a", values: []float64{20, 40}},
+			{name: "svc-b", values: []float64{10, 20}},
+		},
+	}
+	chartSeries = series
+	out := stripANSI(captureStderr(t, func() { maybeRenderChart(60) }))
+	for _, want := range []string{"cost by group — W1 → W2", "█ svc-a  67%", "█ svc-b  33%", "svc-a 67%", "svc-b 33%"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("treemap output missing %q:\n%s", want, out)
+		}
+	}
+
+	// A single period charts: the treemap draws shares, not a time axis.
+	chartSeries = &chartSeriesData{
+		metric:  "cost",
+		periods: []string{"2026-8"},
+		values:  []float64{90},
+		groups: []chartGroupSeries{
+			{name: "svc-a", values: []float64{60}},
+			{name: "svc-b", values: []float64{30}},
+		},
+	}
+	out = stripANSI(captureStderr(t, func() { maybeRenderChart(60) }))
+	if !strings.Contains(out, "cost by group — 2026-8") {
+		t.Fatalf("single-period treemap caption missing:\n%s", out)
+	}
+
+	// Colorless terminals cannot tell rects apart: a multi-period series
+	// falls back to the line of period totals.
+	forceChartColor(t, false)
+	chartSeries = series
+	out = captureStderr(t, func() { maybeRenderChart(60) })
+	if strings.Contains(out, "svc-a") {
+		t.Fatalf("colorless treemap must fall back to the line chart:\n%s", out)
+	}
+	if !strings.Contains(out, "cost by period — W1 → W2") {
+		t.Fatalf("line fallback missing its caption:\n%s", out)
+	}
+
+	// A colorless single-period series has no line to fall back to: note.
+	chartSeries = &chartSeriesData{
+		metric:  "cost",
+		periods: []string{"2026-8"},
+		values:  []float64{90},
+		groups: []chartGroupSeries{
+			{name: "svc-a", values: []float64{60}},
+			{name: "svc-b", values: []float64{30}},
+		},
+	}
+	out = captureStderr(t, func() { maybeRenderChart(60) })
+	if !strings.Contains(out, "color terminal") || !strings.Contains(out, "no chart rendered") {
+		t.Fatalf("expected the treemap-specific note, got %q", out)
+	}
+	forceChartColor(t, true)
+
+	// A single positive group has no shares to tile: same fallback rules.
+	chartSeries = &chartSeriesData{
+		metric:  "cost",
+		periods: []string{"W1", "W2"},
+		values:  []float64{30, 60},
+		groups:  []chartGroupSeries{{name: "all", values: []float64{30, 60}}},
+	}
+	out = captureStderr(t, func() { maybeRenderChart(60) })
+	if strings.Contains(out, "█ all") {
+		t.Fatalf("single-group treemap must fall back to the line chart:\n%s", out)
+	}
+
+	// A missing series notes the treemap's own requirements, not the pivot's.
+	out = captureStderr(t, func() { maybeRenderChart(60) })
+	if !strings.Contains(out, "group and metric columns") {
+		t.Fatalf("expected the treemap-specific missing-series note, got %q", out)
+	}
+}
+
+func TestTreemapChartGeometry(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	series := &chartSeriesData{
+		metric:  "cost",
+		periods: []string{"W1"},
+		values:  []float64{100},
+		groups: []chartGroupSeries{
+			{name: "alpha", values: []float64{60}},
+			{name: "beta", values: []float64{25}},
+			{name: "gamma", values: []float64{10}},
+			{name: "credits", values: []float64{-5}}, // no area, legend only
+			{name: "delta", values: []float64{10}},
+		},
+	}
+	out := renderTreemapChart(series, 60)
+	lines := strings.Split(out, "\n")
+	if len(lines) < treemapChartHeight+1+len(series.groups) {
+		t.Fatalf("treemap output too short (%d lines):\n%s", len(lines), out)
+	}
+	for y := 0; y < treemapChartHeight; y++ {
+		if got := lipgloss.Width(lines[y]); got != 60 {
+			t.Fatalf("canvas row %d width = %d, want 60 (aligned with the table)", y, got)
+		}
+	}
+	plain := stripANSI(out)
+	if strings.Contains(strings.Join(strings.Split(plain, "\n")[:treemapChartHeight], "\n"), "credits") {
+		t.Fatalf("negative-total group must not occupy canvas area:\n%s", plain)
+	}
+	if !strings.Contains(plain, "█ credits  -5%") {
+		t.Fatalf("negative-total group must keep its exact legend share:\n%s", plain)
+	}
+}
+
+func TestTreemapSplitTilesTheGrid(t *testing.T) {
+	items := []int{0, 1, 2, 3, 4, 5}
+	weights := []float64{40, 25, 15, 10, 7, 3}
+	rects := []treemapRect{}
+	treemapSplit(items, weights, 0, 0, 40, treemapChartHeight, &rects)
+	if len(rects) != len(items) {
+		t.Fatalf("rects = %d, want one per item", len(rects))
+	}
+	covered := map[[2]int]int{}
+	areas := map[int]int{}
+	for _, rect := range rects {
+		if rect.w < 1 || rect.h < 1 {
+			t.Fatalf("degenerate rect %+v", rect)
+		}
+		for y := rect.y; y < rect.y+rect.h; y++ {
+			for x := rect.x; x < rect.x+rect.w; x++ {
+				if prev, taken := covered[[2]int{x, y}]; taken {
+					t.Fatalf("cell (%d,%d) covered by items %d and %d", x, y, prev, rect.item)
+				}
+				covered[[2]int{x, y}] = rect.item
+			}
+		}
+		areas[rect.item] = rect.w * rect.h
+	}
+	if len(covered) != 40*treemapChartHeight {
+		t.Fatalf("covered %d cells, want the full %d-cell grid", len(covered), 40*treemapChartHeight)
+	}
+	for i := 1; i < len(items); i++ {
+		if areas[items[i]] > areas[items[i-1]] {
+			t.Fatalf("area rank breaks weight rank: item %d (%d cells) > item %d (%d cells)",
+				items[i], areas[items[i]], items[i-1], areas[items[i-1]])
+		}
+	}
+}
+
+func TestTreemapSeriesFromFlatRows(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Cleanup(resetChartState)
+	viper.Set("chart-requested", true)
+
+	schema := []reportColumn{
+		{Name: "service_description", Type: "string"},
+		{Name: "cost", Type: "float"},
+	}
+	rows := []interface{}{
+		[]interface{}{"BigQuery", 30.0},
+		[]interface{}{"Compute Engine", 60.0},
+		[]interface{}{"Compute Engine", 5.0}, // duplicate groups aggregate
+	}
+
+	// Other chart modes need the time axis: no series from flat rows.
+	viper.Set("chart-mode", "stacked")
+	setTreemapSeriesFromFlatRows(rows, schema)
+	if chartSeries != nil {
+		t.Fatal("flat rows must only feed the treemap")
+	}
+
+	viper.Set("chart-mode", "treemap")
+	setTreemapSeriesFromFlatRows(rows, schema)
+	if chartSeries == nil {
+		t.Fatal("treemap series not stashed from flat rows")
+	}
+	if len(chartSeries.groups) != 2 || chartSeries.groups[0].name != "Compute Engine" || chartSeries.groups[0].values[0] != 65 {
+		t.Fatalf("groups = %+v, want aggregated totals ranked largest-first", chartSeries.groups)
+	}
+	if caption := treemapChartCaption(chartSeries); caption != "cost by group" {
+		t.Fatalf("time-less caption = %q, want the bare metric-by-group form", caption)
+	}
+
+	// A series already stashed by the pivot is the authority: no overwrite.
+	pivotStashed := chartSeries
+	setTreemapSeriesFromFlatRows(rows, schema)
+	if chartSeries != pivotStashed {
+		t.Fatal("flat rows must not replace a pivot-stashed series")
+	}
+
+	// A schema without groups or metrics stays chartless.
+	resetChartState()
+	setTreemapSeriesFromFlatRows(rows, []reportColumn{{Name: "cost", Type: "float"}})
+	if chartSeries != nil {
+		t.Fatal("group-less schema must not stash a series")
+	}
+}
+
 func TestChartAlignsWithTableWidth(t *testing.T) {
 	if got := chartRenderWidth(120); got != 120 {
 		t.Fatalf("chartRenderWidth(120) = %d, want the table width", got)
