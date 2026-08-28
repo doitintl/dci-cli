@@ -1297,6 +1297,48 @@ func TestAIEnterSubmitsExactCompletion(t *testing.T) {
 	}
 }
 
+func TestAIEnterSubmitsExactMatchBehindUserCommand(t *testing.T) {
+	// User commands list before catalog prefix matches, so a saved command
+	// extending a catalog name sits above the fully typed command. The
+	// rebuilt popup must snap the highlight to the exact row — otherwise
+	// Enter rewrites a fully typed "/status" into "/status-custom ".
+	m := aiTestModel(t)
+	m.catalog = []aiCatalogEntry{{Path: "status", Summary: "Show CLI status"}}
+	m.userCommands = map[string]aiUserCommand{
+		"status-custom": {Command: "status --verbose", Summary: "saved"},
+	}
+	m = aiType(m, "/status")
+	if len(m.completions) != 2 || m.completions[0].Value != "status-custom" {
+		t.Fatalf("completions = %+v, want the user command listed first", m.completions)
+	}
+	if m.completionIndex != 1 {
+		t.Fatalf("completionIndex = %d, want the exact catalog row highlighted", m.completionIndex)
+	}
+	m, _ = aiPress(m, tea.KeyEnter)
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input after enter = %q, want submitted (empty)", got)
+	}
+	if len(m.history) == 0 || m.history[len(m.history)-1] != "/status" {
+		t.Fatalf("exact command not submitted: history = %v", m.history)
+	}
+}
+
+func TestAITypingResetsCompletionHighlight(t *testing.T) {
+	// Arrow keys move the highlight; typing rebuilds the list, and a
+	// highlight carried across different content pointed at whatever row
+	// number the old list happened to share.
+	m := aiTestModel(t)
+	m = aiType(m, "/li")
+	m, _ = aiPress(m, tea.KeyDown)
+	if m.completionIndex != 1 {
+		t.Fatalf("completionIndex after down = %d", m.completionIndex)
+	}
+	m = aiType(m, "s")
+	if m.completionIndex != 0 {
+		t.Fatalf("completionIndex after typing = %d, want reset to the top", m.completionIndex)
+	}
+}
+
 func TestAIEnterAcceptsHighlightedRowOverExactInput(t *testing.T) {
 	// "/beta" is itself a completion, but with the highlight moved to a
 	// subcommand, Enter must accept that row — it used to re-submit the bare
