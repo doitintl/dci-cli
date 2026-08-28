@@ -411,15 +411,21 @@ type aiCompletion struct {
 	Summary string
 }
 
-// aiCompletionsFor returns popup candidates for the current input. The popup
-// only completes the first token: once a space follows a committed token, it
-// stays hidden. Session verbs list first, then user-defined commands, then
-// catalog prefix matches, then catalog substring matches (the §4.2 order).
+// aiCompletionsFor returns popup candidates for the current input. A
+// single-token input completes against everything: session verbs list first,
+// then user-defined commands, then catalog prefix matches, then catalog
+// substring matches (the §4.2 order). An input that already carries a space
+// completes only against the catalog's multi-word paths (group commands like
+// "/beta run" → "beta run-report"); arguments and flags after a leaf command
+// match no path, so the popup stays hidden there exactly as before.
 func aiCompletionsFor(input string, catalog []aiCatalogEntry, userCommands map[string]aiUserCommand, limit int) []aiCompletion {
-	if !strings.HasPrefix(input, "/") || strings.ContainsAny(input, " \t") {
+	if !strings.HasPrefix(input, "/") {
 		return nil
 	}
 	token := strings.ToLower(strings.TrimPrefix(input, "/"))
+	if strings.ContainsAny(token, " \t") {
+		return aiGroupCompletionsFor(token, catalog, limit)
+	}
 	var verbs, prefix, substring []aiCompletion
 	for _, verb := range aiSessionVerbs {
 		if strings.HasPrefix(verb.name, token) {
@@ -468,20 +474,52 @@ func aiCompletionsFor(input string, catalog []aiCatalogEntry, userCommands map[s
 	return merged
 }
 
-// aiCompletionExact reports whether the input already names one of the popup's
-// completions exactly (input = "/" + value). Enter then submits instead of
-// re-accepting what the user has fully typed (AI-POLISH-SPEC F1); with the
-// input still a partial token, Enter accepts the highlighted completion like
-// Tab does. Case-sensitive on purpose: "/QUIT" is not the verb, so Enter
-// corrects it to the completion's spelling rather than submitting it.
-func aiCompletionExact(input string, completions []aiCompletion) bool {
-	token := strings.TrimPrefix(strings.TrimSpace(input), "/")
-	for _, completion := range completions {
-		if token == completion.Value {
-			return true
+// aiGroupCompletionsFor completes a multi-word input against full catalog
+// paths, so a partial second token still completes ("/beta run" used to strand
+// the user at /beta with the popup gone). Whole-path prefix matches first,
+// then entries under the same committed group whose remainder contains the
+// last token ("/beta report" → "beta run-report") — the same
+// prefix-then-substring order the single-token popup uses. Whitespace is
+// normalized so "beta  run" still matches the catalog's single-space paths.
+func aiGroupCompletionsFor(token string, catalog []aiCatalogEntry, limit int) []aiCompletion {
+	fields := strings.Fields(token)
+	if len(fields) < 2 {
+		return nil
+	}
+	full := strings.Join(fields, " ")
+	group := strings.Join(fields[:len(fields)-1], " ") + " "
+	last := fields[len(fields)-1]
+	var prefix, substring []aiCompletion
+	for _, entry := range catalog {
+		lower := strings.ToLower(entry.Path)
+		switch {
+		case strings.HasPrefix(lower, full):
+			prefix = append(prefix, aiCompletion{Value: entry.Path, Summary: entry.Summary})
+		case strings.HasPrefix(lower, group) && strings.Contains(lower[len(group):], last):
+			substring = append(substring, aiCompletion{Value: entry.Path, Summary: entry.Summary})
 		}
 	}
-	return false
+	merged := append(prefix, substring...)
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
+}
+
+// aiCompletionExact reports whether the input already names the HIGHLIGHTED
+// completion exactly (input = "/" + value). Enter then submits instead of
+// re-accepting what the user has fully typed (AI-POLISH-SPEC F1); with the
+// input still a partial token — or with the highlight moved to a different
+// row — Enter accepts the highlighted completion like Tab does. The
+// highlighted row, not any row: "/beta" plus ↓ to a subcommand used to
+// re-submit the bare /beta because "beta" was *a* completion, just not the
+// selected one. Case-sensitive on purpose: "/QUIT" is not the verb, so Enter
+// corrects it to the completion's spelling rather than submitting it.
+func aiCompletionExact(input string, completions []aiCompletion, index int) bool {
+	if index < 0 || index >= len(completions) {
+		return false
+	}
+	return strings.TrimPrefix(strings.TrimSpace(input), "/") == completions[index].Value
 }
 
 // --- History ----------------------------------------------------------------

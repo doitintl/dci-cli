@@ -298,6 +298,29 @@ func TestReportExecutionErrorPreservesNonInteractivePreflightContract(t *testing
 	}
 }
 
+func TestAuthenticationRequiredErrorIsSessionShapedUnderSessionRender(t *testing.T) {
+	// The `dci ai` session's dispatch children run with DCI_SESSION_RENDER=1
+	// and print only the message: it must point at /login (the session can run
+	// the browser flow), not at the shell's "cannot open a browser" remedy.
+	t.Setenv("DCI_SESSION_RENDER", "1")
+	sessionErr := authenticationRequiredPreflightError().(invocationPreflightError)
+	if !strings.Contains(sessionErr.Error(), "/login") || strings.Contains(sessionErr.Error(), "browser") {
+		t.Fatalf("session-shaped message = %q", sessionErr.Error())
+	}
+	if sessionErr.StructuredError().Code != "AUTHENTICATION_REQUIRED" || sessionErr.ExitCode() != exitAuthentication {
+		t.Fatalf("session shape changed the contract: %#v", sessionErr)
+	}
+
+	t.Setenv("DCI_SESSION_RENDER", "")
+	shellErr := authenticationRequiredPreflightError().(invocationPreflightError)
+	if !strings.Contains(shellErr.Error(), "cannot open a browser") {
+		t.Fatalf("shell message = %q", shellErr.Error())
+	}
+	if !strings.Contains(shellErr.StructuredError().Hint, "DCI_API_KEY") {
+		t.Fatalf("shell hint = %q", shellErr.StructuredError().Hint)
+	}
+}
+
 func TestPreflightAPIInvocationRejectsColdCacheDestructiveWithoutCredentials(t *testing.T) {
 	api := cli.API{Operations: []cli.Operation{{Name: "delete-budget", Method: "DELETE"}}}
 	loadCount := configureInvocationPreflightTest(t, api, false, false, false)

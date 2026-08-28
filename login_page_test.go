@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -269,6 +270,46 @@ func TestMaybeWaitForRunClick(t *testing.T) {
 			t.Error("timeout must not run the suggestion")
 		}
 	})
+	t.Run("ctrl-c skips gracefully instead of dying with exit 130", func(t *testing.T) {
+		ran := runCommand(t)
+		oldGrace := runClickGraceWindow
+		runClickGraceWindow = 5 * time.Second // long: only the signal may end the wait
+		t.Cleanup(func() { runClickGraceWindow = oldGrace })
+		stopped := false
+		oldNotify := notifyRunSkip
+		notifyRunSkip = func() (<-chan os.Signal, func()) {
+			skip := make(chan os.Signal, 1)
+			skip <- os.Interrupt
+			return skip, func() { stopped = true }
+		}
+		t.Cleanup(func() { notifyRunSkip = oldNotify })
+		offer := armTestOffer(t)
+		close(offer.exchangeDone)
+		start := time.Now()
+		maybeWaitForRunClick()
+		if elapsed := time.Since(start); elapsed >= runClickGraceWindow {
+			t.Fatalf("skip took %s — the signal did not end the wait", elapsed)
+		}
+		if *ran {
+			t.Error("skip must not run the suggestion")
+		}
+		if !stopped {
+			t.Error("signal handler not released after the wait")
+		}
+	})
+}
+
+func TestAISessionLoginActive(t *testing.T) {
+	// armLoginRunOffer's TTY gate cannot be exercised without a PTY; the
+	// session-marker clause it also checks is a plain predicate.
+	t.Setenv(aiSessionEnvMarker, "")
+	if aiSessionLoginActive() {
+		t.Fatal("unset marker must not read as a session login")
+	}
+	t.Setenv(aiSessionEnvMarker, "1")
+	if !aiSessionLoginActive() {
+		t.Fatal("marker set must read as a session login")
+	}
 }
 
 func TestLoginErrorPagePlaceholders(t *testing.T) {
@@ -369,6 +410,22 @@ func TestAuthorizationCodeTokenSourceFailsFastHeadless(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Token() did not return headless")
+	}
+
+	// A `dci ai` dispatch child (DCI_SESSION_RENDER=1) gets the session-shaped
+	// remedy: /login works there, "run dci login from a terminal" misleads.
+	t.Setenv("DCI_SESSION_RENDER", "1")
+	go func() {
+		_, err := (&authorizationCodeTokenSource{}).Token()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "/login") || strings.Contains(err.Error(), "browser") {
+			t.Fatalf("session-shaped error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Token() did not return headless under session render")
 	}
 }
 
