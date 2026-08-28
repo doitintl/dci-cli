@@ -8,8 +8,10 @@ package main
 // that). These exist because a whole class of regressions lives between
 // the model and the terminal: key decoding, the completion popup as
 // actually rendered, the dispatch child re-exec, and the error text a
-// logged-out user really sees. Every scenario here is a replay of a bug
-// a human hit interactively (the v2.7.1 beta/login feedback round).
+// logged-out user really sees. The first scenarios replay the bugs humans
+// hit interactively (the v2.7.1 beta/login feedback round); the rest walk
+// the session's other offline-reachable journeys — dispatch lifecycle,
+// verbs and their persistence across restarts, history, paste, resize.
 //
 // Mechanics: TestMain re-execs this test binary as the CLI itself (the
 // whole CLI is package main, so main() is right here), creack/pty gives
@@ -19,8 +21,13 @@ package main
 // substrings of the escape-stripped output stream; each test gets a
 // fresh session with isolated config/cache dirs and a from-scratch
 // environment, so no credentials, agent markers, or proxy settings leak
-// in — and the suite stays fully offline (the beta subtree hydrates from
-// the embedded spec; the one dispatch test fails at preflight by design).
+// in — and the suite stays fully offline: the beta subtree hydrates from
+// the embedded spec, dispatch children either succeed locally (/logout),
+// fail at parsing or preflight by design, or are the harness's scripted
+// fake (tuiE2EFakeChild). Choose dispatch commands with care: anything
+// under a resolvable command is intercepted by the session's name picker
+// (a network fetch), and beta commands tolerate unknown flags and relax
+// arity, so their offline failures are auth-shaped, not argv-shaped.
 // Unix-only: creack/pty has no Windows support, and CI runs on Linux.
 //
 // Two rules keep these assertions honest against a raw output stream:
@@ -43,6 +50,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -57,8 +65,22 @@ import (
 // process tree under test is the real CLI.
 const tuiE2EChildMarker = "DCI_TUI_E2E_MAIN"
 
+// tuiE2EFakeChild ("mode:token") substitutes a scripted child for any
+// re-exec whose argv contains token — the only place the process tree
+// under test is NOT the real CLI, used for session-side flows whose child
+// behavior cannot be produced offline: "stall" is a dispatch that never
+// finishes (the Esc-cancel path). Set per session via extraEnv; the
+// session's own argv ("ai") never matches a dispatch token.
+const tuiE2EFakeChild = "DCI_TUI_E2E_FAKE"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(tuiE2EChildMarker) == "1" {
+		if mode, token, ok := strings.Cut(os.Getenv(tuiE2EFakeChild), ":"); ok && slices.Contains(os.Args[1:], token) {
+			switch mode {
+			case "stall":
+				select {} // runs until the session cancels the dispatch
+			}
+		}
 		main() // never returns: main exits with the CLI's status
 		return
 	}
@@ -88,47 +110,70 @@ func stripTerminalEscapes(s string) string {
 // not a one-shot value send, so the quit test and the cleanup can both
 // observe the exit without deadlocking each other.
 type tuiSession struct {
-	t       *testing.T
-	cmd     *exec.Cmd
-	tty     *os.File
-	exitErr error
-	exited  chan struct{}
+	t         *testing.T
+	cmd       *exec.Cmd
+	tty       *os.File
+	configDir string
+	workDir   string // the session's cwd: where /export's relative paths land
+	exitErr   error
+	exited    chan struct{}
 
 	mu  sync.Mutex
 	raw strings.Builder
 }
 
-// startTUISession boots `dci ai` on a fresh pty with isolated config and
-// cache dirs (prepare seeds them first — saved commands, cached specs) and
-// blocks until the banner renders. The environment is built from scratch:
-// no inherited credentials, no agent-detection markers, no proxy — plus
-// the CLI's own DCI_AGENT_MODE=0 override, because the test runner itself
-// sits in an agent environment the CLI would otherwise rightly detect.
-func startTUISession(t *testing.T, prepare func(configDir string)) *tuiSession {
+// tuiSessionConfig shapes one session under test. The zero value is the
+// common case: `dci ai`, fresh isolated dirs, no fakes.
+type tuiSessionConfig struct {
+	args      []string               // CLI argv after the binary; nil means {"ai"}
+	configDir string                 // reuse a config dir across restarts; "" = fresh
+	extraEnv  []string               // e.g. the tuiE2EFakeChild selector
+	prepare   func(configDir string) // seed the config dir before launch
+}
+
+// startTUISession boots the CLI on a fresh pty with isolated config and
+// cache dirs and blocks until the whole first frame renders. The
+// environment is built from scratch: no inherited credentials, no
+// agent-detection markers, no proxy — plus the CLI's own DCI_AGENT_MODE=0
+// override, because the test runner itself sits in an agent environment
+// the CLI would otherwise rightly detect.
+func startTUISession(t *testing.T, cfg tuiSessionConfig) *tuiSession {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	configDir, cacheDir := t.TempDir(), t.TempDir()
-	if prepare != nil {
-		prepare(configDir)
+	configDir := cfg.configDir
+	if configDir == "" {
+		configDir = t.TempDir()
 	}
-	cmd := exec.Command(exe, "ai")
-	cmd.Env = []string{
+	if cfg.prepare != nil {
+		cfg.prepare(configDir)
+	}
+	args := cfg.args
+	if args == nil {
+		args = []string{"ai"}
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append([]string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + t.TempDir(),
 		"TERM=xterm-256color", // no Kitty signal: the logo probe stays off
 		tuiE2EChildMarker + "=1",
 		"DCI_CONFIG_DIR=" + configDir,
-		"DCI_CACHE_DIR=" + cacheDir,
+		"DCI_CACHE_DIR=" + t.TempDir(),
 		"DCI_AGENT_MODE=0",
-	}
+	}, cfg.extraEnv...)
 	tty, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 40, Cols: 140})
 	if err != nil {
 		t.Fatal(err)
 	}
-	session := &tuiSession{t: t, cmd: cmd, tty: tty, exited: make(chan struct{})}
+	session := &tuiSession{
+		t: t, cmd: cmd, tty: tty,
+		configDir: configDir, workDir: cmd.Dir,
+		exited: make(chan struct{}),
+	}
 	go func() {
 		session.exitErr = cmd.Wait()
 		close(session.exited)
@@ -206,6 +251,9 @@ const (
 	keyEnter = "\r"
 	keyEsc   = "\x1b"
 	keyDown  = "\x1b[B"
+	keyUp    = "\x1b[A"
+	keyTab   = "\t"
+	keyCtrlC = "\x03"
 )
 
 // waitFor blocks until the stripped transcript contains want, and returns
@@ -256,7 +304,7 @@ func (s *tuiSession) stop() {
 // count, the first-timer help block renders, and a typed slash drops out
 // of the key onboarding into the completion popup.
 func TestE2ELoggedOutBannerAndSlashEntersPopup(t *testing.T) {
-	session := startTUISession(t, nil)
+	session := startTUISession(t, tuiSessionConfig{})
 	session.waitFor("API commands appear after /login")
 	session.waitFor("How this session works")
 	session.waitFor("API key:") // the guided key onboarding owns the keyboard...
@@ -272,7 +320,7 @@ func TestE2ELoggedOutBannerAndSlashEntersPopup(t *testing.T) {
 // subcommand can put "dci beta run-report" there, and only the regression
 // can put "Beta commands" (the bare /beta listing) anywhere at all.
 func TestE2EBetaPopupEnterAcceptsHighlightedSubcommand(t *testing.T) {
-	session := startTUISession(t, nil)
+	session := startTUISession(t, tuiSessionConfig{})
 	session.send("/beta")
 	session.waitFor("/beta run-report-config") // full popup up, embedded spec hydrated
 	session.send(keyDown, keyDown, keyDown, keyDown)
@@ -296,7 +344,7 @@ func TestE2EBetaPopupEnterAcceptsHighlightedSubcommand(t *testing.T) {
 // with the popup hidden the moment the input carried a space. As above,
 // the second Enter proves what the first one accepted.
 func TestE2EBetaPartialSecondTokenCompletes(t *testing.T) {
-	session := startTUISession(t, nil)
+	session := startTUISession(t, tuiSessionConfig{})
 	session.send("/beta run")
 	session.waitFor("(beta) Run a saved report asynchronously") // run-report's row is up
 	session.send(keyEnter)                                      // accepts the prefix tier's first row
@@ -315,7 +363,7 @@ func TestE2EBetaPartialSecondTokenCompletes(t *testing.T) {
 // "/beta operation" — the last token matching inside subcommand names —
 // completes through the substring tier, same as the single-token popup.
 func TestE2EBetaSubstringSecondTokenCompletes(t *testing.T) {
-	session := startTUISession(t, nil)
+	session := startTUISession(t, tuiSessionConfig{})
 	session.send("/beta operation")
 	text := session.waitFor("/beta cancel-report-operation")
 	if !strings.Contains(text, "/beta get-report-operation") {
@@ -327,7 +375,7 @@ func TestE2EBetaSubstringSecondTokenCompletes(t *testing.T) {
 // though subcommand rows share the popup) and renders the session-shaped
 // beta list, not the shell-shaped child help.
 func TestE2EBareBetaEnterSubmitsAndListsSessionStyle(t *testing.T) {
-	session := startTUISession(t, nil)
+	session := startTUISession(t, tuiSessionConfig{})
 	session.send("/beta")
 	session.waitFor("/beta run-report-config") // popup up: the exact row is highlighted
 	session.send(keyEnter)
@@ -343,12 +391,12 @@ func TestE2EBareBetaEnterSubmitsAndListsSessionStyle(t *testing.T) {
 // popup must snap the highlight to the exact row so Enter still submits
 // the fully typed command instead of rewriting it into the saved one.
 func TestE2ESavedCommandShadowStillSubmitsExactInput(t *testing.T) {
-	session := startTUISession(t, func(configDir string) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(configDir string) {
 		commands := `{"beta-mine": {"command": "beta", "summary": "saved shadow"}}`
 		if err := os.WriteFile(filepath.Join(configDir, aiUserCommandsFileName), []byte(commands), 0o600); err != nil {
 			t.Fatal(err)
 		}
-	})
+	}})
 	session.send("/beta")
 	session.waitFor("saved shadow") // the shadow's popup row is up, above the exact row
 	session.send(keyEnter)
@@ -362,7 +410,7 @@ func TestE2ESavedCommandShadowStillSubmitsExactInput(t *testing.T) {
 // "this session cannot open a browser". Exercises the real re-exec child
 // with the real dispatch environment, offline (preflight fails first).
 func TestE2ELoggedOutDispatchSaysRunLogin(t *testing.T) {
-	session := startTUISession(t, nil)
+	session := startTUISession(t, tuiSessionConfig{})
 	session.send("/beta run-report r1", keyEnter)
 	text := session.waitFor("you're not signed in — run /login to sign in")
 	session.waitFor(fmt.Sprintf("exit %d", exitAuthentication))
@@ -374,14 +422,217 @@ func TestE2ELoggedOutDispatchSaysRunLogin(t *testing.T) {
 // /quit ends the process cleanly — the session must exit 0, not linger
 // until the harness kills it.
 func TestE2EQuitExitsCleanly(t *testing.T) {
-	session := startTUISession(t, nil)
+	session := startTUISession(t, tuiSessionConfig{})
 	session.send("/quit", keyEnter)
+	session.expectCleanExit()
+}
+
+// expectCleanExit asserts the session ends by itself with status 0.
+func (s *tuiSession) expectCleanExit() {
+	s.t.Helper()
 	select {
-	case <-session.exited:
-		if session.exitErr != nil {
-			t.Fatalf("session exited with %v", session.exitErr)
+	case <-s.exited:
+		if s.exitErr != nil {
+			s.t.Fatalf("session exited with %v", s.exitErr)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("/quit did not end the session")
+		s.t.Fatal("session did not end")
 	}
+}
+
+// leaveKeyOnboarding exits the guided key entry that owns the keyboard in
+// a fresh keyless session, for tests whose first input is not a slash.
+func (s *tuiSession) leaveKeyOnboarding() {
+	s.t.Helper()
+	s.send(keyEsc)
+	s.waitFor("key setup canceled")
+}
+
+// Esc during a running dispatch cancels it: the child is killed and the
+// run card records the cancellation instead of a result. The child is the
+// harness's stall fake — no real command blocks forever offline.
+func TestE2EEscCancelsRunningDispatch(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{
+		extraEnv: []string{tuiE2EFakeChild + "=stall:run-report"},
+	})
+	session.send("/beta run-report r1", keyEnter)
+	time.Sleep(400 * time.Millisecond) // Enter set the running state; the stalled child never will
+	session.send(keyEsc)
+	session.waitFor("canceled after")
+}
+
+// A bare argument/flag rejection gets the one-line usage appended,
+// spelled the session's way. The command has to be chosen with care to
+// stay offline: beta commands tolerate unknown flags and relax arity for
+// resolvable names, and anything under a resolvable command (all of
+// customer-context) is intercepted by the session's name picker — a
+// fetch — instead of dispatching. `docs` is a strict, non-resolvable
+// custom root leaf, so an unknown flag fails in the child on parsing
+// alone.
+func TestE2EArgvErrorGetsSessionUsageLine(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/docs --nope", keyEnter)
+	session.waitFor("unknown flag: --nope")
+	session.waitFor("usage: /docs")
+}
+
+// Tab accepts the highlighted completion; the verb that then runs on
+// Enter proves which row it was ("be" puts the /bell verb first — verbs
+// list before catalog matches). The bell defaults ON, so the first toggle
+// lands on off.
+func TestE2ETabAcceptsHighlightedCompletion(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/be")
+	session.waitFor("Toggle the end-of-turn terminal bell")
+	session.send(keyTab, keyEnter)
+	session.waitFor("bell off —")
+}
+
+// The popup is a window over more matches than it shows: bare "/" lists
+// every candidate, and nine ↓ presses walk to /quit — the tenth row, past
+// the six visible ones (the v2.6.2 bug made rows beyond the window
+// unreachable). Enter accepts it, Enter again submits it: a clean exit is
+// the proof the highlight really reached that row.
+func TestE2EPopupWindowNavigatesPastVisibleRows(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/")
+	session.waitFor("Show or set the customer context") // popup open on the verb rows
+	for i := 0; i < 9; i++ {
+		session.send(keyDown)
+	}
+	session.send(keyEnter, keyEnter)
+	session.expectCleanExit()
+}
+
+// A slash line matching nothing never dispatches: it reports the unknown
+// command with did-you-mean suggestions from the catalog.
+func TestE2EUnknownCommandSuggests(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/betaa", keyEnter)
+	session.waitFor("unknown command: /betaa")
+	session.waitFor("did you mean: /beta")
+}
+
+// A slash line that does not parse reports the error instead of
+// dispatching or falling through to the AI.
+func TestE2EUnterminatedQuoteReports(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/beta 'oops", keyEnter)
+	session.waitFor("could not parse: unterminated")
+}
+
+// /customer persists the context to the config dir, a restarted session
+// reads it back into the banner, and the input history survives with it:
+// ↑ recalls lines submitted in the previous session.
+func TestE2ECustomerAndHistoryPersistAcrossSessions(t *testing.T) {
+	configDir := t.TempDir()
+	first := startTUISession(t, tuiSessionConfig{configDir: configDir})
+	first.send("/customer acme.com", keyEnter)
+	first.waitFor("Customer context set to acme.com")
+	first.send("/customer", keyEnter)
+	first.waitFor("Customer context: acme.com")
+	first.stop() // appends its own /quit to the history
+
+	second := startTUISession(t, tuiSessionConfig{configDir: configDir})
+	second.waitFor("Tenant: acme.com") // the persisted context is in the banner
+	second.leaveKeyOnboarding()
+	// History, newest first: /quit, /customer, /customer acme.com.
+	second.send(keyUp, keyUp, keyUp, keyEnter)
+	second.waitFor("Customer context set to acme.com")
+}
+
+// /bell persists: the bell defaults ON, the first session toggles it off
+// and saves that, so a session restarted over the same config dir starts
+// from OFF and its own toggle lands back on — only a persisted setting
+// can produce that order.
+func TestE2EBellTogglePersistsAcrossSessions(t *testing.T) {
+	configDir := t.TempDir()
+	first := startTUISession(t, tuiSessionConfig{configDir: configDir})
+	first.send("/bell", keyEnter)
+	first.waitFor("bell off —")
+	first.stop()
+
+	second := startTUISession(t, tuiSessionConfig{configDir: configDir})
+	second.send("/bell", keyEnter)
+	second.waitFor("bell on —")
+}
+
+// /export writes the transcript to a file, and /clear really empties the
+// transcript: a second export after clearing must not carry the earlier
+// blocks. File contents are the one place "no longer present" is provable
+// (the output stream keeps every frame; the file is a snapshot).
+func TestE2EExportWritesTranscriptAndClearDropsIt(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/customer acme.com", keyEnter)
+	session.waitFor("Customer context set to acme.com")
+	session.send("/export before.txt", keyEnter)
+	session.waitFor("Transcript saved to before.txt")
+	session.send("/clear", keyEnter)
+	session.send("/export after.txt", keyEnter)
+	session.waitFor("Transcript saved to after.txt")
+
+	before, err := os.ReadFile(filepath.Join(session.workDir, "before.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(before), "Customer context set to acme.com") {
+		t.Fatal("export before /clear misses the transcript content")
+	}
+	after, err := os.ReadFile(filepath.Join(session.workDir, "after.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(after), "Customer context set to acme.com") {
+		t.Fatal("/clear left earlier transcript blocks behind")
+	}
+	if !strings.Contains(string(after), "Cloud Intelligence") {
+		t.Fatal("the cleared session's export misses the fresh banner")
+	}
+}
+
+// /logout dispatches a real child that succeeds offline — the one
+// successful run card in the suite: output plus a plain elapsed footer,
+// no exit code.
+func TestE2ELogoutDispatchSucceedsOffline(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.send("/logout", keyEnter)
+	session.waitFor("Logged out. Credentials cleared.")
+}
+
+// A bracketed paste lands in the input and drives the completion popup,
+// same as typing (v2 delivers pastes as their own message type — the
+// v2.7.0 port had to route them explicitly).
+func TestE2EBracketedPasteFillsInput(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.leaveKeyOnboarding() // a paste during key entry goes to the key buffer
+	session.send("\x1b[200~/beta run\x1b[201~")
+	session.waitFor("(beta) Run a saved report asynchronously")
+}
+
+// ctrl+c on an empty input arms, and a second press quits — the shell
+// instinct, without a stray first press killing the session.
+func TestE2ECtrlCTwiceQuits(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	session.leaveKeyOnboarding()
+	session.send(keyCtrlC, keyCtrlC)
+	session.expectCleanExit()
+}
+
+// A resize and a ctrl+l repaint must leave a live, usable frame: the
+// popup still opens on the reflowed layout.
+func TestE2EResizeAndRedrawSurvive(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{})
+	if err := pty.Setsize(session.tty, &pty.Winsize{Rows: 30, Cols: 100}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond) // let the WindowSizeMsg land
+	session.send("\x0c")               // ctrl+l: erase and repaint
+	session.send("/beta")
+	session.waitFor("(beta) Cancel an async report run operation")
+}
+
+// Bare `dci` at a human terminal opens the session (AI-DEFAULT-SPEC §3):
+// the harness's own startup waits assert the banner and first frame.
+func TestE2EBareInvocationOpensSession(t *testing.T) {
+	startTUISession(t, tuiSessionConfig{args: []string{}})
 }
