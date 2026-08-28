@@ -506,6 +506,12 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 			realDir: func() string { return realConfigDir },
 			warnOn:  "the customer context",
 		},
+		{
+			// Same single-source-of-truth reasoning as customer_context.
+			name:    cliSettingsFileName,
+			realDir: func() string { return realConfigDir },
+			warnOn:  "the persisted CLI preferences",
+		},
 	}
 
 	// originals holds what each file looked like when copied in, so
@@ -767,6 +773,7 @@ func run() (exitCode int) {
 	brandRootCommand()
 	brandDCIRootCommand()
 	registerStatusCommands(configDir)
+	registerConfigCommand(configDir)
 	registerAuthCommands(configDir)
 	registerCustomerContextCommands(configDir)
 	registerUpdateCommand(configDir)
@@ -1779,6 +1786,8 @@ func registerStatusCommands(configDir string) {
 			_, _ = fmt.Fprintln(os.Stdout, "Session: not authenticated (run: dci login, or set DCI_API_KEY)")
 		}
 		fmt.Fprintf(os.Stdout, "Default Output: %s\n", currentOutput())
+		order, orderSource, _ := resolveOutputOrder("")
+		fmt.Fprintf(os.Stdout, "Output order: %s (%s)\n", order, orderSource)
 		if agentMode {
 			fmt.Fprintf(os.Stdout, "Agent Mode: on (%s)\n", agentModeReason)
 		} else {
@@ -2131,6 +2140,7 @@ func addOutputFlag() {
 	// Bare --chart keeps working (and picks the stacked view): cobra fills
 	// the value from NoOptDefVal when the flag is passed without one.
 	dciCmd.PersistentFlags().Lookup("chart").NoOptDefVal = "stacked"
+	dciCmd.PersistentFlags().String("output-order", "", "Row ordering for human table output: terminal (key rows nearest the prompt; the default) or classic (web ordering). Machine formats, agent mode, and piped output always keep classic")
 	dciCmd.PersistentFlags().Bool("id", false, "Treat positional resource arguments as literal IDs and skip name resolution")
 	dciCmd.PersistentFlags().Bool("name", false, "Force name resolution even when an argument matches the resource ID format")
 	dciCmd.PersistentFlags().Bool("all", false, "Fetch every page of a paged list response before rendering (follows the server's page tokens; GET list commands only). Cannot be combined with --page-token or --max-results")
@@ -2244,6 +2254,20 @@ func addOutputFlag() {
 		viper.Set("pivot-active", false)
 		viper.Set("pivot-total-rows", 0)
 		viper.Set("utc-label-columns", "")
+
+		// Resolve the row-ordering choice once per invocation (flag > env >
+		// persisted file > default); the sort sites consult it through
+		// terminalOrderActive(). Always set — viper persists across
+		// in-process runs like every other key here.
+		orderFlag := ""
+		if flag := cmd.Flags().Lookup("output-order"); flag != nil && flag.Changed {
+			orderFlag = flag.Value.String()
+		}
+		outputOrder, _, err := resolveOutputOrder(orderFlag)
+		if err != nil {
+			return err
+		}
+		viper.Set("output-order", outputOrder)
 
 		// Resolve the instant-display zone once per invocation; nil outside a
 		// normal command run keeps the pipeline UTC-deterministic in tests.

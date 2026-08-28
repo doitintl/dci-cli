@@ -164,7 +164,7 @@ func transformInsightsList(body interface{}) interface{} {
 		}
 	}
 
-	sortInsightsBySavings(results)
+	sortInsightsBySavings(results, !terminalOrderActive())
 
 	if presentationView() {
 		applyInsightPresentation(results)
@@ -250,10 +250,18 @@ func markAnomalyWindowColumns() {
 	}
 }
 
-// sortInsightsBySavings orders insights by potential daily savings, highest
-// first, so the most valuable insights lead in every output format. The sort
-// is stable: rows without savings keep the API's order.
-func sortInsightsBySavings(rows []interface{}) {
+// sortInsightsBySavings orders insights by potential daily savings — highest
+// first so the most valuable insights lead machine formats and classic
+// ordering, lowest first under terminal ordering so the top insight lands
+// nearest the prompt (OUTPUT-ORDER-SPEC §4). The sort is stable: rows without
+// savings keep the API's order.
+func sortInsightsBySavings(rows []interface{}, highestFirst bool) {
+	if !highestFirst {
+		sort.SliceStable(rows, func(i, j int) bool {
+			return insightDailySavings(rows[i]) < insightDailySavings(rows[j])
+		})
+		return
+	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		return insightDailySavings(rows[i]) > insightDailySavings(rows[j])
 	})

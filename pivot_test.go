@@ -19,6 +19,73 @@ func pivotSchema() []reportColumn {
 	}
 }
 
+func TestPivotTerminalOrderMirrorsGroupsKeepsTotalsLast(t *testing.T) {
+	viper.Set("table-columns", "")
+	viper.Set("rsh-output-format", "table")
+	viper.Set("output-order", outputOrderTerminal)
+	t.Cleanup(func() {
+		viper.Set("table-columns", nil)
+		viper.Set("rsh-output-format", nil)
+		viper.Set("output-order", nil)
+	})
+	forceTUI(t, true)
+
+	rows := []interface{}{
+		[]interface{}{"svc-a", "2026", "06", 10.0, float64(1780272000)},
+		[]interface{}{"svc-a", "2026", "07", 20.0, float64(1782864000)},
+		[]interface{}{"svc-b", "2026", "06", 100.0, float64(1780272000)},
+		[]interface{}{"svc-b", "2026", "07", 200.0, float64(1782864000)},
+	}
+	result, ok := pivotReportBody(rows, pivotSchema())
+	if !ok {
+		t.Fatal("pivot not applied")
+	}
+	pivoted := result.([]interface{})
+	if got := pivoted[0].(map[string]interface{})["service_description"]; got != "svc-a" {
+		t.Errorf("first group = %v, want svc-a (smallest first under terminal ordering)", got)
+	}
+	if got := pivoted[1].(map[string]interface{})["service_description"]; got != "svc-b" {
+		t.Errorf("second group = %v, want svc-b (largest lands nearest the TOTAL row)", got)
+	}
+	if got := pivoted[2].(map[string]interface{})["service_description"]; got != "TOTAL" {
+		t.Errorf("last row = %v, want TOTAL kept at the bottom", got)
+	}
+}
+
+func TestPivotTerminalOrderChartSeriesStayLargestFirst(t *testing.T) {
+	// The chart's top-chartMaxGroups fold consumes groupOrder largest-first
+	// (OUTPUT-ORDER-SPEC §7.1); only the rendered rows mirror.
+	viper.Set("table-columns", "")
+	viper.Set("rsh-output-format", "table")
+	viper.Set("output-order", outputOrderTerminal)
+	viper.Set("chart-requested", true)
+	t.Cleanup(func() {
+		viper.Set("table-columns", nil)
+		viper.Set("rsh-output-format", nil)
+		viper.Set("output-order", nil)
+		viper.Set("chart-requested", nil)
+		resetChartState()
+	})
+	forceTUI(t, true)
+	resetChartState()
+
+	rows := []interface{}{
+		[]interface{}{"svc-a", "2026", "06", 10.0, float64(1780272000)},
+		[]interface{}{"svc-a", "2026", "07", 20.0, float64(1782864000)},
+		[]interface{}{"svc-b", "2026", "06", 100.0, float64(1780272000)},
+		[]interface{}{"svc-b", "2026", "07", 200.0, float64(1782864000)},
+	}
+	if _, ok := pivotReportBody(rows, pivotSchema()); !ok {
+		t.Fatal("pivot not applied")
+	}
+	if chartSeries == nil || len(chartSeries.groups) != 2 {
+		t.Fatalf("chart series = %+v, want two groups", chartSeries)
+	}
+	if chartSeries.groups[0].name != "svc-b" {
+		t.Errorf("first chart group = %q, want svc-b (largest-first ranking preserved for the fold)", chartSeries.groups[0].name)
+	}
+}
+
 func TestPivotReportBodyTimeAsColumns(t *testing.T) {
 	viper.Set("table-columns", "")
 	t.Cleanup(func() { viper.Set("table-columns", nil) })

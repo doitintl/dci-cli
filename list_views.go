@@ -287,7 +287,7 @@ func applyListView(body interface{}) interface{} {
 	}
 
 	if view.sortField != "" {
-		sortRowsByEpochDesc(items, view.sortField)
+		sortRowsByEpoch(items, view.sortField, !terminalOrderActive())
 	}
 
 	ctx := &viewContext{names: map[string]map[string]string{}}
@@ -350,12 +350,17 @@ func displayTimeColumnTitle(title, source string) string {
 	return strings.TrimSuffix(title, " (UTC)") + " (local)"
 }
 
-// sortRowsByEpochDesc orders rows by an epoch-milliseconds field, newest
-// first, so a visible time column is also the view's sort key. Stable: rows
-// sharing the field value keep the API's order.
-func sortRowsByEpochDesc(items []interface{}, field string) {
+// sortRowsByEpoch orders rows by an epoch-milliseconds field so a visible
+// time column is also the view's sort key: newest first in classic ordering,
+// oldest first under terminal ordering so the newest rows land nearest the
+// prompt (OUTPUT-ORDER-SPEC §4). Stable: rows sharing the field value keep
+// the API's order.
+func sortRowsByEpoch(items []interface{}, field string, newestFirst bool) {
 	sort.SliceStable(items, func(i, j int) bool {
-		return epochField(items[i], field) > epochField(items[j], field)
+		if newestFirst {
+			return epochField(items[i], field) > epochField(items[j], field)
+		}
+		return epochField(items[i], field) < epochField(items[j], field)
 	})
 }
 

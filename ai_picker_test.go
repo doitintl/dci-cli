@@ -271,6 +271,22 @@ func TestAIDispatchEnvCarriesSessionCustomer(t *testing.T) {
 	}
 }
 
+func TestAIDispatchEnvInheritsOutputOrder(t *testing.T) {
+	// The ordering setting reaches dispatch children through the inherited
+	// environment (OUTPUT-ORDER-SPEC §6.3) — no dedicated plumbing.
+	t.Setenv(outputOrderEnvName, "classic")
+	env := aiDispatchEnv(132, "")
+	found := false
+	for _, entry := range env {
+		if entry == outputOrderEnvName+"=classic" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("dispatch env dropped %s", outputOrderEnvName)
+	}
+}
+
 func TestAIDispatchDestructiveApprovalFlow(t *testing.T) {
 	m := aiTestModel(t)
 	updated, _ := m.Update(aiCmdDoneMsg{

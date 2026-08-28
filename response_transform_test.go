@@ -561,6 +561,22 @@ func TestTransformInsightsSortsBySavingsDescending(t *testing.T) {
 	}
 }
 
+func TestTransformInsightsTerminalOrderTopSavingsLast(t *testing.T) {
+	resetInsightConfig(t)
+	forceTUI(t, true)
+	viper.Set("output-order", outputOrderTerminal)
+	t.Cleanup(func() { viper.Set("output-order", nil) })
+	body := insightsBody(
+		insightRow(map[string]interface{}{"key": "big", "summary": map[string]interface{}{"potentialDailySavings": 50.92}}),
+		insightRow(map[string]interface{}{"key": "small", "summary": map[string]interface{}{"potentialDailySavings": 1.24}}),
+	)
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["results"].([]interface{})
+	if got := rows[len(rows)-1].(map[string]interface{})["key"]; got != "big" {
+		t.Errorf("last insight = %v, want big (terminal ordering lands the top insight nearest the prompt)", got)
+	}
+}
+
 func TestTransformInsightsDailySavingsColumn(t *testing.T) {
 	resetInsightConfig(t)
 	body := insightsBody(

@@ -1,6 +1,6 @@
 # Design spec: configurable terminal-friendly output ordering in `dci`
 
-Status: **draft for maintainer review**.
+Status: **accepted 2026-08-28 — phase 1 implemented in this PR** (the §4 flips, the §6 configuration surface, `dci config`, and the `dci status` line; new sibling `output_order.go`). The default ships as `terminal` per D5 — flipping to `classic` is a one-line change if review decides otherwise; the remaining open questions in §10 still stand for the maintainer.
 Audited at commit `0cbe012`; every claim cites the function and file it is based on, line numbers approximate at that commit. Builds on the chart-placement fix in [PR #133](https://github.com/doitintl/dci-cli/pull/133), which this spec assumes lands first — `noteChartWidth`/`flushPendingChart` exist on that PR's head (`1eb5385`, charts.go), **not yet on main**: at the audited commit the chart still prints *above* the table (`maybeRenderChart` runs inside `renderTable` before the marshaled bytes reach stdout, main.go:3169), which is exactly what #133 fixes.
 
 Scope: the ordering of *rows* in human-terminal output — which end of a table carries the content the reader came for. Everything here is **human-presentation only**: agent mode, machine formats (json, yaml, csv, toon), and piped output are byte-for-byte unchanged, same discipline as TUI-SPEC §3.1 and TIMEZONE-SPEC §4.3. Per the maintainer's steer, the configuration surface is a first-class part of the design (§6), not an afterthought.
