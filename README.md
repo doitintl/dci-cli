@@ -211,6 +211,33 @@ dci list-budgets --table-columns id,name,amount
 dci query <query.json --chart
 ```
 
+### Row Ordering
+
+Terminals scroll up: after a command finishes you are looking at the *last*
+lines of output. Human table output therefore orders rows so the ones you
+came for land nearest the prompt — the newest list entries last, the biggest
+report groups just above the totals row, the top insight at the bottom.
+Machine formats (`json`, `yaml`, `csv`, `toon`), agent mode, and piped
+output always keep the classic web ordering, so scripts are unaffected.
+
+Prefer the classic ordering (most important row first, like the DoiT
+console)? It's configurable at three levels — flag beats env beats the
+persisted setting:
+
+```bash
+# Just this command
+dci list-reports --output-order classic
+
+# This shell session
+export DCI_OUTPUT_ORDER=classic
+
+# Persist the preference (stored in the config dir)
+dci config output-order classic
+
+# See what's active and where it comes from
+dci status
+```
+
 ### Interactive Terminal Features
 
 In an interactive terminal the CLI adds a few conveniences on top of plain

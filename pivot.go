@@ -112,14 +112,28 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 		}
 	}
 
-	// Highest row total first, matching how report tables rank groups.
+	// Highest row total first, matching how report tables rank groups. This
+	// descending groupOrder stays the authority for every consumer below —
+	// the chart's top-chartMaxGroups fold in particular depends on it.
 	sort.SliceStable(groupOrder, func(i, j int) bool {
 		return rowTotals[groupOrder[i]] > rowTotals[groupOrder[j]]
 	})
 
+	// Under terminal ordering only the *rendered* rows are mirrored, so the
+	// largest groups land nearest the TOTAL row and the prompt
+	// (OUTPUT-ORDER-SPEC §4); reversing groupOrder itself would make the
+	// chart fold keep the smallest groups instead of the largest.
+	emitOrder := groupOrder
+	if terminalOrderActive() {
+		emitOrder = make([]pivotKey, len(groupOrder))
+		for i, key := range groupOrder {
+			emitOrder[len(groupOrder)-1-i] = key
+		}
+	}
+
 	groupHeader := pivotGroupHeader(groupIdx, schema)
 	out := make([]interface{}, 0, len(groupOrder)+len(metricIdx))
-	for _, key := range groupOrder {
+	for _, key := range emitOrder {
 		row := map[string]interface{}{groupHeader: key.group}
 		if multiMetric {
 			row["metric"] = key.metric

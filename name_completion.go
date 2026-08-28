@@ -515,9 +515,10 @@ func truncateEntryNames(entries []nameCacheEntry) []nameCacheEntry {
 
 func registerStaticFlagCompletions(command *cobra.Command) {
 	for flagName, values := range map[string][]string{
-		"output":     {"table", "json", "yaml", "csv", "auto", "toon"},
-		"rows":       {"positional", "keyed"},
-		"table-mode": {"fit", "wrap"},
+		"output":       {"table", "json", "yaml", "csv", "auto", "toon"},
+		"output-order": {"terminal", "classic"},
+		"rows":         {"positional", "keyed"},
+		"table-mode":   {"fit", "wrap"},
 	} {
 		completions := values
 		_ = command.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

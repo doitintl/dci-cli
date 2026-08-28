@@ -668,12 +668,14 @@ func TestRefreshNameCacheExitsSilently(t *testing.T) {
 
 func TestRegisterStaticFlagCompletions(t *testing.T) {
 	for flagName, wantValue := range map[string]string{
-		"output":     "toon",
-		"rows":       "keyed",
-		"table-mode": "wrap",
+		"output":       "toon",
+		"output-order": "classic",
+		"rows":         "keyed",
+		"table-mode":   "wrap",
 	} {
 		command := &cobra.Command{Use: "dci", Run: func(*cobra.Command, []string) {}}
 		command.PersistentFlags().String("output", "", "")
+		command.PersistentFlags().String("output-order", "", "")
 		command.PersistentFlags().String("rows", "", "")
 		command.PersistentFlags().StringP("table-mode", "M", "fit", "")
 		registerStaticFlagCompletions(command)

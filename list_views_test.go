@@ -391,6 +391,40 @@ func TestListViewAlertsSortsByUpdatedDescending(t *testing.T) {
 	}
 }
 
+func TestListViewAlertsTerminalOrderNewestLast(t *testing.T) {
+	resetListViewTest(t, "list-alerts")
+	forceTUI(t, true)
+	viper.Set("output-order", outputOrderTerminal)
+	t.Cleanup(func() { viper.Set("output-order", nil) })
+	body := map[string]interface{}{"alerts": []interface{}{
+		map[string]interface{}{"name": "fresh", "updateTime": int64(1787000000000)},
+		map[string]interface{}{"name": "stale", "updateTime": int64(1780000000000)},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["alerts"].([]interface{})
+	if got := rows[len(rows)-1].(map[string]interface{})["name"]; got != "fresh" {
+		t.Errorf("last alert = %v, want fresh (terminal ordering lands the newest row nearest the prompt)", got)
+	}
+}
+
+func TestListViewWithoutSortFieldKeepsAPIOrderUnderTerminal(t *testing.T) {
+	// list-budgets deliberately declares no sortField (the server may order
+	// by projected breach risk); terminal ordering must not scramble it.
+	resetListViewTest(t, "list-budgets")
+	forceTUI(t, true)
+	viper.Set("output-order", outputOrderTerminal)
+	t.Cleanup(func() { viper.Set("output-order", nil) })
+	body := map[string]interface{}{"budgets": []interface{}{
+		map[string]interface{}{"budgetName": "first", "updateTime": int64(1780000000000)},
+		map[string]interface{}{"budgetName": "second", "updateTime": int64(1787000000000)},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["budgets"].([]interface{})
+	if got := rows[0].(map[string]interface{})["budgetName"]; got != "first" {
+		t.Errorf("first budget = %v, want the API's order untouched", got)
+	}
+}
+
 func TestListViewAllocationsResolveFolders(t *testing.T) {
 	resetListViewTest(t, "list-allocations")
 	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
