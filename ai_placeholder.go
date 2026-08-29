@@ -301,18 +301,29 @@ func aiBodyValueStateFor(signature *aiCommandSignature, argv []string) (aiBodyVa
 			(field == "" && len(openers) == 0 && strings.HasPrefix(strings.TrimSpace(token), "{")) {
 			return aiBodyValueState{}, false
 		}
-		if len(openers) == 0 {
-			if match := shorthandBodyFieldPattern.FindStringSubmatch(token); match != nil {
-				field, _, _ = strings.Cut(match[1], ".")
-			}
-		}
+		// Re-detect the owning field at every top-level segment start, not
+		// just at token starts: compact shorthand puts field boundaries
+		// inside one token ("note:hi,tags:["), and a stale field name would
+		// ghost the wrong value's syntax (PR #140 review).
+		newSegment := true
 		for position := 0; position < len(token); position++ {
+			if newSegment && len(openers) == 0 {
+				rest := strings.TrimLeft(token[position:], " \t")
+				if match := shorthandBodyFieldPattern.FindStringSubmatch(rest); match != nil {
+					field, _, _ = strings.Cut(match[1], ".")
+				}
+				newSegment = false
+			}
 			switch token[position] {
 			case '[', '{':
 				openers = append(openers, token[position])
 			case ']', '}':
 				if len(openers) > 0 {
 					openers = openers[:len(openers)-1]
+				}
+			case ',':
+				if len(openers) == 0 {
+					newSegment = true
 				}
 			}
 		}
@@ -325,11 +336,18 @@ func aiBodyValueStateFor(signature *aiCommandSignature, argv []string) (aiBodyVa
 		return aiBodyValueState{field: field, opener: openers[len(openers)-1]}, true
 	}
 	// A bare "name:" prefix counts only as the very tail of the line — a
-	// flag typed after it means the user has moved on.
-	if lastIndex != len(argv)-1 || !aiBareFieldPrefixPattern.MatchString(argv[lastIndex]) {
+	// flag typed after it means the user has moved on. The prefix is the
+	// last token's last top-level segment, so compact "done:x,next:" tails
+	// count too.
+	if lastIndex != len(argv)-1 {
 		return aiBodyValueState{}, false
 	}
-	return aiBodyValueState{field: strings.TrimSuffix(argv[lastIndex], ":")}, true
+	segments := splitTopLevelShorthandSegments(argv[lastIndex])
+	tail := strings.TrimSpace(segments[len(segments)-1])
+	if !aiBareFieldPrefixPattern.MatchString(tail) {
+		return aiBodyValueState{}, false
+	}
+	return aiBodyValueState{field: strings.TrimSuffix(tail, ":")}, true
 }
 
 // aiValueGhost renders the value-syntax ghost while the line's tail is

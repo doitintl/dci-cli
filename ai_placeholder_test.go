@@ -28,7 +28,7 @@ func placeholderTestTree(t *testing.T) {
 	api.AddCommand(ticketTags)
 	api.AddCommand(&cobra.Command{
 		Use:  "create-thing",
-		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  config*: {\n    currency: (string)\n  }\n  name: (string)\n}\n```\n",
+		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  config*: {\n    currency: (string)\n  }\n  name: (string)\n  labels: [\n    (string)\n  ]\n}\n```\n",
 	})
 	api.AddCommand(&cobra.Command{
 		Use:  "create-widget",
@@ -270,6 +270,11 @@ func TestAIValueGhost(t *testing.T) {
 		{"/create-thing name:", " string"},
 		// A dotted path's leaf type is unknown up here: no value ghost.
 		{"/create-thing config.currency:", ""},
+		// Compact shorthand keeps the RIGHT field's syntax across boundaries
+		// inside one token (PR #140 review: the stale field ghosted "…]").
+		{"/create-thing name:hi,labels:[", "a, b]"},
+		{"/create-thing name:hi,labels:", " [a, b]"},
+		{"/create-thing labels:[a],name:", " string"},
 		// Not value entry: values typed through, whole-body tokens, unfilled
 		// path slots (positional order wins — "tags:" is the path argument).
 		{"/add-ticket-tags 318240 tags: a, b", ""},
