@@ -226,6 +226,187 @@ func TestValidateRequestBodyCanBeBypassed(t *testing.T) {
 	if err := validateRequestBody(command, []string{`query: "SELECT * FROM billing"`}); err != nil {
 		t.Fatalf("bypass rejected body: %v", err)
 	}
+	// The bypass covers the value-shape check too.
+	tagsCommand := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
+	if err := validateRequestBody(tagsCommand, []string{"318240", "tags:", "prod,", "billing"}); err != nil {
+		t.Fatalf("bypass rejected mis-shaped body: %v", err)
+	}
+}
+
+// tagsRequestHelp is shaped exactly as restish renders a request schema into
+// a command's Long: arrays multi-line with the element type on its own line,
+// scalars parenthesized with trailing doc text.
+const tagsRequestHelp = "Add tags.\n" +
+	"## Request Schema (application/json)\n\n" +
+	"```schema\n" +
+	"{\n" +
+	"  tags*: [\n" +
+	"    (string)\n" +
+	"  ]\n" +
+	"  note: (string) A note\n" +
+	"  limits: [\n" +
+	"    (integer min:0)\n" +
+	"  ]\n" +
+	"}\n" +
+	"```\n"
+
+func TestRequestSchemaFieldSketchesCarryArrayElems(t *testing.T) {
+	sketches := requestSchemaTopLevelFieldSketches(tagsRequestHelp)
+	want := []bodyFieldSketch{
+		{name: "tags", required: true, sketch: "[", elem: "string"},
+		{name: "note", sketch: "(string) A note"},
+		{name: "limits", sketch: "[", elem: "integer"},
+	}
+	if len(sketches) != len(want) {
+		t.Fatalf("sketches = %v, want %v", sketches, want)
+	}
+	for index, field := range want {
+		if sketches[index] != field {
+			t.Fatalf("sketch[%d] = %+v, want %+v", index, sketches[index], field)
+		}
+	}
+	// A nested object's fields never leak an elem to the top level.
+	for _, field := range requestSchemaTopLevelFieldSketches(queryRequestHelp) {
+		if field.elem != "" {
+			t.Fatalf("nested schema leaked elem %q into %q", field.elem, field.name)
+		}
+	}
+}
+
+func TestSchemaTypeWord(t *testing.T) {
+	cases := map[string]string{
+		"(string)":                "string",
+		"(string minLen:1) A doc": "string",
+		"(integer|null)":          "integer",
+		"(null|boolean)":          "boolean",
+		"string":                  "string",
+		"":                        "",
+	}
+	for sketch, want := range cases {
+		if got := schemaTypeWord(sketch); got != want {
+			t.Fatalf("typeWord(%q) = %q, want %q", sketch, got, want)
+		}
+	}
+}
+
+// The Alfredo replays (Slack, 2026-08-29): comma-separated array items
+// without brackets are a shorthand parse error at request time, and bare
+// strings send a scalar the API rejects — both now die before dispatch,
+// with the corrected line.
+func TestValidateRequestBodyCatchesUnbracketedArrayItems(t *testing.T) {
+	command := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
+	errorValue := validateRequestBody(command, []string{"318240", "tags:", "prod,", "billing"})
+	if errorValue == nil {
+		t.Fatal("unbracketed array items accepted")
+	}
+	if !strings.Contains(errorValue.Error(), "did you mean: tags: [prod, billing]") {
+		t.Fatalf("error = %q", errorValue)
+	}
+	shapeError, isShapeError := errorValue.(requestBodyShapeError)
+	if !isShapeError {
+		t.Fatalf("error type = %T", errorValue)
+	}
+	if shapeError.ExitCode() != exitUsage || shapeError.AgentErrorCode() != "USAGE_ERROR" || shapeError.AgentErrorRetryable() {
+		t.Fatalf("error contract = %d %s %v", shapeError.ExitCode(), shapeError.AgentErrorCode(), shapeError.AgentErrorRetryable())
+	}
+}
+
+func TestValidateRequestBodyCatchesScalarWhereArrayExpected(t *testing.T) {
+	command := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"318240", "tags:", "prod", "billing"}, "tags expects an array of strings — did you mean: tags: [prod, billing]"},
+		{[]string{"318240", "tags:", "prod"}, "tags expects an array of strings — did you mean: tags: [prod]"},
+		{[]string{"318240", "limits:", "5"}, "limits expects an array of integers — did you mean: limits: [5]"},
+		// A bare prefix submitted with no value: no items to suggest, so the
+		// generic bracketed spelling shows instead.
+		{[]string{"318240", "tags:"}, "tags expects an array of strings — array values are bracketed: tags: [a, b]"},
+	}
+	for _, testCase := range cases {
+		errorValue := validateRequestBody(command, testCase.args)
+		if errorValue == nil {
+			t.Fatalf("scalar accepted for %v", testCase.args)
+		}
+		if errorValue.Error() != testCase.want {
+			t.Fatalf("error for %v = %q, want %q", testCase.args, errorValue.Error(), testCase.want)
+		}
+	}
+}
+
+func TestValidateRequestBodyAcceptsWellShapedArrays(t *testing.T) {
+	command := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
+	for _, args := range [][]string{
+		{"318240", "tags:", "[prod,", "billing]"},
+		{"318240", "tags[]:", "prod"},
+		{"318240", "tags:", "[prod],", "note:", "hi"},
+		{"318240", `{"tags":["prod"]}`},
+		// Whole-body tokens pass through untouched — even ones whose file
+		// does not exist (restish owns that failure at request time).
+		{"318240", "@nosuchfile.json"},
+	} {
+		if err := validateRequestBody(command, args); err != nil {
+			t.Fatalf("well-shaped body %v rejected: %v", args, err)
+		}
+	}
+}
+
+func TestValidateRequestBodyRejectsNonObjectShorthand(t *testing.T) {
+	command := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
+	errorValue := validateRequestBody(command, []string{"318240", "prod"})
+	if errorValue == nil {
+		t.Fatal("non-object body accepted")
+	}
+	if !strings.Contains(errorValue.Error(), "the request body is an object") ||
+		!strings.Contains(errorValue.Error(), "tags: [a, b]") {
+		t.Fatalf("error = %q", errorValue)
+	}
+}
+
+func TestRepairUnbracketedArrays(t *testing.T) {
+	arrayFields := map[string]bool{"tags": true}
+	cases := []struct{ body, want string }{
+		{"tags: prod, billing", "tags: [prod, billing]"},
+		{"tags: a, b, note: x", "tags: [a, b], note: x"},
+		// Not the one mistake this repairs: loose items after a non-array
+		// field, an already-bracketed value, a leading nameless segment, or
+		// nothing dangling at all.
+		{"note: a, b", ""},
+		{"tags: [a], b", ""},
+		{"prod, billing", ""},
+		{"tags: [prod, billing]", ""},
+	}
+	for _, testCase := range cases {
+		if got := repairUnbracketedArrays(testCase.body, arrayFields); got != testCase.want {
+			t.Fatalf("repair(%q) = %q, want %q", testCase.body, got, testCase.want)
+		}
+	}
+	if got := repairUnbracketedArrays("tags: a, b", nil); got != "" {
+		t.Fatalf("repair with no array fields = %q", got)
+	}
+}
+
+func TestSuggestedArrayItems(t *testing.T) {
+	cases := []struct {
+		value any
+		want  string
+	}{
+		{"prod billing", "prod, billing"},
+		{"prod,billing", "prod, billing"},
+		{"has space!", `has, "space!"`},
+		{int64(5), "5"},
+		{true, "true"},
+		{"", ""},
+		{nil, ""},
+		{[]any{"a"}, ""},
+		{map[string]any{}, ""},
+	}
+	for _, testCase := range cases {
+		if got := suggestedArrayItems(testCase.value); got != testCase.want {
+			t.Fatalf("items(%#v) = %q, want %q", testCase.value, got, testCase.want)
+		}
+	}
 }
 
 func TestExtractRequestCurrency(t *testing.T) {

@@ -1248,6 +1248,14 @@ func (m *aiModel) refreshGhost() {
 		m.ghost = ""
 		return
 	}
+	// Mid-value, the ghost is the value's syntax, not the remaining slots:
+	// the field-name token alone used to consume its placeholder and go
+	// silent exactly when the value's shape needed teaching (raw input, not
+	// the trimmed line — trailing space decides the ghost's spacing).
+	if value := aiValueGhost(signature, argv, m.input.Value()); value != "" {
+		m.ghost = aiTrimTo(value, m.width)
+		return
+	}
 	remaining := aiPlaceholdersRemaining(signature, argv)
 	m.ghost = aiGhostText(remaining, signature.optionalBody, aiPickerCueApplies(remaining, argv), m.width)
 }

@@ -219,6 +219,17 @@ func seedCachedSpec(t *testing.T, cacheDir string) {
 			{Name: "get-widget", Short: "Get one widget", Method: "GET",
 				URITemplate: "https://api.doit.com/analytics/v1/widgets/{widgetId}",
 				PathParams:  []*cli.Param{{Name: "widgetId", Type: "string"}}},
+			// A bodied operation with an array field, shaped exactly as
+			// restish renders a request schema into Long — the ghost's
+			// array-syntax labels and the body-shape validation replay
+			// (Slack dogfood, 2026-08-29) both need one. The trailing /tags
+			// segment keeps it out of the name resolver's index, so its
+			// dispatch never reaches for the network.
+			{Name: "add-widget-tags", Short: "Tag a widget", Method: "POST",
+				URITemplate:   "https://api.doit.com/analytics/v1/widgets/{widgetId}/tags",
+				PathParams:    []*cli.Param{{Name: "widgetId", Type: "string"}},
+				BodyMediaType: "application/json",
+				Long:          "Tag a widget.\n\n## Request Schema (application/json)\n\n```schema\n{\n  tags*: [\n    (string)\n  ]\n}\n```\n"},
 		},
 	}
 	blob, err := cbor.Marshal(api)
@@ -825,6 +836,35 @@ func TestE2EGhostSignatureAfterAcceptedCompletion(t *testing.T) {
 	session.waitFor("Get one widget")
 	session.send(keyTab)
 	session.waitFor("widget-name-or-id " + aiPickerCue)
+}
+
+// An array field's ghost teaches the literal syntax to type — "[a, b]",
+// not the "[string]" type notation the dogfood round read straight past
+// (Slack, 2026-08-29: "I've just typed the strings without the array
+// structure"). The signature renders in one shot when Tab accepts the
+// completion, which keeps the assertion off the keystroke-diffed input row.
+func TestE2EGhostShowsArraySyntaxAsLiteralInput(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(_, cacheDir string) {
+		seedCachedSpec(t, cacheDir)
+	}})
+	session.send("/add-widget-t")
+	session.waitFor("Tag a widget")
+	session.send(keyTab)
+	session.waitFor("widgetid tags*: [a, b]")
+}
+
+// The Alfredo replay (Slack, 2026-08-29): comma-separated array items
+// without brackets are a shorthand parse error downstream — the session now
+// rejects the line before any request is built, with the corrected
+// spelling. --dry-run keeps the logged-out dispatch past the auth preflight,
+// which body validation precedes either way.
+func TestE2EWrongArraySyntaxGetsCorrectedLine(t *testing.T) {
+	session := startTUISession(t, tuiSessionConfig{prepare: func(_, cacheDir string) {
+		seedCachedSpec(t, cacheDir)
+	}})
+	session.send("/add-widget-tags w1 tags: prod, billing --dry-run", keyEnter)
+	session.waitFor("did you mean: tags: [prod, billing]")
+	session.waitFor(fmt.Sprintf("exit %d", exitUsage))
 }
 
 // Tab in argument position (AI-PLACEHOLDER-SPEC P2): on the empty pickable
