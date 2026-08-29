@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -23,9 +24,10 @@ import (
 
 // aiPlaceholder is one unconsumed argument slot in a command's signature.
 type aiPlaceholder struct {
-	label string // "report-id", "tags*: [string]", "widget-name-or-id"
+	label string // "report-id", "tags*: [a, b]", "widget-name-or-id"
 	body  bool   // body field (vs path parameter)
 	name  string // body field name, marker stripped; "" for path slots
+	array bool   // body field whose schema value is an array
 	// pickable marks a resolvable path slot whose empty submission opens the
 	// session's zero-argument name picker (aiPickerIntentFor: single path
 	// parameter, no request body) — the ghost cues it so the picker stops
@@ -44,9 +46,11 @@ type aiCommandSignature struct {
 	placeholders []aiPlaceholder
 	pathCount    int
 	hasBody      bool
-	optionalBody bool           // schema has optional top-level fields → the ghost gains "…"
-	resolvable   bool           // single path slot accepts names (resolutionIndex)
-	flags        *pflag.FlagSet // the leaf's own flag set, for value-flag skipping
+	optionalBody bool              // schema has optional top-level fields → the ghost gains "…"
+	resolvable   bool              // single path slot accepts names (resolutionIndex)
+	flags        *pflag.FlagSet    // the leaf's own flag set, for value-flag skipping
+	fields       []bodyFieldSketch // every top-level body field, optional ones included (value ghost lookups)
+	example      string            // the first spec example, session-spelled (body value hints)
 }
 
 // aiPlaceholderSignatureFor resolves the typed argv words to a leaf command
@@ -114,34 +118,46 @@ func aiPlaceholderSignatureFor(argv []string) *aiCommandSignature {
 	// the usage trailer trust. Required fields become placeholders; optional
 	// ones collapse into the ghost's trailing "…" — the full list is the
 	// trailer's and --help's job, the ghost is a prompt.
-	for _, field := range requestSchemaTopLevelFieldSketches(command.Long) {
+	signature.fields = requestSchemaTopLevelFieldSketches(command.Long)
+	signature.example = firstUsageExample(command.Example, true)
+	for _, field := range signature.fields {
 		signature.hasBody = true
 		if !field.required {
 			signature.optionalBody = true
 			continue
 		}
 		label := field.name + "*"
-		if sketch := aiNormalizeSchemaSketch(field.sketch); sketch != "" {
+		if sketch := aiSketchLabel(field); sketch != "" {
 			label += ": " + sketch
 		}
 		signature.placeholders = append(signature.placeholders, aiPlaceholder{
-			label: label, body: true, name: field.name,
+			label: label, body: true, name: field.name, array: sketchIsArray(field.sketch),
 		})
 	}
 	return signature
 }
 
-// aiNormalizeSchemaSketch condenses a schema line's value sketch for the
-// one-row ghost: a nested block opener carries no information beyond its
-// shape.
-func aiNormalizeSchemaSketch(sketch string) string {
-	switch sketch {
-	case "{":
-		return "object"
-	case "[", "[{":
+// aiSketchLabel condenses a schema field's value sketch for the one-row
+// ghost, shaped like the input to type rather than type notation — dogfood
+// (2026-08-29): "[string]" read as an annotation, so the brackets were not
+// understood as literal syntax. Arrays render example items ("[a, b]"),
+// scalars their bare type word, nested objects the one word "object".
+func aiSketchLabel(field bodyFieldSketch) string {
+	switch {
+	case field.sketch == "":
+		return ""
+	case sketchIsArray(field.sketch):
+		if items := arrayItemsExample(field.elem); items != "" {
+			return "[" + items + "]"
+		}
 		return "[…]"
+	case sketchIsObject(field.sketch):
+		return "object"
 	}
-	return sketch
+	if word := schemaTypeWord(field.sketch); word != "" {
+		return word
+	}
+	return field.sketch
 }
 
 // aiPlaceholdersRemaining consumes the signature against the typed argv,
@@ -243,6 +259,189 @@ func aiBodyTokenFields(token string) (whole bool, fields []string) {
 		return false, []string{match[1]}
 	}
 	return false, nil
+}
+
+// --- Body value entry (the tail of the line is inside a field's value) --------
+
+// aiBodyValueState says the line's tail sits inside a body field's value —
+// exactly where the ghost used to go silent the moment the field *name*
+// appeared, before any value existed (dogfood, 2026-08-29: with "tags: " on
+// the line, "silence = Enter is valid" was simply false for an array field).
+type aiBodyValueState struct {
+	field  string // top-level body field owning the value being entered
+	opener byte   // '[' or '{' when inside an unclosed bracket; 0 at a bare "name:" prefix
+}
+
+// aiBareFieldPrefixPattern matches a lone "name:" token — a field prefix
+// with no value yet. Top-level names only: a dotted path's leaf type is not
+// in the top-level sketches, so it gets no value ghost.
+var aiBareFieldPrefixPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*:$`)
+
+// aiBodyValueStateFor walks the typed body tokens and reports whether the
+// line's tail is entering a field's value: inside an unclosed array or
+// object bracket, or right after a bare "name:" prefix. Pure and positional
+// like the consumption walk; JSON and whole-body styles (@file, <file, a
+// leading "{") are never in a value-entry state — they are not shorthand
+// composing.
+func aiBodyValueStateFor(signature *aiCommandSignature, argv []string) (aiBodyValueState, bool) {
+	if signature == nil || !signature.hasBody {
+		return aiBodyValueState{}, false
+	}
+	var openers []byte
+	field := ""
+	pathSeen := 0
+	lastIndex := -1
+	for _, index := range aiPositionalIndexes(argv, signature.flags, signature.words) {
+		token := argv[index]
+		if pathSeen < signature.pathCount {
+			pathSeen++
+			continue
+		}
+		if strings.HasPrefix(token, "@") || strings.HasPrefix(token, "<") ||
+			(field == "" && len(openers) == 0 && strings.HasPrefix(strings.TrimSpace(token), "{")) {
+			return aiBodyValueState{}, false
+		}
+		if len(openers) == 0 {
+			if match := shorthandBodyFieldPattern.FindStringSubmatch(token); match != nil {
+				field, _, _ = strings.Cut(match[1], ".")
+			}
+		}
+		for position := 0; position < len(token); position++ {
+			switch token[position] {
+			case '[', '{':
+				openers = append(openers, token[position])
+			case ']', '}':
+				if len(openers) > 0 {
+					openers = openers[:len(openers)-1]
+				}
+			}
+		}
+		lastIndex = index
+	}
+	if field == "" {
+		return aiBodyValueState{}, false
+	}
+	if len(openers) > 0 {
+		return aiBodyValueState{field: field, opener: openers[len(openers)-1]}, true
+	}
+	// A bare "name:" prefix counts only as the very tail of the line — a
+	// flag typed after it means the user has moved on.
+	if lastIndex != len(argv)-1 || !aiBareFieldPrefixPattern.MatchString(argv[lastIndex]) {
+		return aiBodyValueState{}, false
+	}
+	return aiBodyValueState{field: strings.TrimSuffix(argv[lastIndex], ":")}, true
+}
+
+// aiValueGhost renders the value-syntax ghost while the line's tail is
+// entering a body field's value: the field's literal syntax template right
+// after its bare prefix ("[a, b]" for an array of strings), and the closing
+// guidance inside an unclosed bracket (", …]"). "" outside value entry —
+// then silence means "you can press Enter" again, which the old behavior
+// broke for array fields. The raw input decides spacing; the parse works on
+// argv.
+func aiValueGhost(signature *aiCommandSignature, argv []string, input string) string {
+	state, active := aiBodyValueStateFor(signature, argv)
+	if !active {
+		return ""
+	}
+	var sketch bodyFieldSketch
+	for _, field := range signature.fields {
+		if field.name == state.field {
+			sketch = field
+			break
+		}
+	}
+	trimmed := strings.TrimRight(input, " \t")
+	trailingSpace := trimmed != input
+	if state.opener != 0 {
+		closer := "]"
+		items := arrayItemsExample(sketch.elem)
+		if state.opener == '{' {
+			closer = "}"
+			items = ""
+		}
+		if items == "" {
+			items = "…"
+		}
+		switch {
+		case strings.HasSuffix(trimmed, string(state.opener)) && !trailingSpace:
+			return items + closer
+		case trailingSpace:
+			return "…" + closer
+		case strings.HasSuffix(trimmed, ","):
+			return " …" + closer
+		default:
+			return ", …" + closer
+		}
+	}
+	core := ""
+	switch {
+	case sketch.name == "":
+		return ""
+	case sketchIsArray(sketch.sketch):
+		items := arrayItemsExample(sketch.elem)
+		if items == "" {
+			items = "…"
+		}
+		core = "[" + items + "]"
+	case sketchIsObject(sketch.sketch):
+		core = "{…}"
+	default:
+		core = aiSketchLabel(sketch)
+	}
+	if core == "" {
+		return ""
+	}
+	if trailingSpace {
+		return core
+	}
+	return " " + core
+}
+
+// aiFieldExampleExcerpt pulls one field's assignment out of a spec example
+// line ("/add-ticket-tags 318240 tags: [prod]" → "tags: [prod]"), cut at the
+// top-level comma that starts the next property. "" when the example never
+// assigns the field.
+func aiFieldExampleExcerpt(example, field string) string {
+	if example == "" || field == "" {
+		return ""
+	}
+	marker := field + ":"
+	start := -1
+	for from := 0; from <= len(example)-len(marker); {
+		found := strings.Index(example[from:], marker)
+		if found < 0 {
+			break
+		}
+		position := from + found
+		if position == 0 || example[position-1] == ' ' || example[position-1] == ',' {
+			start = position
+			break
+		}
+		from = position + len(marker)
+	}
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	end := len(example)
+scan:
+	for index := start; index < len(example); index++ {
+		switch example[index] {
+		case '[', '{':
+			depth++
+		case ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 && shorthandBodyFieldPattern.MatchString(strings.TrimSpace(example[index+1:])) {
+				end = index
+				break scan
+			}
+		}
+	}
+	return strings.TrimSpace(example[start:end])
 }
 
 // aiPickerCue is what the ghost appends when submitting the line as-is would
@@ -361,6 +560,16 @@ func aiTabActionFor(input string, userCommands map[string]aiUserCommand) aiTabAc
 	if signature == nil {
 		return aiTabAction{}
 	}
+	// Mid-value, Tab must not insert the next field's prefix into the value.
+	// It hints with the spec example's assignment for this field when there
+	// is one — the same offer path value slots make — and otherwise stays
+	// inert: the value ghost is already showing the syntax template.
+	if state, entering := aiBodyValueStateFor(signature, argv); entering {
+		if excerpt := aiFieldExampleExcerpt(signature.example, state.field); excerpt != "" {
+			return aiTabAction{kind: aiTabHint, hint: "e.g. " + excerpt}
+		}
+		return aiTabAction{}
+	}
 	remaining, bodyStarted := aiConsumePlaceholders(signature, argv)
 	if len(remaining) == 0 {
 		return aiTabAction{}
@@ -375,7 +584,7 @@ func aiTabActionFor(input string, userCommands map[string]aiUserCommand) aiTabAc
 		}
 		return aiTabAction{}
 	}
-	return aiTabAction{kind: aiTabInsert, insert: aiFieldPrefixInsertion(input, bodyStarted, next.name)}
+	return aiTabAction{kind: aiTabInsert, insert: aiFieldPrefixInsertion(input, bodyStarted, next)}
 }
 
 // aiPathValueHint builds the value hint for the next path slot: the
@@ -407,13 +616,18 @@ func aiPathValueHint(signature *aiCommandSignature, remaining []aiPlaceholder, n
 	return ""
 }
 
-// aiFieldPrefixInsertion spells the "name: " token Tab inserts for the next
-// required body field, separator included: a space after the path arguments,
-// a comma once a body property is already on the line (restish shorthand
-// separates properties with commas), and just a space when the line already
-// ends with one.
-func aiFieldPrefixInsertion(input string, bodyStarted bool, field string) string {
-	prefix := field + ": "
+// aiFieldPrefixInsertion spells the token Tab inserts for the next required
+// body field, separator included: a space after the path arguments, a comma
+// once a body property is already on the line (restish shorthand separates
+// properties with commas), and just a space when the line already ends with
+// one. An array field's prefix carries its opening bracket ("tags: [") — the
+// user physically cannot forget the bracket they never had to type (dogfood,
+// 2026-08-29); the value ghost then shows the items and the closing "]".
+func aiFieldPrefixInsertion(input string, bodyStarted bool, next aiPlaceholder) string {
+	prefix := next.name + ": "
+	if next.array {
+		prefix = next.name + ": ["
+	}
 	trimmed := strings.TrimRight(input, " \t")
 	switch {
 	case bodyStarted && !strings.HasSuffix(trimmed, ","):

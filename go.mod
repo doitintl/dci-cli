@@ -14,6 +14,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/creack/pty v1.1.24
 	github.com/creativeprojects/go-selfupdate v1.6.0
+	github.com/danielgtaylor/shorthand/v2 v2.1.1
 	github.com/fxamacker/cbor/v2 v2.4.0
 	github.com/gosimple/slug v1.13.1
 	github.com/guptarohit/asciigraph v0.10.0
@@ -61,7 +62,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/danielgtaylor/casing v0.0.0-20210126043903-4e55e6373ac3 // indirect
 	github.com/danielgtaylor/mexpr v1.8.0 // indirect
-	github.com/danielgtaylor/shorthand/v2 v2.1.1 // indirect
 	github.com/davidmz/go-pageant v1.0.2 // indirect
 	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect

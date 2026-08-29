@@ -19,19 +19,20 @@ func placeholderTestTree(t *testing.T) {
 	root := &cobra.Command{Use: "dci"}
 	api := &cobra.Command{Use: "dci"}
 	ticketTags := &cobra.Command{
-		Use:  "add-ticket-tags ticketid",
-		Long: "Add tags.\n\n## Request Schema (application/json)\n\n```schema\n{\n  tags*: [string]\n}\n```\n",
+		Use:     "add-ticket-tags ticketid",
+		Long:    "Add tags.\n\n## Request Schema (application/json)\n\n```schema\n{\n  tags*: [\n    (string)\n  ]\n}\n```\n",
+		Example: "  dci add-ticket-tags 318240 tags: [prod]\n",
 	}
 	ticketTags.Flags().String("note", "", "")
 	ticketTags.Flags().Bool("force", false, "")
 	api.AddCommand(ticketTags)
 	api.AddCommand(&cobra.Command{
 		Use:  "create-thing",
-		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  config*: {\n    currency: string\n  }\n  name: string\n}\n```\n",
+		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  config*: {\n    currency: (string)\n  }\n  name: (string)\n}\n```\n",
 	})
 	api.AddCommand(&cobra.Command{
 		Use:  "create-widget",
-		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  a*: string\n  b*: string\n}\n```\n",
+		Long: "Create.\n\n## Request Schema (application/json)\n\n```schema\n{\n  a*: (string)\n  b*: (string)\n}\n```\n",
 	})
 	api.AddCommand(&cobra.Command{Use: "get-report report-id"})
 	beta := &cobra.Command{Use: "beta"}
@@ -72,8 +73,8 @@ func TestAIPlaceholderSignatures(t *testing.T) {
 		words        int
 		optionalBody bool
 	}{
-		{"add-ticket-tags", "ticketid · tags*: [string]", 1, false},
-		{"add-ticket-tags 318240 tags: a", "ticketid · tags*: [string]", 1, false},
+		{"add-ticket-tags", "ticketid · tags*: [a, b]", 1, false},
+		{"add-ticket-tags 318240 tags: a", "ticketid · tags*: [a, b]", 1, false},
 		{"create-thing", "config*: object", 1, true},
 		{"get-report", "report-name-or-id", 1, false},
 		{"beta run-report", "report-name-or-id", 2, false},
@@ -115,23 +116,23 @@ func TestAIPlaceholdersRemaining(t *testing.T) {
 		want string // remaining labels joined by " · "; "" for none
 	}{
 		// Path first, then body, positionally.
-		{"add-ticket-tags", "ticketid · tags*: [string]"},
-		{"add-ticket-tags 318240", "tags*: [string]"},
+		{"add-ticket-tags", "ticketid · tags*: [a, b]"},
+		{"add-ticket-tags 318240", "tags*: [a, b]"},
 		{"add-ticket-tags 318240 tags: a, b", ""},
 		// Flags and their values are skipped; bool flags take no value.
-		{"add-ticket-tags --note x 318240", "tags*: [string]"},
-		{"add-ticket-tags --force 318240", "tags*: [string]"},
-		{"add-ticket-tags --note=x", "ticketid · tags*: [string]"},
+		{"add-ticket-tags --note x 318240", "tags*: [a, b]"},
+		{"add-ticket-tags --force 318240", "tags*: [a, b]"},
+		{"add-ticket-tags --note=x", "ticketid · tags*: [a, b]"},
 		// Whole-body tokens consume every body placeholder.
 		{"add-ticket-tags 318240 @body.json", ""},
 		{"add-ticket-tags 318240 <body.json", ""},
 		// Inline JSON (shell-quoted, as the splitter delivers it) consumes
 		// the fields it names, nothing else.
 		{`add-ticket-tags 318240 '{"tags":["a"]}'`, ""},
-		{`add-ticket-tags 318240 '{"other":1}'`, "tags*: [string]"},
+		{`add-ticket-tags 318240 '{"other":1}'`, "tags*: [a, b]"},
 		// Positional order wins: a body-shaped token still fills an open
 		// path slot, exactly as the CLI would parse it.
-		{"add-ticket-tags tags: a", "tags*: [string]"},
+		{"add-ticket-tags tags: a", "tags*: [a, b]"},
 		// Name-based consumption is order-free once the body starts, and a
 		// dotted shorthand path consumes its top-level field.
 		{"create-thing config.currency: USD", ""},
@@ -161,11 +162,11 @@ func TestAIPlaceholdersRemaining(t *testing.T) {
 }
 
 func TestAIGhostText(t *testing.T) {
-	remaining := []aiPlaceholder{{label: "ticketid"}, {label: "tags*: [string]", body: true, name: "tags"}}
-	if got := aiGhostText(remaining, false, false, 80); got != "ticketid tags*: [string]" {
+	remaining := []aiPlaceholder{{label: "ticketid"}, {label: "tags*: [a, b]", body: true, name: "tags"}}
+	if got := aiGhostText(remaining, false, false, 80); got != "ticketid tags*: [a, b]" {
 		t.Fatalf("ghost = %q", got)
 	}
-	if got := aiGhostText(remaining, true, false, 80); got != "ticketid tags*: [string] …" {
+	if got := aiGhostText(remaining, true, false, 80); got != "ticketid tags*: [a, b] …" {
 		t.Fatalf("ghost with ellipsis = %q", got)
 	}
 	if got := aiGhostText(remaining, false, false, 12); got != "ticketid ta…" {
@@ -217,12 +218,97 @@ func TestAIPickerCueApplies(t *testing.T) {
 	}
 }
 
-func TestAINormalizeSchemaSketch(t *testing.T) {
-	cases := map[string]string{"{": "object", "[": "[…]", "[{": "[…]", "[string]": "[string]", "string": "string", "": ""}
-	for raw, want := range cases {
-		if got := aiNormalizeSchemaSketch(raw); got != want {
-			t.Fatalf("normalize(%q) = %q, want %q", raw, got, want)
+func TestAISketchLabel(t *testing.T) {
+	cases := []struct {
+		field bodyFieldSketch
+		want  string
+	}{
+		// Arrays render as the literal syntax to type, not type notation —
+		// "[string]" read as an annotation, so users typed bare strings
+		// (dogfood, 2026-08-29).
+		{bodyFieldSketch{sketch: "[", elem: "string"}, "[a, b]"},
+		{bodyFieldSketch{sketch: "[", elem: "integer"}, "[1, 2]"},
+		{bodyFieldSketch{sketch: "[", elem: "boolean"}, "[true, false]"},
+		{bodyFieldSketch{sketch: "[", elem: "{"}, "[…]"},
+		{bodyFieldSketch{sketch: "["}, "[…]"},
+		{bodyFieldSketch{sketch: "[<any>]"}, "[…]"},
+		{bodyFieldSketch{sketch: "{"}, "object"},
+		{bodyFieldSketch{sketch: "(object)"}, "object"},
+		{bodyFieldSketch{sketch: "(string minLen:1) The name"}, "string"},
+		{bodyFieldSketch{sketch: "(integer|null)"}, "integer"},
+		{bodyFieldSketch{sketch: "string"}, "string"},
+		{bodyFieldSketch{sketch: ""}, ""},
+	}
+	for _, testCase := range cases {
+		if got := aiSketchLabel(testCase.field); got != testCase.want {
+			t.Fatalf("label(%q, elem %q) = %q, want %q", testCase.field.sketch, testCase.field.elem, got, testCase.want)
 		}
+	}
+}
+
+func TestAIValueGhost(t *testing.T) {
+	placeholderTestTree(t)
+	cases := []struct {
+		input string // the session line, "/" included, spacing preserved
+		want  string
+	}{
+		// A bare field prefix ghosts the value's literal syntax — the moment
+		// the old ghost went silent right when the shape needed teaching.
+		{"/add-ticket-tags 318240 tags:", " [a, b]"},
+		{"/add-ticket-tags 318240 tags: ", "[a, b]"},
+		// Inside an unclosed array: items after the opener, then the closing
+		// guidance — silence returns only once the bracket closes.
+		{"/add-ticket-tags 318240 tags: [", "a, b]"},
+		{"/add-ticket-tags 318240 tags: [prod", ", …]"},
+		{"/add-ticket-tags 318240 tags: [prod,", " …]"},
+		{"/add-ticket-tags 318240 tags: [prod, ", "…]"},
+		{"/add-ticket-tags 318240 tags: [prod, billing]", ""},
+		// Objects get their own brackets; scalars their type word.
+		{"/create-thing config:", " {…}"},
+		{"/create-thing config: {", "…}"},
+		{"/create-thing config: {currency: USD}", ""},
+		{"/create-thing name:", " string"},
+		// A dotted path's leaf type is unknown up here: no value ghost.
+		{"/create-thing config.currency:", ""},
+		// Not value entry: values typed through, whole-body tokens, unfilled
+		// path slots (positional order wins — "tags:" is the path argument).
+		{"/add-ticket-tags 318240 tags: a, b", ""},
+		{"/add-ticket-tags 318240 @body.json", ""},
+		{"/add-ticket-tags tags:", ""},
+		{"/get-report", ""},
+	}
+	for _, testCase := range cases {
+		trimmed := strings.TrimSpace(testCase.input)
+		argv, err := splitCommandLine(strings.TrimPrefix(trimmed, "/"))
+		if err != nil {
+			t.Fatalf("splitCommandLine(%q): %v", testCase.input, err)
+		}
+		signature := aiPlaceholderSignatureFor(argv)
+		if got := aiValueGhost(signature, argv, testCase.input); got != testCase.want {
+			t.Fatalf("valueGhost(%q) = %q, want %q", testCase.input, got, testCase.want)
+		}
+	}
+}
+
+func TestAIFieldExampleExcerpt(t *testing.T) {
+	example := "/create-x 1 tags: [prod, dev], config: {currency: USD}, note: hi"
+	cases := []struct{ field, want string }{
+		{"tags", "tags: [prod, dev]"},
+		{"config", "config: {currency: USD}"},
+		{"note", "note: hi"},
+		{"missing", ""},
+	}
+	for _, testCase := range cases {
+		if got := aiFieldExampleExcerpt(example, testCase.field); got != testCase.want {
+			t.Fatalf("excerpt(%q) = %q, want %q", testCase.field, got, testCase.want)
+		}
+	}
+	// The field name inside the command word is not an assignment.
+	if got := aiFieldExampleExcerpt("/add-ticket-tags 1 tags: [a]", "tags"); got != "tags: [a]" {
+		t.Fatalf("excerpt past the command word = %q", got)
+	}
+	if got := aiFieldExampleExcerpt("", "tags"); got != "" {
+		t.Fatalf("excerpt of an empty example = %q", got)
 	}
 }
 
@@ -263,17 +349,17 @@ func TestAIGhostFollowsTypingAndFreezesMidToken(t *testing.T) {
 	m := aiTestModel(t)
 
 	m = aiType(m, "/add-ticket-tags ")
-	if m.ghost != "ticketid tags*: [string]" {
+	if m.ghost != "ticketid tags*: [a, b]" {
 		t.Fatalf("ghost after the command = %q", m.ghost)
 	}
 	m = aiType(m, "318240 ")
-	if m.ghost != "tags*: [string]" {
+	if m.ghost != "tags*: [a, b]" {
 		t.Fatalf("ghost after the path argument = %q", m.ghost)
 	}
 
 	// An open quote does not parse: the ghost freezes instead of erroring.
 	m = aiType(m, `"pro`)
-	if m.ghost != "tags*: [string]" {
+	if m.ghost != "tags*: [a, b]" {
 		t.Fatalf("ghost mid-token = %q, want the frozen previous value", m.ghost)
 	}
 	m = aiType(m, `d" tags: x`)
@@ -324,7 +410,7 @@ func TestAIGhostRendersInTheFrame(t *testing.T) {
 	m := aiTestModel(t)
 	m = aiType(m, "/add-ticket-tags ")
 	frame := stripANSI(m.View().Content)
-	if !strings.Contains(frame, "/add-ticket-tags  ticketid tags*: [string]") {
+	if !strings.Contains(frame, "/add-ticket-tags  ticketid tags*: [a, b]") {
 		t.Fatalf("frame missing the ghost after the cursor cell:\n%s", frame)
 	}
 
@@ -352,14 +438,23 @@ func TestAITabActionFor(t *testing.T) {
 		// A plain path value slot hints with the spec example.
 		{"/add-ticket-tags", aiTabHint, "ticketid — e.g. 318240"},
 		// Path filled → insert the next required field's prefix, separator
-		// depending on what the line already carries.
-		{"/add-ticket-tags 318240", aiTabInsert, " tags: "},
-		{"/add-ticket-tags 318240 ", aiTabInsert, "tags: "},
+		// depending on what the line already carries. An array field's
+		// prefix brings its opening bracket along.
+		{"/add-ticket-tags 318240", aiTabInsert, " tags: ["},
+		{"/add-ticket-tags 318240 ", aiTabInsert, "tags: ["},
 		{"/create-thing", aiTabInsert, " config: "},
 		// Mid-body, shorthand properties are comma-separated.
 		{"/create-widget a: 1", aiTabInsert, ", b: "},
 		{"/create-widget a: 1,", aiTabInsert, " b: "},
 		{"/create-widget a: 1, ", aiTabInsert, "b: "},
+		// Mid-value, Tab offers the spec example's assignment instead of
+		// jamming the next field's prefix into the value.
+		{"/add-ticket-tags 318240 tags:", aiTabHint, "e.g. tags: [prod]"},
+		{"/add-ticket-tags 318240 tags: [", aiTabHint, "e.g. tags: [prod]"},
+		{"/add-ticket-tags 318240 tags: [prod", aiTabHint, "e.g. tags: [prod]"},
+		// Mid-value with no spec example → inert (the value ghost already
+		// shows the syntax).
+		{"/create-thing config:", aiTabNone, ""},
 		// Nothing to offer → Tab stays inert.
 		{"/add-ticket-tags 318240 tags: prod", aiTabNone, ""},
 		{"/model", aiTabNone, ""},
@@ -388,11 +483,18 @@ func TestAITabInsertsFieldPrefixInTheSession(t *testing.T) {
 	m = aiType(m, "/add-ticket-tags 318240")
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = updated.(aiModel)
-	if got := m.input.Value(); got != "/add-ticket-tags 318240 tags: " {
+	if got := m.input.Value(); got != "/add-ticket-tags 318240 tags: [" {
 		t.Fatalf("input after Tab = %q", got)
 	}
+	// The prefix used to consume its placeholder and silence the ghost right
+	// where the value's shape needed teaching; now the value ghost carries
+	// the items and the closing bracket.
+	if m.ghost != "a, b]" {
+		t.Fatalf("ghost after the array prefix = %q", m.ghost)
+	}
+	m = aiType(m, "prod, billing]")
 	if m.ghost != "" {
-		t.Fatalf("ghost after the prefix consumed its field = %q", m.ghost)
+		t.Fatalf("ghost after the array closed = %q", m.ghost)
 	}
 
 	// On a value slot, Tab swaps the ghost for the hint and inserts nothing.
@@ -409,7 +511,7 @@ func TestAITabInsertsFieldPrefixInTheSession(t *testing.T) {
 	// The hint is transient: the next keystroke recomputes the normal ghost
 	// (the typed digit starts the path value, consuming that slot).
 	m = aiType(m, "3")
-	if m.ghost != "tags*: [string]" {
+	if m.ghost != "tags*: [a, b]" {
 		t.Fatalf("ghost after typing past the hint = %q", m.ghost)
 	}
 }
