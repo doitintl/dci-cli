@@ -19,20 +19,20 @@ Two phases, deliberately split so the high-value half ships without the hard hal
 - **Phase 1 — ghost signature (passive).** The moment the input names a runnable command, the rest of the input line shows the command's remaining arguments as faint ghost text, consumed left-to-right as the user types real values. No new key semantics, no editing states — purely presentational, derived per keystroke from what is already typed.
 - **Phase 2 — guided field entry (active).** Tab in argument position accepts the next ghost token: fixed tokens (`tags:`) are inserted literally, value placeholders (`<ticket-id>`) put the cursor there for typing. Array fields repeat on comma. Phase 2 is gated on phase 1 dogfood (§8).
 
-The worked example, phase 1 (`·` marks the cursor; `▒text▒` marks faint ghost text):
+The worked example, phase 1 (`·` marks the cursor; `▒text▒` marks faint ghost text; the value spellings below are as corrected by the 2026-08-29 array round, §10 — the draft's `tags: prod, billing` was **invalid shorthand**, a property-separator comma, and the ghost must never teach it):
 
 ```
-› /add-ticket-tags ·▒ticket-id tags*: [string]▒        command accepted, nothing typed
-› /add-ticket-tags 318240 ·▒tags*: [string]▒           ticket-id consumed
-› /add-ticket-tags 318240 tags: prod, billing·         all placeholders consumed, ghost gone
+› /add-ticket-tags ·▒ticket-id tags*: [a, b]▒          command accepted, nothing typed
+› /add-ticket-tags 318240 ·▒tags*: [a, b]▒             ticket-id consumed
+› /add-ticket-tags 318240 tags: [prod, billing]·       all placeholders consumed, ghost gone
 ```
 
 And phase 2, the same command:
 
 ```
-› /add-ticket-tags ·▒ticket-id tags*: [string]▒        Tab → cursor stays, user types the ID
-› /add-ticket-tags 318240 ·▒tags*: [string]▒           Tab → "tags: " inserted literally
-› /add-ticket-tags 318240 tags: ·▒string, …▒           type a value; comma continues the array
+› /add-ticket-tags ·▒ticket-id tags*: [a, b]▒          Tab → cursor stays, user types the ID
+› /add-ticket-tags 318240 ·▒tags*: [a, b]▒             Tab → "tags: [" inserted, bracket included
+› /add-ticket-tags 318240 tags: [·▒a, b]▒              the value ghost walks the array to its "]"
 ```
 
 The vocabulary is the usage trailer's (PR #133, `argvUsageTrailer`, error_contract.go): path parameters spelled as cobra's `Use` spells them, body fields with their `*` required markers. A user who ignores the ghost and gets the arity error sees the same words in the trailer — the overlay is the *before* view of the same contract the trailer shows *after* failure.
@@ -215,3 +215,10 @@ Decisions taken at implementation, where the code deviates from or sharpens the 
 - **R2 shipped as specced**: ghost and popup coexist; no suppression added.
 - **Picker cue (post-merge, maintainer feedback 2026-08-28).** The zero-argument name picker was invisible until someone stumbled into it, so a pickable slot's ghost now appends `(enter to pick from a list)` — gated by `aiPickerCueApplies` on the picker's own `aiPickerIntentFor` conditions, and placed at the ghost's tail so narrow panes drop the cue before the argument name (§3.2).
 - **P2 as landed (2026-08-28, maintainer scope decisions).** One PR: `aiTabActionFor` + `handleArgumentTab`, resolving in order — empty pickable slot submits (Tab = Enter, the picker opens); path value slot swaps the ghost for a hint (`Example` or type from `operationPathParameters`; beta ops therefore keep Tab inert there); next required body field inserts its `name: ` prefix with the shorthand comma separator. Q2 resolved as hint-only. Array-continuation ghost and optional-field walking: descoped, not selected. One popup carve-out beyond the draft: a Tab whose accept would change nothing (input already `/name ` with the exact-match popup open) falls through to the argument action instead of no-opping — without it, the typed-trailing-space state needed a wasted Tab.
+- **The array round (dogfood 2026-08-29, Alfredo's third report).** Feedback: "I was just confused with what I should input, so I've just typed the strings without the array structure." Investigation showed the confusion was designed in: shorthand's comma separates *properties*, so the draft's own worked example (`tags: prod, billing`) was a parse error, `tags: prod billing` sent a string where the schema wants an array, and the ghost went silent the instant the field *name* token appeared — before any value existed, exactly where the syntax needed teaching. Six changes, one PR:
+  - **Input-shaped sketches** (`aiSketchLabel`): the ghost renders array fields as the literal syntax to type — `tags*: [a, b]` (items from the schema's element type via `arrayElemSketch`/`arrayItemsExample`, body_validation.go) — never `[string]` type notation; scalars render their bare type word, nested objects the word `object`.
+  - **The value ghost** (`aiValueGhost` on `aiBodyValueStateFor`) — the descoped array-continuation ghost, revisited on this dogfood as promised: while the line's tail is entering a body value, the ghost shows that value's syntax (`[a, b]` after a bare `tags:` prefix; `, …]` inside an unclosed bracket; `{…}` for objects; the type word for scalars) instead of the remaining slots. "Silence = Enter is valid" is true again.
+  - **Bracket-carrying insertion**: Tab's field prefix for an array field is `tags: [` — the user cannot forget a bracket they never typed; the value ghost walks to the closing `]`.
+  - **Body value hint on Tab**: mid-value, Tab swaps the ghost for the spec example's assignment for that field (`aiFieldExampleExcerpt`, "e.g. tags: [prod]") — the body-side mirror of the path value hint; inert when the spec has no example. It also stops Tab from jamming the next field's prefix into an open value.
+  - **Pre-submit shape validation** (`validateBodyValueShapes`, body_validation.go): pure-shorthand bodies are parsed with restish's exact `ParseOptions` before dispatch, in the shell and the session alike. A parse error or a scalar on an array-sketched field is rejected with the corrected line (`repairUnbracketedArrays` re-brackets the comma-separated-items mistake: "did you mean: tags: [prod, billing]"); piped stdin and whole-body tokens (@file, <file) pass through untouched, and `DCI_SKIP_BODY_VALIDATION=1` bypasses this with the rest.
+  - **Record fixed**: §1's worked examples now spell valid shorthand; E2E replays cover the array-syntax ghost and the corrected-line rejection (`ai_tui_e2e_test.go`).
