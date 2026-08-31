@@ -22,6 +22,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// questionCommandWrappedOperation maps each hand-registered question command
+// to the GA-spec operation it wraps. Every response-presentation feature
+// keyed on invokedCommandName (list_views.go's curated views, charts.go's
+// utilization-bar column, response_transform.go's UTC-label columns for
+// anomaly usage windows) is a property of the wrapped operation, not of the
+// command name the caller typed — main.go's PersistentPreRunE resolves
+// through this map so those features apply unchanged instead of silently
+// no-op'ing for budgets-at-risk/anomalies-recent.
+var questionCommandWrappedOperation = map[string]string{
+	"budgets-at-risk":  "list-budgets",
+	"anomalies-recent": "list-anomalies",
+}
+
 // registerQuestionCommands mounts budgets-at-risk and anomalies-recent under
 // the hidden dci API command, alongside the generated list-budgets/
 // list-anomalies commands, so they inherit auth, customer context, and every
