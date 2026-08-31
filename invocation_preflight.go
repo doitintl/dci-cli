@@ -118,15 +118,25 @@ func localDCICommandRegistered(commandName string) bool {
 // preflightLocalDCICommand validates a hand-registered local command the way
 // preflightAPIInvocation validates a GA one, minus the GA spec load and
 // unknown-command lookup: the command's own existence is already known by
-// construction. validateMaxResults still applies — budgets-at-risk wraps
-// list-budgets and inherits its 250 cap (pagingCaps), and the same silent-
-// clamp hazard the check exists for applies here unchanged.
+// construction. Help is checked first, matching preflightAPIInvocation's
+// order, so an out-of-range flag value never hides the help text. The flag
+// validations below it still apply: --all/--search are persistent dciCmd
+// flags budgets-at-risk/anomalies-recent inherit like every GA command, and
+// validateMaxResults protects the same silent-clamp hazard it protects for
+// list-budgets — budgets-at-risk wraps it directly and inherits its 250 cap
+// (pagingCaps).
 func preflightLocalDCICommand(commandName string, args []string) error {
+	if invocationRequestsHelp(args) {
+		return nil
+	}
 	if err := validateMaxResults(commandName, args[2:]); err != nil {
 		return err
 	}
-	if invocationRequestsHelp(args) {
-		return nil
+	if err := validateAllPagesFlags(args[2:]); err != nil {
+		return err
+	}
+	if err := validateSearchFlags(args[2:]); err != nil {
+		return err
 	}
 	if invocationCredentialsAvailable() || invocationInteractive() || invocationHasFlag(args, "--dry-run") {
 		return nil

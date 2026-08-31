@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func TestLocalDCICommandRegistered(t *testing.T) {
@@ -99,6 +102,56 @@ func TestPreflightLocalDCICommandEnforcesWrappedOperationMaxResultsCap(t *testin
 	// value must pass through unchallenged.
 	if err := preflightLocalDCICommand("anomalies-recent", []string{"dci", "dci", "anomalies-recent", "--max-results", "1000"}); err != nil {
 		t.Fatalf("uncapped operation rejected: %v", err)
+	}
+}
+
+// TestPreflightLocalDCICommandChecksHelpBeforeMaxResultsCap guards a PR
+// review finding: preflightAPIInvocation checks --help before running any
+// flag validation (help always renders, regardless of other flag values),
+// and preflightLocalDCICommand had inverted that order — an agent probing
+// `budgets-at-risk --max-results 99999 --help` to learn valid ranges got an
+// opaque cap error instead of the help text it asked for.
+func TestPreflightLocalDCICommandChecksHelpBeforeMaxResultsCap(t *testing.T) {
+	previousCredentials := invocationCredentialsAvailable
+	invocationCredentialsAvailable = func() bool { return false }
+	t.Cleanup(func() { invocationCredentialsAvailable = previousCredentials })
+
+	if err := preflightLocalDCICommand("budgets-at-risk", []string{"dci", "dci", "budgets-at-risk", "--max-results", "99999", "--help"}); err != nil {
+		t.Fatalf("help invocation with an over-cap flag rejected: %v", err)
+	}
+}
+
+// TestPreflightLocalDCICommandEnforcesAllAndSearchFlagConflicts guards a PR
+// review finding: preflightLocalDCICommand only ran validateMaxResults,
+// skipping validateAllPagesFlags/validateSearchFlags — so
+// `budgets-at-risk --all --max-results 10` was accepted where the
+// equivalent `list-budgets --all --max-results 10` is rejected. --all and
+// --search are persistent dciCmd flags every question command inherits.
+func TestPreflightLocalDCICommandEnforcesAllAndSearchFlagConflicts(t *testing.T) {
+	previousCredentials := invocationCredentialsAvailable
+	invocationCredentialsAvailable = func() bool { return true }
+	t.Cleanup(func() { invocationCredentialsAvailable = previousCredentials })
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"all with max-results", []string{"dci", "dci", "budgets-at-risk", "--all", "--max-results", "10"}},
+		{"all with page-token", []string{"dci", "dci", "budgets-at-risk", "--all", "--page-token", "tok"}},
+		{"search with max-results", []string{"dci", "dci", "anomalies-recent", "--search", "foo", "--max-results", "10"}},
+		{"search with page-token", []string{"dci", "dci", "anomalies-recent", "--search", "foo", "--page-token", "tok"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			commandName := tc.args[2]
+			err := preflightLocalDCICommand(commandName, tc.args)
+			if err == nil {
+				t.Fatal("conflicting flag combination accepted")
+			}
+			if err.(invocationPreflightError).StructuredError().Code != "USAGE_ERROR" {
+				t.Fatalf("error = %#v", err)
+			}
+		})
 	}
 }
 
@@ -286,5 +339,71 @@ func TestAnomaliesRecentQueryRejectsInvalidWindow(t *testing.T) {
 
 	if _, err := anomaliesRecentQuery(command); err == nil {
 		t.Fatal("invalid window accepted")
+	}
+}
+
+// TestQuestionCommandWrappedOperationMapsToRealGACommandNames guards a PR
+// review finding: every response-presentation feature keyed on
+// invokedCommandName (list_views.go's curated views, charts.go's
+// utilization-bar column, response_transform.go's UTC-label columns for
+// anomaly usage windows) switches on the literal wrapped-operation name
+// ("list-budgets", "list-anomalies"). Without this map, main.go's
+// PersistentPreRunE would set invokedCommandName to the question command's
+// own name and every one of those features would silently no-op — for
+// anomalies-recent specifically, that meant startTime/endTime rendered in
+// the viewer's local zone instead of staying UTC labels, mis-dating usage-
+// window boundaries near midnight.
+func TestQuestionCommandWrappedOperationMapsToRealGACommandNames(t *testing.T) {
+	cases := map[string]string{
+		"budgets-at-risk":  "list-budgets",
+		"anomalies-recent": "list-anomalies",
+	}
+	for command, want := range cases {
+		if got := questionCommandWrappedOperation[command]; got != want {
+			t.Errorf("questionCommandWrappedOperation[%q] = %q, want %q", command, got, want)
+		}
+	}
+	if _, ok := questionCommandWrappedOperation["list-budgets"]; ok {
+		t.Error("a real GA command name should not itself be a map key")
+	}
+}
+
+// TestPersistentPreRunEResolvesQuestionCommandToWrappedOperationName drives
+// the real dciCmd.PersistentPreRunE (mirroring TestOutputFlagValidation's
+// setup) to confirm invokedCommandName ends up as the wrapped GA operation
+// name, not the question command's own name, after a real Execute().
+func TestPersistentPreRunEResolvesQuestionCommandToWrappedOperationName(t *testing.T) {
+	oldRoot := cli.Root
+	oldInvokedCommandName := invokedCommandName
+	previousLoadOperationAPI := loadOperationAPI
+	loadOperationAPI = func(base string, root *cobra.Command) (cli.API, error) {
+		return cli.API{}, errors.New("no network in this test")
+	}
+	t.Cleanup(func() {
+		cli.Root = oldRoot
+		invokedCommandName = oldInvokedCommandName
+		loadOperationAPI = previousLoadOperationAPI
+		viper.Reset()
+	})
+	stubDestructiveMetadata(t)
+
+	root := &cobra.Command{Use: "dci"}
+	dciCmd := &cobra.Command{Use: "dci"}
+	root.AddCommand(dciCmd)
+	dciCmd.AddCommand(newBudgetsAtRiskCommand())
+	cli.Root = root
+	addOutputFlag()
+
+	root.SetArgs([]string{"dci", "budgets-at-risk"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+
+	// findGAOperation fails fast on the stubbed loader; the PersistentPreRunE
+	// assignment under test has already run by the time RunE gets there, and
+	// the resulting error is irrelevant here.
+	_ = root.Execute()
+
+	if invokedCommandName != "list-budgets" {
+		t.Fatalf("invokedCommandName = %q, want %q", invokedCommandName, "list-budgets")
 	}
 }

@@ -2174,8 +2174,14 @@ func addOutputFlag() {
 			}
 		}
 		// Record the leaf command so response transforms can apply
-		// command-specific shaping (e.g. the list-insights view).
+		// command-specific shaping (e.g. the list-insights view). A question
+		// command (question_commands.go) resolves to the GA operation it
+		// wraps: every shaping feature keyed on this name is a property of
+		// that operation's response shape, not of the command name typed.
 		invokedCommandName = cmd.Name()
+		if wrapped, ok := questionCommandWrappedOperation[invokedCommandName]; ok {
+			invokedCommandName = wrapped
+		}
 
 		outFlag := cmd.Flags().Lookup("output")
 		if outFlag == nil || !outFlag.Changed {
