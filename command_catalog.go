@@ -207,6 +207,7 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 		}
 		entries = append(entries, localCatalogEntries(command, nil)...)
 	}
+	entries = append(entries, questionCommandCatalogEntries()...)
 	sort.Slice(entries, func(i, j int) bool {
 		return strings.Join(entries[i].Path, " ") < strings.Join(entries[j].Path, " ")
 	})

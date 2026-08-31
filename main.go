@@ -789,6 +789,7 @@ func run() (exitCode int) {
 	registerSkillCommands()
 	registerCommandCatalog()
 	registerBetaCommands()
+	registerQuestionCommands()
 	registerAICommand(configDir)
 	if cachedTokenIsDoer() {
 		for _, command := range cli.Root.Commands() {
