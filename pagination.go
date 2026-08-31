@@ -51,6 +51,9 @@ var pagingCaps = map[string]pagingCap{
 	// The endpoints reject values above 250 (see fetchResourceNames).
 	"list-budgets": {250, "verified"},
 	"list-assets":  {250, "verified"},
+	// budgets-at-risk (question_commands.go) wraps list-budgets and inherits
+	// its cap unchanged.
+	"budgets-at-risk": {250, "verified"},
 }
 
 // validateMaxResults rejects a --max-results value above the endpoint's known

@@ -327,13 +327,14 @@ func hydrateAPICommandsForAI() {
 }
 
 // aiAPIOperationsHydrated reports whether the hidden API command already
-// carries spec operations. Not len(...)==0: the `beta` subtree (and cobra's
-// own help command) mount there unconditionally at startup, and counting them
-// as operations made hydration a no-op — the v2.7.0 regression that left the
+// carries spec operations. Not len(...)==0: the `beta` subtree, the
+// question-shaped commands (question_commands.go), and cobra's own help
+// command mount there unconditionally at startup, and counting them as
+// operations made hydration a no-op — the v2.7.0 regression that left the
 // session with only the custom root commands ("21 commands").
 func aiAPIOperationsHydrated(apiCommand *cobra.Command) bool {
 	for _, operation := range apiCommand.Commands() {
-		if operation.Name() != "beta" && operation.Name() != "help" {
+		if operation.Name() != "beta" && operation.Name() != "help" && !questionCommandNames[operation.Name()] {
 			return true
 		}
 	}

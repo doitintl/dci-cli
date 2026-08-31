@@ -53,6 +53,13 @@ func preflightAPIInvocation(args []string) error {
 		// GA spec — beta_commands.go owns that preflight.
 		return preflightBetaInvocation(args)
 	}
+	if localDCICommandRegistered(commandName) {
+		// Hand-registered local commands (question_commands.go and similar)
+		// are not GA-spec operations, so the unknown-command check below does
+		// not apply. They still fall through to the ordinary authentication
+		// check just below.
+		return preflightLocalDCICommand(commandName, args)
+	}
 
 	authenticated := invocationCredentialsAvailable()
 	interactive := invocationInteractive()
@@ -91,6 +98,37 @@ func preflightAPIInvocation(args []string) error {
 		return err
 	}
 	if authenticated || interactive || invocationHasFlag(args, "--dry-run") {
+		return nil
+	}
+	return authenticationRequiredPreflightError()
+}
+
+// questionCommandNames lists the hand-registered local commands under dciCmd
+// that are not GA-spec operations (question_commands.go). "beta" is handled
+// by its own preflightBetaInvocation branch above and does not belong here.
+var questionCommandNames = map[string]bool{
+	"budgets-at-risk":  true,
+	"anomalies-recent": true,
+}
+
+func localDCICommandRegistered(commandName string) bool {
+	return questionCommandNames[commandName]
+}
+
+// preflightLocalDCICommand validates a hand-registered local command the way
+// preflightAPIInvocation validates a GA one, minus the GA spec load and
+// unknown-command lookup: the command's own existence is already known by
+// construction. validateMaxResults still applies — budgets-at-risk wraps
+// list-budgets and inherits its 250 cap (pagingCaps), and the same silent-
+// clamp hazard the check exists for applies here unchanged.
+func preflightLocalDCICommand(commandName string, args []string) error {
+	if err := validateMaxResults(commandName, args[2:]); err != nil {
+		return err
+	}
+	if invocationRequestsHelp(args) {
+		return nil
+	}
+	if invocationCredentialsAvailable() || invocationInteractive() || invocationHasFlag(args, "--dry-run") {
 		return nil
 	}
 	return authenticationRequiredPreflightError()

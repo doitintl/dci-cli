@@ -32,13 +32,13 @@ dci
 │   └── list-account-team
 ├── Analytics
 │   ├── Alerts: create-alert, get-alert, list-alerts, update-alert, delete-alert
-│   ├── Budgets: create-budget, get-budget, list-budgets, update-budget, delete-budget
+│   ├── Budgets: create-budget, get-budget, list-budgets, update-budget, delete-budget, budgets-at-risk
 │   ├── Reports: create-report, get-report, get-report-config, list-reports, query, update-report, delete-report
 │   ├── Allocations: create-allocation, get-allocation, list-allocations, update-allocation, delete-allocation
 │   ├── Labels: create-label, get-label, list-labels, update-label, delete-label, get-label-assignments, assign-objects-to-label
 │   ├── Annotations: create-annotation, get-annotation, list-annotations, update-annotation, delete-annotation
 │   ├── Sharing: get-resource-permission, update-resource-permission
-│   └── Anomalies: get-anomaly, list-anomalies
+│   └── Anomalies: get-anomaly, list-anomalies, anomalies-recent
 ├── Billing and Operations
 │   ├── Invoices: get-invoice, list-invoices
 │   ├── Cloud Incidents: get-known-issue, list-known-issues
