@@ -15,6 +15,13 @@ complementary paths; pick per task:
   names, field mapping): a fully specified prompt builds in one shot, while an underspecified
   one costs a 1–2 minute clarify round each (answer via `refine-cloud-flow` with the same
   `conversationId`) and drifts. Always export and inspect what it built before trusting it.
+  Two verified failure modes (2026-09-02): builder-generated `codeNode` code wraps the logic
+  in a `def handler(input)` that the runtime never calls and reads upstream data through a
+  `nodes[...].output` attribute that doesn't exist — the node completes but returns
+  `{message: null}` — so always test-run a builder-built flow and expect to repair its code
+  nodes (contract below) via export → edit → import; and a `refine-cloud-flow` round can
+  answer with a plan yet save nothing (few steps, none of them "Saving node parameters") —
+  re-export after every refine and diff before believing the change happened.
 - **Local bundle authoring** — export → edit → import (workflow in
   [examples.md](examples.md), "CloudFlow Export and Import"). Produces reviewable, diffable
   JSON; the only path when the change must be inspected before it exists, or when copying
@@ -112,7 +119,13 @@ Other node contracts (all confirmed against real exports):
 - `codeNode`: `{language: "python", code, schema, schemaType}` — `schema` is a JSON Schema
   *string* describing the node's output; inside `code`, upstream data is read via the `nodes`
   dict keyed by node **name**, e.g. `nodes["getDailySegmentUsage"][0]["results"][0]["data"]`.
-  The transform of choice when a `transformation` node's operations don't fit.
+  The transform of choice when a `transformation` node's operations don't fit. Execution
+  contract (verified in live test runs, 2026-09-02): the platform executes the code *body*
+  directly — write top-level statements ending in a top-level `return {...}`; defining a
+  function (e.g. `def handler(input)`) that nothing calls produces no result, and the node
+  still completes with `{message: null}`. `nodes["<name>"]` is a plain **list** at runtime
+  (as the export examples show — never an object with an `.output` attribute), and the value
+  a `return` produces appears in `get-cloudflow-flow-run` output as `results[0].message`.
 - `httpNode`: `{method, url, headers, queryParams, body, apiClientConfig, payloadModel,
   usePagination}`.
 - `triggerNode` (schedule): `{frequency, customFrequency, customFrequencyAmount, time,
