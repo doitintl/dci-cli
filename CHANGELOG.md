@@ -26,6 +26,35 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.7.2 — September 1, 2026
+
+### New
+
+- The bundled agent skill now teaches
+  [CloudFlow](https://help.doit.com/docs/operate/cloudflow/intro) flow
+  authoring: agents can build or refine flows from a natural-language request
+  with `dci build-cloud-flow` and `dci refine-cloud-flow`, or author a flow
+  bundle by hand through the export → edit → dry-run → import loop, with
+  guardrails that keep generated flows honest (clone real flows instead of
+  guessing node parameters, validate with a dry run, land as drafts). Run
+  `dci skill update` to refresh installed copies.
+- The skill also teaches verifying a flow's *behavior*, not just its
+  structure: deep-validate a draft with `dci test-run-cloudflow-flow
+  --dry-run`, run it once as a test (excluded from run history and
+  statistics, approvals never bypassed), and read what every node consumed
+  and produced with `dci get-cloudflow-flow-run` — so an agent can fix a
+  flow from evidence instead of asking you to check the Console.
+
+### Improved
+
+- `dci build-cloud-flow` and `dci refine-cloud-flow` now answer with a
+  readable result — the created flow's ID, the conversation ID for follow-up
+  refinements, the builder's reply, and the build steps that ran — instead of
+  the raw event stream. Both commands also accept the family-consistent
+  spellings `dci build-cloudflow` and `dci refine-cloudflow`.
+- `dci list-cloudflows` shows each flow's `id` first — the value
+  `dci export-cloudflow-flow` and `dci refine-cloud-flow` need.
+
 ## v2.7.1 — August 26, 2026
 
 ### New
@@ -110,27 +139,6 @@ the CLI guide.
 - CI systems that allocate a terminal are now detected via the standard `CI`
   environment variable and get the script behavior — a pipeline can never
   hang on an interactive session.
-
-### New
-
-- The bundled agent skill now teaches
-  [CloudFlow](https://help.doit.com/docs/operate/cloudflow/intro) flow
-  authoring: agents can build or refine flows from a natural-language request
-  with `dci build-cloud-flow` and `dci refine-cloud-flow`, or author a flow
-  bundle by hand through the export → edit → dry-run → import loop, with
-  guardrails that keep generated flows honest (clone real flows instead of
-  guessing node parameters, validate with a dry run, land as drafts). Run
-  `dci skill update` to refresh installed copies.
-
-### Improved
-
-- `dci build-cloud-flow` and `dci refine-cloud-flow` now answer with a
-  readable result — the created flow's ID, the conversation ID for follow-up
-  refinements, the builder's reply, and the build steps that ran — instead of
-  the raw event stream. Both commands also accept the family-consistent
-  spellings `dci build-cloudflow` and `dci refine-cloudflow`.
-- `dci list-cloudflows` shows each flow's `id` first — the value
-  `dci export-cloudflow-flow` and `dci refine-cloud-flow` need.
 
 ### Fixed
 
