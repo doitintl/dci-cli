@@ -266,6 +266,21 @@ step belongs *before* the build call, which then works well — and free-text `q
 containing commas must be passed as JSON on stdin (restish shorthand parses commas
 structurally).
 
+**Test-run loop verified in production (2026-09-01).** The platform shipped draft test-run
+and per-node run-inspection endpoints to the production API, closing the loop this spec
+could only design around: a hand-authored bundle (manualTrigger → DoiT `getReport`) passed
+`import-cloudflow-flow --dry-run` first try, imported as a draft, deep-validated via
+`test-run-cloudflow-flow --dry-run` (`valid: true`; on a known-broken draft the same call
+returned a 422 naming every invalid node — D3's shared-validator behavior, observed live),
+and a real test run completed with per-node payloads readable through
+`get-cloudflow-flow-run`: `input` recorded on the action node and `null` on the trigger,
+output recorded on both, `mode=test` isolation confirmed (0 standard runs, 1 test run).
+Notable operational facts from the same session: mutating CloudFlow requests now require an
+`Idempotency-Key` (a retried POST with the same key produced exactly one run across three
+5xx-retries), and a run can start successfully even when the POST's response fails — check
+the runs list before retrying with a fresh key. The skill reference's former "no runtime
+node data" limitation is replaced by a test-run verification section.
+
 ## 7. Relationship to `buildCloudFlow` / `refineCloudFlow`
 
 The platform already has a server-side NL builder streaming build events. Two front doors, one

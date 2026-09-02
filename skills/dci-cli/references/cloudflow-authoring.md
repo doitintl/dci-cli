@@ -41,7 +41,8 @@ generation would otherwise have to guess.
 - **Always dry-run first.** `dci import-cloudflow-flow --dry-run < bundle.json` writes nothing
   and returns every validation error at once, plus each requirement's resolution and candidate
   IDs. Fix and repeat until the plan is clean, then import for real with a fresh
-  `--idempotency-key`.
+  `--idempotency-key` — required, not optional: mutating CloudFlow requests are rejected
+  (400, `idempotency_key_required`) without one.
 - **Do not fabricate what a bundle cannot carry**: credentials, tenant IDs, schedule
   *activation*, execution state, Slack-channel and policy references never travel (the last
   two export as `unsupportedReferences` and leave nodes flagged incomplete). A schedule
@@ -158,18 +159,38 @@ Ranked by real production frequency (30-day execution scan across customer tenan
 - **Data → LLM → route**: fetch → LLM node with a prompt → branch on the answer (rare in
   production so far).
 
+## Verify behavior with a test run
+
+A draft that passes the import dry-run is *structurally* valid; behavior is verified by
+running it as a test and reading what each node actually consumed and produced (loop
+verified end-to-end against production, 2026-09-01):
+
+1. **Deep-validate first**: `dci test-run-cloudflow-flow <flowId> --dry-run
+   --idempotency-key <key>` runs the server-side flow validator without starting anything —
+   it accepts drafts and returns either `valid: true` or a 422 listing *every* invalid node
+   (`details[]` with `nodeId` and message). Fix and repeat until clean.
+2. **Run it**: the same command without `--dry-run` starts one test run. The
+   `--idempotency-key` is required and is the safety line: retrying with the *same* key can
+   never start a second run, so on a 5xx response check
+   `dci list-cloudflow-flow-runs <flowId> --mode test` before minting a new key — the run
+   may have started even though the response failed. Test runs execute nodes for real
+   (approval steps are never bypassed) but are excluded from run history, statistics, and
+   schedule budgets.
+3. **Read the results**: `dci get-cloudflow-flow-run <flowId> <runId>` returns per-node
+   `input` and `output` payloads once each node reaches a terminal status — a poll loop can
+   read early nodes while later ones still run. `input` is `null` for every non-action node
+   *by design* (only action nodes record inputs); `output` is recorded by every node that
+   finishes. Payloads carry `totalBytes` and are truncated past 64KB (`truncated: true`);
+   sensitive values are redacted.
+4. **Claim honestly**: "the flow works" only after a test run completed and the per-node
+   outputs matched intent. Before that, say it validated and imported.
+
 ## Current limitations
 
 - **No operation search or parameter-schema retrieval yet.** Until those land as public API,
   exported flows are the only ground truth for API-node parameters (hence the hard rules).
   When they land, resolve each API node by searching for the operation and fetching its
   schema instead of hunting for a clone; the hard rules relax to "never write parameters a
-  schema didn't confirm".
-- **No programmatic access to runtime node data.** Run history exposes per-node status and
-  timing only — the data a node actually consumed or produced is not retrievable through any
-  API surface today (verified 2026-08-26). The consequences: a draft that passes the import
-  dry-run is *structurally* valid, not *behaviorally* verified — never claim a generated flow
-  works, only that it validated and imported; behavior is confirmed by a human running it and
-  inspecting the run view in the Console. Until test-run endpoints exist, the best available
-  evidence of runtime data shapes is the `nodes["<node-name>"]` access paths inside `codeNode`
-  code in real exports — they show exactly how working flows navigate upstream output.
+  schema didn't confirm". Until then, the `nodes["<node-name>"]` access paths inside
+  `codeNode` code in real exports — and now the per-node payloads a test run records — are
+  the best evidence of runtime data shapes.
