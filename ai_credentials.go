@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -210,16 +211,35 @@ func (s *aiProvidedTokenSource) token(ctx context.Context) (string, error) {
 }
 
 // aiProvidedEndpoint resolves the vend URL: the override env var, else the
-// vend path on the configured API base.
+// vend path on the configured API base. Either way the active customer
+// context rides along as the customerContext query parameter: the console
+// API's employee auth middleware refuses any Doer token whose request lacks
+// one — with a 401, indistinguishable from an expired session — even though
+// the vended token itself is tenant-independent. An override URL that already
+// carries the parameter keeps its own value.
 func aiProvidedEndpoint() (string, error) {
-	if override := strings.TrimSpace(os.Getenv(aiProvidedURLEnvName)); override != "" {
-		return override, nil
+	endpoint := strings.TrimSpace(os.Getenv(aiProvidedURLEnvName))
+	if endpoint == "" {
+		base, err := apiBase()
+		if err != nil {
+			return "", err
+		}
+		endpoint = strings.TrimRight(base, "/") + aiProvidedPath
 	}
-	base, err := apiBase()
+	customerContext := readCustomerContext(resolveDCIConfigDir())
+	if customerContext == "" {
+		return endpoint, nil
+	}
+	parsed, err := url.Parse(endpoint)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("invalid AI vend URL: %w", err)
 	}
-	return strings.TrimRight(base, "/") + aiProvidedPath, nil
+	query := parsed.Query()
+	if query.Get("customerContext") == "" {
+		query.Set("customerContext", customerContext)
+		parsed.RawQuery = query.Encode()
+	}
+	return parsed.String(), nil
 }
 
 // fetchAIProvidedToken calls the vend endpoint with the same cached bearer
@@ -260,6 +280,12 @@ func fetchAIProvidedToken(ctx context.Context) (aiVendedToken, error) {
 		}
 		return vended, nil
 	case http.StatusUnauthorized:
+		// The employee auth middleware answers 401 both for a stale session
+		// and for a Doer request with no customer context; with no context to
+		// send, name the actual fix instead of a re-login that won't help.
+		if readCustomerContext(resolveDCIConfigDir()) == "" {
+			return aiVendedToken{}, errors.New("DoiT-provided AI access needs a customer context — run dci customer-context set <domain> and ask again")
+		}
 		return aiVendedToken{}, errors.New("your DoiT session has expired — run dci login and ask again")
 	case http.StatusForbidden:
 		return aiVendedToken{}, errors.New("your account is not enabled for DoiT-provided AI access — export ANTHROPIC_API_KEY or save a key in " + aiSettingsFileName + " instead")
