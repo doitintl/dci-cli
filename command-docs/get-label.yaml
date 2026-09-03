@@ -1,0 +1,15 @@
+command: get-label
+
+arguments:
+  id: >-
+    Label ID or name as shown by `dci list-labels`.
+
+examples:
+  - description: Show one label.
+    command: "dci get-label <label-id>"
+  - description: The same, by name.
+    command: "dci get-label \"Team Backyard\""
+  - description: The full record as JSON, for scripts.
+    command: "dci get-label <label-id> --output json"
+
+related: [list-labels, get-label-assignments, update-label, delete-label]

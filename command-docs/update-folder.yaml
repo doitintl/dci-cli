@@ -1,0 +1,24 @@
+command: update-folder
+
+arguments:
+  id: >-
+    Folder ID as shown by `dci list-folders`.
+
+examples:
+  - description: Rename a folder.
+    command: "dci update-folder <folder-id> name: \"Shared reports\""
+  - description: Move a folder under another folder (a same-named sibling gets the folder auto-renamed).
+    command: "dci update-folder <folder-id> parentFolderId: <parent-folder-id>"
+  - description: Move a folder back to the top level.
+    command: "dci update-folder <folder-id> parentFolderId: root"
+  - description: Set a description.
+    command: "dci update-folder <folder-id> description: \"Monthly reviews for the platform team\""
+
+notes: |
+  :::tip Moving contents, not folders
+  This command moves the folder itself. To move a report into or out of a
+  folder, set the report's `folderId` with `dci update-report`; allocations
+  likewise with `dci update-allocation`.
+  :::
+
+related: [get-folder, list-folders, create-folder, delete-folder, update-report]

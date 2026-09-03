@@ -1,0 +1,20 @@
+command: get-async-operation
+
+arguments:
+  operation-id: >-
+    Operation ID returned by `dci async-run-inline` or `dci async-run-report-by-id`.
+    Operations have no names, so name resolution does not apply.
+
+examples:
+  - description: Check where a background report run stands.
+    command: "dci get-async-operation <operation-id>"
+    output: >-
+      `status` is one of pending, running, succeeded, failed, or canceled, with
+      `createTime` and `expireBy`; a failed operation carries an `error` object.
+      The rows are not here: fetch them with `dci get-async-operation-results`.
+  - description: Poll from a script until the operation leaves pending or running.
+    command: "dci get-async-operation <operation-id> --output json | jq -r .status"
+  - description: Just the status and error, as JSON.
+    command: "dci get-async-operation <operation-id> --fields status,error --output json"
+
+related: [get-async-operation-results, cancel-async-operation, async-run-inline, async-run-report-by-id]

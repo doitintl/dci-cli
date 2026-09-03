@@ -1,0 +1,25 @@
+command: list-dimensions
+
+examples:
+  - description: The first page of dimensions your account can group and filter by.
+    command: "dci list-dimensions"
+  - description: One dimension type only (a single exact field:value term; fields are type, label, key).
+    command: "dci list-dimensions --filter type:system_label"
+  - description: Find dimensions for a topic by substring, across the whole collection.
+    command: "dci list-dimensions --search genai"
+  - description: Every dimension as JSON, sorted by label, for scripts.
+    command: "dci list-dimensions --all --sort-by label --sort-order asc --output json"
+
+notes: |
+  :::info Filtering versus searching
+  `--filter` matches a single `field:value` term **exactly** (`type:system_label`,
+  `label:team`). Globs, substrings, and multi-term expressions are not supported,
+  and an unrecognized expression is silently ignored and returns the unfiltered
+  listing. To search, use `--search <text>`: a client-side, case-insensitive
+  substring match over every text field, which fetches every page first
+  (`searchDropped` records how many items were filtered out). The collection
+  can run to about a thousand dimensions across some twenty pages, so `--all`
+  or `--search` is usually what you want.
+  :::
+
+related: [get-dimension, query, create-report]

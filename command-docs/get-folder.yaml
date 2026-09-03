@@ -1,0 +1,13 @@
+command: get-folder
+
+arguments:
+  id: >-
+    Folder ID as shown by `dci list-folders`.
+
+examples:
+  - description: Show one folder.
+    command: "dci get-folder <folder-id>"
+  - description: The full record as JSON, for scripts (`parentFolderId` is `root` for a top-level folder).
+    command: "dci get-folder <folder-id> --output json"
+
+related: [list-folders, create-folder, update-folder, delete-folder]

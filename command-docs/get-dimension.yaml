@@ -1,0 +1,18 @@
+command: get-dimension
+
+examples:
+  - description: Look up one dimension and the values it takes in your account (both flags are required).
+    command: "dci get-dimension --type fixed --id service_description"
+  - description: A label dimension, with its values per cloud, as JSON.
+    command: "dci get-dimension --type label --id team --output json"
+  - description: Only the values, for scripts.
+    command: "dci get-dimension --type fixed --id service_description --fields values --output json"
+
+notes: |
+  :::tip Finding the type and id
+  Dimension `type` and `id` pairs come from `dci list-dimensions`; the same
+  pair is what a report or query config expects in `group`, `filters`, and
+  `dimensions`. `dci get-dimensions` is an alias.
+  :::
+
+related: [list-dimensions, query, create-report]

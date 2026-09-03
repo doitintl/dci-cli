@@ -1,0 +1,36 @@
+command: async-run-inline
+
+examples:
+  - description: Submit a report run from a JSON config and get back an operation to poll (the API requires an idempotency key on every submission).
+    command: "dci async-run-inline --idempotency-key \"$(uuidgen)\" < query.json"
+    output: |
+      # query.json
+      {"config": {"dataSource": "billing", "timeInterval": "month",
+        "timeRange": {"mode": "last", "amount": 3, "unit": "month", "includeCurrent": false},
+        "metrics": [{"type": "basic", "value": "cost"}],
+        "group": [{"id": "service_description", "type": "fixed",
+          "limit": {"metric": {"type": "basic", "value": "cost"}, "sort": "desc", "value": 10}}]}}
+      # Response: operationId, createTime, and status "pending" or "running". Poll it with
+      # dci get-async-operation <operation-id>; once "succeeded", read
+      # dci get-async-operation-results <operation-id>.
+  - description: The same run as an inline shorthand body.
+    command: >-
+      dci async-run-inline --idempotency-key "$(uuidgen)"
+      config{metrics: [{type: basic, value: cost}], timeInterval: month,
+      timeRange{amount: 3, mode: last, unit: month}}
+  - description: Validate the config without creating an operation (status "dry_run", no operationId).
+    command: "dci async-run-inline --dry-run --idempotency-key \"$(uuidgen)\" < query.json"
+  - description: Capture the operation ID for a script.
+    command: "dci async-run-inline --idempotency-key \"$(uuidgen)\" --output json < query.json | jq -r .operationId"
+
+notes: |
+  :::tip Async workflow
+  Submitting returns immediately; the result is not in the response. Poll
+  `dci get-async-operation <operation-id>` until `status` is `succeeded`, then
+  read `dci get-async-operation-results <operation-id>`. Deduplication is by
+  config content, not by key: resubmitting an identical config while a run is
+  in flight returns the existing operation. `--dry-run` here is the API's own
+  validation call, not the CLI's local preview.
+  :::
+
+related: [async-run-report-by-id, get-async-operation, get-async-operation-results, cancel-async-operation, query]

@@ -1,0 +1,22 @@
+command: delete-folder
+
+arguments:
+  id: >-
+    Folder ID as shown by `dci list-folders`. Interactive terminals ask for
+    confirmation before deleting.
+
+examples:
+  - description: Delete a folder (a confirm dialog shows the target; Cancel is the default).
+    command: "dci delete-folder <folder-id>"
+  - description: Preview locally what would be deleted, without sending a request.
+    command: "dci delete-folder <folder-id> --dry-run"
+  - description: Delete without a prompt, for scripts and CI (exit code 30 if confirmation is missing).
+    command: "dci delete-folder <folder-id> --yes"
+
+notes: |
+  :::warning Nested folders go too
+  Deleting a folder deletes every folder nested inside it. The reports and
+  allocations they contained are not deleted; they move to the top level.
+  :::
+
+related: [list-folders, get-folder, create-folder, update-folder]

@@ -1,0 +1,19 @@
+command: list-folders
+
+examples:
+  - description: Your Cloud Analytics folders (one page of 50, in id order).
+    command: "dci list-folders"
+  - description: Only the top-level folders' names and IDs, as a table.
+    command: "dci list-folders -C id,name,parentFolderId"
+  - description: Every folder as JSON, for scripts.
+    command: "dci list-folders --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-folders` presents a curated table by default:
+
+  - **Columns:** `name`, `description`, and `parent folder` (`parentFolderId` resolved to the folder name; blank for top-level folders).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-folder, create-folder, update-folder, delete-folder, list-reports]

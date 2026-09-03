@@ -1,0 +1,15 @@
+command: get-label-assignments
+
+arguments:
+  id: >-
+    Label ID as shown by `dci list-labels`.
+
+examples:
+  - description: List the objects that carry a label, with their type and ID.
+    command: "dci get-label-assignments <label-id>"
+  - description: As JSON, for scripts.
+    command: "dci get-label-assignments <label-id> --output json"
+  - description: Only the reports carrying the label.
+    command: "dci get-label-assignments <label-id> --output json | jq '.assignments[] | select(.objectType == \"report\")'"
+
+related: [assign-objects-to-label, get-label, list-labels]
