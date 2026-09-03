@@ -1,0 +1,9 @@
+command: get-active-theme
+
+examples:
+  - description: Show the theme active for the authenticated user (`default` when no custom or preset theme is selected).
+    command: "dci get-active-theme"
+  - description: The active theme ID as JSON, for scripts.
+    command: "dci get-active-theme --output json"
+
+related: [set-active-theme, list-custom-themes, get-custom-theme]

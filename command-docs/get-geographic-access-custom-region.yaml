@@ -1,0 +1,16 @@
+command: get-geographic-access-custom-region
+
+arguments:
+  custom-region-id: >-
+    Custom region ID as shown by `dci list-geographic-access-custom-regions`.
+    The region name is accepted too.
+
+examples:
+  - description: Show one custom region with its country membership.
+    command: "dci get-geographic-access-custom-region <custom-region-id>"
+  - description: The full record as JSON, for scripts.
+    command: "dci get-geographic-access-custom-region <custom-region-id> --output json"
+  - description: Only the country codes.
+    command: "dci get-geographic-access-custom-region <custom-region-id> --fields countryCodes --output json"
+
+related: [list-geographic-access-custom-regions, create-geographic-access-custom-region, update-geographic-access-custom-region, delete-geographic-access-custom-region]

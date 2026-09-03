@@ -1,0 +1,14 @@
+command: create-geographic-access-custom-region
+
+examples:
+  - description: Create a custom region from a list of ISO 3166-1 alpha-2 country codes (see `dci list-geographic-access-countries`).
+    command: "dci create-geographic-access-custom-region name: \"EU Core\", countryCodes: [DE, FR, NL]"
+  - description: Create it from a JSON file.
+    command: "dci create-geographic-access-custom-region < region.json"
+    output: |
+      # region.json
+      {"name": "Nordics", "countryCodes": ["DK", "FI", "NO", "SE"]}
+  - description: Capture the new region's ID for a follow-up scope assignment.
+    command: "dci create-geographic-access-custom-region name: \"EU Core\", countryCodes: [DE, FR, NL] --output json | jq -r .id"
+
+related: [list-geographic-access-custom-regions, get-geographic-access-custom-region, update-geographic-access-custom-region, delete-geographic-access-custom-region, list-geographic-access-countries, update-customer-geographic-access-scope]

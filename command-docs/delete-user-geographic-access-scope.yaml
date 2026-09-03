@@ -1,0 +1,19 @@
+command: delete-user-geographic-access-scope
+
+arguments:
+  target-customer-id: >-
+    Customer ID of the hierarchy root or one of its child customers.
+    `dci get-customer --output json` shows the authenticated customer's ID.
+  user-id: User ID as shown by `dci list-users`; the user must belong to the target customer.
+
+examples:
+  - description: Preview clearing a user's geographic scope without sending a request.
+    command: "dci delete-user-geographic-access-scope <target-customer-id> <user-id> --dry-run"
+    output: A local preview of the operation; the scope is unchanged.
+  - description: Clear the scope without the confirmation prompt, for scripts.
+    command: "dci delete-user-geographic-access-scope <target-customer-id> <user-id> --yes"
+    output: >-
+      Exit code 0 and no output;
+      `dci get-user-geographic-access-scope <target-customer-id> <user-id>` now reports `type: unassigned`.
+
+related: [get-user-geographic-access-scope, update-user-geographic-access-scope, delete-customer-geographic-access-scope]

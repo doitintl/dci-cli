@@ -1,0 +1,11 @@
+command: list-geographic-access-countries
+
+examples:
+  - description: The country catalogue accepted by geographic access policies (ISO 3166-1 alpha-2 codes).
+    command: "dci list-geographic-access-countries"
+  - description: Find a country's code by (part of) its name.
+    command: "dci list-geographic-access-countries --search netherlands"
+  - description: The catalogue as JSON, for scripts.
+    command: "dci list-geographic-access-countries --output json"
+
+related: [create-geographic-access-custom-region, update-geographic-access-custom-region, update-customer-geographic-access-scope, update-user-geographic-access-scope]

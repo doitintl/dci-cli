@@ -1,0 +1,11 @@
+command: list-custom-themes
+
+examples:
+  - description: The custom themes defined for your account.
+    command: "dci list-custom-themes"
+  - description: Just the ID, name, and primary color, as a table.
+    command: "dci list-custom-themes -C id,name,primaryColor"
+  - description: The full list as JSON, with the dark and light palettes.
+    command: "dci list-custom-themes --output json"
+
+related: [create-custom-theme, get-custom-theme, update-custom-theme, delete-custom-theme, get-active-theme, set-active-theme]

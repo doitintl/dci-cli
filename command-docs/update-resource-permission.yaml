@@ -1,0 +1,31 @@
+command: update-resource-permission
+
+arguments:
+  resource-type: One of `reports`, `budgets`, `alerts`, or `allocations`.
+  resource-id: >-
+    ID of the resource, as shown by the matching list command (`dci list-reports`,
+    `dci list-budgets`, `dci list-alerts`, `dci list-allocations`).
+
+examples:
+  - description: Set a report's per-user roles (`owner`, `editor`, or `viewer`, keyed by email).
+    command: >-
+      dci update-resource-permission reports <report-id>
+      permissions: [{role: owner, user: "dana@acme.com"}, {role: viewer, user: "sam@acme.com"}]
+  - description: Give everyone in the organization viewer access to a budget.
+    command: "dci update-resource-permission budgets <budget-id> public: viewer"
+  - description: Preview the change without sending a request.
+    command: "dci update-resource-permission reports <report-id> public: editor --dry-run"
+    output: A local preview of the operation; the permissions are unchanged.
+  - description: Apply without the confirmation prompt, for scripts.
+    command: "dci update-resource-permission reports <report-id> public: viewer --yes"
+    output: The updated permission set is returned; `dci get-resource-permission reports <report-id>` shows the same.
+
+notes: |
+  :::caution Treated as destructive
+  Changing permissions can revoke someone's access, so the CLI gates this
+  command like a `delete-*`: interactive terminals ask for confirmation,
+  scripts pass `--yes`, and `--dry-run` previews locally. See the CLI guide's
+  "Destructive commands".
+  :::
+
+related: [get-resource-permission, list-reports, list-budgets, list-alerts, list-allocations]

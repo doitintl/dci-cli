@@ -1,0 +1,18 @@
+command: update-geographic-access-custom-region
+
+arguments:
+  custom-region-id: >-
+    Custom region ID as shown by `dci list-geographic-access-custom-regions`.
+    The region name is accepted too.
+
+examples:
+  - description: Rename a custom region.
+    command: "dci update-geographic-access-custom-region <custom-region-id> name: \"EU Core and Nordics\""
+  - description: Set the region's country membership.
+    command: "dci update-geographic-access-custom-region <custom-region-id> countryCodes: [DE, FR, NL, DK, FI, NO, SE]"
+  - description: Change both at once.
+    command: >-
+      dci update-geographic-access-custom-region <custom-region-id>
+      name: "Benelux", countryCodes: [BE, NL, LU]
+
+related: [get-geographic-access-custom-region, list-geographic-access-custom-regions, create-geographic-access-custom-region, delete-geographic-access-custom-region, list-geographic-access-countries]
