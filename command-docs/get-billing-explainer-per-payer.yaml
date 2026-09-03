@@ -1,0 +1,15 @@
+command: get-billing-explainer-per-payer
+
+arguments:
+  invoice-month: >-
+    Invoice month in `YYYY-MM` format, e.g. `2026-08`.
+
+examples:
+  - description: Invoiced cost changes for every payer in August 2026.
+    command: "dci get-billing-explainer-per-payer 2026-08"
+  - description: The full breakdown as JSON — per-payer accounts and services, plus the summary of credits, discounts, refunds, and charges.
+    command: "dci get-billing-explainer-per-payer 2026-08 --output json"
+  - description: When your credential can access more than one customer, name the tenant explicitly.
+    command: "dci get-billing-explainer-per-payer 2026-08 --x-tenant-id <customer-id>"
+
+related: [get-entity-invoice-explainer, list-invoices]

@@ -1,0 +1,9 @@
+command: list-account-team
+
+examples:
+  - description: The DoiT account managers assigned to your organization.
+    command: "dci list-account-team"
+  - description: Names, roles, emails, and Calendly links as JSON.
+    command: "dci list-account-team --output json"
+
+related: [list-organizations, list-roles, validate]

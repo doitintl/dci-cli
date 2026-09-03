@@ -1,0 +1,16 @@
+command: export-cloud-diagram-json
+
+arguments:
+  id: >-
+    Layer ID: the `ssid` of a layer listed by `dci get-cloud-diagram-components`
+    (also the `ss_id` field in `dci get-cloud-diagrams-stats` and `dci search-cloud-diagrams` results).
+
+examples:
+  - description: Export a diagram layer — every component plus export metadata — as JSON.
+    command: "dci export-cloud-diagram-json <layer-id> --output json"
+  - description: Save the export to a file for offline review or diffing between snapshots.
+    command: "dci export-cloud-diagram-json <layer-id> --output json > layer.json"
+  - description: Only the node and link collections.
+    command: "dci export-cloud-diagram-json <layer-id> --fields nodes,links --output json"
+
+related: [get-cloud-diagram-components, get-statussheet-components, list-cloud-diagram-layer-snapshots, search-cloud-diagrams]

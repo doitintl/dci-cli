@@ -1,0 +1,12 @@
+command: find-cloud-diagrams
+
+examples:
+  - description: Find the diagrams that include a cloud resource, by its cloud resource ID.
+    command: "dci find-cloud-diagrams resources: [<resource-id>]"
+  - description: Several resources at once, read from a file; each match is a diagram viewer URL plus an image URL.
+    command: "dci find-cloud-diagrams --output json < resources.json"
+    output: |
+      # resources.json
+      {"resources": ["<resource-id>", "<resource-id>"]}
+
+related: [search-cloud-diagrams, get-cloud-diagram-components, get-cloud-diagrams-stats]

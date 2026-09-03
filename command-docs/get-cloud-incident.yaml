@@ -1,0 +1,20 @@
+command: get-cloud-incident
+
+arguments:
+  id: >-
+    Cloud incident ID as shown by `dci list-cloud-incidents`.
+
+examples:
+  - description: Show one cloud incident, including its description, symptoms, and workaround.
+    command: "dci get-cloud-incident <incident-id>"
+  - description: The full record as JSON.
+    command: "dci get-cloud-incident <incident-id> --output json"
+  - description: Just the workaround.
+    command: "dci get-cloud-incident <incident-id> --fields title,status,workaround --output json"
+
+notes: |
+  :::note Alias
+  `dci get-known-issue` is an alias for this command.
+  :::
+
+related: [list-cloud-incidents]

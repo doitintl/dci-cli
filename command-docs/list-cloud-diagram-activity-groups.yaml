@@ -1,0 +1,16 @@
+command: list-cloud-diagram-activity-groups
+
+examples:
+  - description: The latest ten snapshot activity groups of a layer, newest first.
+    command: "dci list-cloud-diagram-activity-groups --ss-id <layer-id>"
+  - description: The next ten.
+    command: "dci list-cloud-diagram-activity-groups --ss-id <layer-id> --limit 10 --offset 10"
+  - description: Only groups carrying a tag, as JSON.
+    command: "dci list-cloud-diagram-activity-groups --ss-id <layer-id> --tags <tag> --output json"
+
+notes: |
+  :::note Paging
+  This endpoint pages with `--limit` and `--offset`, not page tokens, so `--all` does not apply.
+  :::
+
+related: [list-cloud-diagram-node-activities, list-cloud-diagram-layer-snapshots, get-cloud-diagram-layer-snapshot]

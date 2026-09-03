@@ -1,0 +1,21 @@
+command: list-cloud-diagram-layer-snapshots
+
+arguments:
+  id: >-
+    Layer ID: the `ssid` of a layer listed by `dci get-cloud-diagram-components`
+    (also the `ss_id` field in `dci get-cloud-diagrams-stats` and `dci search-cloud-diagrams` results).
+
+examples:
+  - description: The saved snapshots of a layer (ten by default).
+    command: "dci list-cloud-diagram-layer-snapshots <layer-id>"
+  - description: Newest first, twenty at a time.
+    command: "dci list-cloud-diagram-layer-snapshots <layer-id> --sort=-createdAt --limit 20"
+  - description: The next twenty, as JSON.
+    command: "dci list-cloud-diagram-layer-snapshots <layer-id> --sort=-createdAt --limit 20 --offset 20 --output json"
+
+notes: |
+  :::note Paging
+  This endpoint pages with `--limit` and `--offset`, not page tokens, so `--all` does not apply.
+  :::
+
+related: [get-cloud-diagram-layer-snapshot, list-cloud-diagram-activity-groups, export-cloud-diagram-json]

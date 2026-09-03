@@ -1,0 +1,15 @@
+command: get-commitment
+
+arguments:
+  id: >-
+    Commitment ID as shown by `dci list-commitments`.
+
+examples:
+  - description: Show one commitment with its periods, attainment, and forecast.
+    command: "dci get-commitment <commitment-id>"
+  - description: The full record as JSON, including per-period marketplace limits.
+    command: "dci get-commitment <commitment-id> --output json"
+  - description: Just the totals.
+    command: "dci get-commitment <commitment-id> --fields name,currency,totalCommitmentValue,totalCurrentAttainment,totalForecastValue --output json"
+
+related: [list-commitments]

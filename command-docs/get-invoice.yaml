@@ -1,0 +1,15 @@
+command: get-invoice
+
+arguments:
+  id: >-
+    Invoice number, as shown in the `invoice` column of `dci list-invoices`.
+
+examples:
+  - description: Show one invoice with its line items.
+    command: "dci get-invoice <invoice-number>"
+  - description: The full record as JSON, including the console URL where the PDF can be downloaded.
+    command: "dci get-invoice <invoice-number> --output json"
+  - description: Only the line items.
+    command: "dci get-invoice <invoice-number> --fields lineItems --output json"
+
+related: [list-invoices, get-entity-invoice-explainer]

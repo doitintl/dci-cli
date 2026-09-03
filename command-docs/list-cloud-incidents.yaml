@@ -1,0 +1,26 @@
+command: list-cloud-incidents
+
+examples:
+  - description: Active and historical incidents on Google Cloud and AWS, newest first.
+    command: "dci list-cloud-incidents"
+  - description: Incidents created on or after 1 August 2026 00:00 UTC (epoch milliseconds).
+    command: "dci list-cloud-incidents --min-creation-time 1785542400000"
+  - description: Incidents mentioning a product, searched client-side across every page.
+    command: "dci list-cloud-incidents --search BigQuery"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-cloud-incidents --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-cloud-incidents` presents a curated table by default:
+
+  - **Columns:** `title`, `platform`, `product`, `status`, and `created (UTC)` (from `createTime`).
+  - In interactive tables, `created (UTC)` renders in your **local timezone** and is titled `created (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+  :::note Alias
+  `dci list-known-issues` is an alias for this command.
+  :::
+
+related: [get-cloud-incident]

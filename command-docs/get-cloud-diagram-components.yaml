@@ -1,0 +1,13 @@
+command: get-cloud-diagram-components
+
+examples:
+  - description: Every diagram you can access, with its layers and their `ssid` (no request body).
+    command: "dci get-cloud-diagram-components"
+  - description: Infrastructure diagrams only, skipping those with no components.
+    command: "dci get-cloud-diagram-components --type infrastructure --skip-empty"
+  - description: Full data for one layer, including its components, as JSON.
+    command: "dci get-cloud-diagram-components --components --output json statussheet: [<layer-id>]"
+  - description: The same layer, but only its host nodes, with issue counts.
+    command: "dci get-cloud-diagram-components --components --node-type host --issues-count statussheet: [<layer-id>]"
+
+related: [get-statussheet-components, export-cloud-diagram-json, get-cloud-diagrams-stats, search-cloud-diagrams]

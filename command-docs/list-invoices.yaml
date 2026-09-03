@@ -1,0 +1,21 @@
+command: list-invoices
+
+examples:
+  - description: Current and historical invoices, newest first.
+    command: "dci list-invoices"
+  - description: Invoices issued on or after 1 August 2026 00:00 UTC (epoch milliseconds).
+    command: "dci list-invoices --min-creation-time 1785542400000"
+  - description: Invoices still open, searched client-side across every page.
+    command: "dci list-invoices --search OPEN"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-invoices --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-invoices` presents a curated table by default:
+
+  - **Columns:** `invoice` (from `id`; a clickable link to the invoice in the DoiT console in interactive terminals), `platform`, `issued` (from `invoiceDate`), `due` (from `dueDate`; blank when the invoice carries no due date, e.g. credit memos), `total` and `balance` (with the invoice's currency symbol), and `status`.
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-invoice, get-entity-invoice-explainer, get-billing-explainer-per-payer]

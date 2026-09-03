@@ -1,0 +1,19 @@
+command: list-roles
+
+examples:
+  - description: Preset and custom roles, with descriptions.
+    command: "dci list-roles"
+  - description: Roles whose name or description mentions a term, matched client-side.
+    command: "dci list-roles --search admin"
+  - description: Each role's permission IDs, as JSON.
+    command: "dci list-roles --fields id,name,type,permissions --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-roles` presents a curated table by default:
+
+  - **Columns:** `name`, `type`, and `description`.
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [list-organizations, list-account-team]

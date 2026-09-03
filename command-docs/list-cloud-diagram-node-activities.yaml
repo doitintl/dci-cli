@@ -1,0 +1,14 @@
+command: list-cloud-diagram-node-activities
+
+examples:
+  - description: The change history of one component node, newest first (50 by default).
+    command: "dci list-cloud-diagram-node-activities --ss-id <layer-id> --node-id <node-id>"
+  - description: The next 50, as JSON.
+    command: "dci list-cloud-diagram-node-activities --ss-id <layer-id> --node-id <node-id> --offset 50 --output json"
+
+notes: |
+  :::note Paging
+  This endpoint pages with `--limit` and `--offset`, not page tokens, so `--all` does not apply.
+  :::
+
+related: [list-cloud-diagram-activity-groups, get-statussheet-components, search-cloud-diagrams]
