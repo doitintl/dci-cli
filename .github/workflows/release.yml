@@ -29,6 +29,23 @@ jobs:
       - name: Check changelog entry for this tag
         run: ./.github/changelog/check-changelog.sh --gate "${GITHUB_REF#refs/tags/}"
 
+      # Command docs release gate (COMMAND-DOCS-SPEC.md D5): every GA
+      # operation in the production spec must have a curated (non-draft)
+      # command-docs/<command>.yaml, so a new API endpoint never ships in the
+      # CLI without its examples. Fix: `go run ./tools/commanddocs scaffold`,
+      # curate, merge, delete the tag, re-tag. Beta operations are exempt
+      # (they are not in the production spec).
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check command docs cover every operation
+        run: |
+          curl -sSfL --retry 3 --retry-delay 5 https://api.doit.com/openapi.yaml -o "$RUNNER_TEMP/openapi.yaml"
+          go run ./tools/commanddocs coverage -spec "$RUNNER_TEMP/openapi.yaml" -strict
+
       - name: Release via goreleaser-cross
         run: |
           docker run --rm \

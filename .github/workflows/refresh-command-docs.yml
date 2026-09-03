@@ -1,0 +1,88 @@
+# Scaffolds command-docs/<command>.yaml stubs for API operations that appeared
+# in the production spec without a curated doc, and opens a PR with them
+# (COMMAND-DOCS-SPEC.md D5, gate 2). Stubs are `draft: true`: they render no
+# examples anywhere until a human curates them, and the release gate in
+# release.yml blocks a tag while any GA operation is missing or still a
+# draft — this job is the week's notice before that gate bites.
+name: Refresh Command Docs
+
+on:
+  schedule:
+    # Weekly, Monday 06:30 UTC (after the beta spec refresh).
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch the production OpenAPI spec
+        run: curl -sSfL --retry 3 --retry-delay 5 https://api.doit.com/openapi.yaml -o "$RUNNER_TEMP/openapi.yaml"
+
+      - name: Scaffold stubs for uncovered operations
+        id: scaffold
+        run: |
+          go run ./tools/commanddocs scaffold -spec "$RUNNER_TEMP/openapi.yaml" | tee "$RUNNER_TEMP/scaffold.log"
+          if git status --porcelain -- command-docs | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --porcelain -- command-docs | awk '{print $2}' | sed 's#command-docs/##; s#\.yaml$##' > "$RUNNER_TEMP/new.txt"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No drift: every operation in the production spec has a command doc."
+          fi
+
+      - name: Verify the stubs load
+        if: steps.scaffold.outputs.changed == 'true'
+        run: go test -count=1 -run 'TestCommandDocsEmbeddedFilesParse|TestParseCommandDoc' .
+
+      - name: Open drift PR
+        if: steps.scaffold.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch="chore/command-docs-drift-$(date -u +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code origin "refs/heads/${branch}" >/dev/null 2>&1; then
+            echo "Branch ${branch} already exists; a drift PR is already open."
+            exit 0
+          fi
+          git checkout -b "${branch}"
+          git add command-docs
+          git commit -m "chore: scaffold command docs for new API operations"
+          git push origin "${branch}"
+          {
+            echo "The production OpenAPI spec has operations without a curated command doc. Each"
+            echo "file below is a \`draft: true\` stub scaffolded from the spec (arguments,"
+            echo "same-group related commands, one schema-generated example). Drafts render no"
+            echo "examples in \`--help\` or on the Help Center, and **the release gate blocks the"
+            echo "next tag until every one is curated**."
+            echo
+            echo "To finish a stub: rewrite the example(s) as real usage (2–4, common case"
+            echo "first, quote every \`command:\` value), fix the argument text, add notes only"
+            echo "where the CLI adds behavior, then remove \`draft: true\`. Validate with:"
+            echo
+            echo '    curl -sSL https://api.doit.com/openapi.yaml -o /tmp/openapi.yaml'
+            echo '    DCI_COMMAND_DOCS_SPEC=/tmp/openapi.yaml go test -run TestCommandDocs .'
+            echo
+            echo "New operations:"
+            sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/new.txt"
+            echo
+            echo "See COMMAND-DOCS-SPEC.md §3 for the file format."
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create \
+            --title "chore: command docs needed for new API operations" \
+            --body-file "$RUNNER_TEMP/body.md"
