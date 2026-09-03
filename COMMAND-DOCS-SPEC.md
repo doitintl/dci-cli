@@ -133,7 +133,7 @@ arguments:
 # `output` is optional: what the user sees, or how to verify.
 examples:
   - description: Take an anomaly into review.
-    command: dci patch-anomaly <anomaly-id> customerFeedback.reviewStatus: UNDER_REVIEW
+    command: "dci patch-anomaly <anomaly-id> customerFeedback.reviewStatus: UNDER_REVIEW"
   - description: Resolve it as a confirmed anomaly with a reason and a comment.
     command: >-
       dci patch-anomaly <anomaly-id>
@@ -162,6 +162,12 @@ related: [get-anomaly, list-anomalies, anomalies-recent]
 
 Rules:
 
+- **Quote every `command:` value** — double quotes for one-liners, `>-` for
+  multi-line. Shorthand bodies contain `field: value`, and a YAML plain
+  scalar cannot hold a colon-space, so an unquoted command line fails to
+  parse ("mapping values are not allowed in this context"). The loader's
+  parse error names the file and repeats this rule, and the scaffold tool
+  (D5) always emits the quoted form.
 - **`<placeholder>` tokens** (`<anomaly-id>`, `<report-id>`) are the
   placeholder convention, matching the cheatsheet and skill files today. The
   validator treats a token matching `^<[a-z][a-z0-9-]*>$` as a positional
@@ -190,15 +196,19 @@ Rules:
 
 In the `SetHelpFunc` hook (main.go `:1620`), after `appendFlagExamples`:
 
-1. Look up the command's doc file by `cmd.Name()`. If found, set
-   `cmd.Example` to the curated examples in cobra's two-space indented
-   format, one `# description` comment line above each command, and
-   restore the original after `defaultHelp` returns (the same
-   save-and-defer pattern `terseHelpText` uses).
+1. Look up the command's doc file by `cmd.Name()`. If found **and not
+   `draft: true`**, set `cmd.Example` to the curated examples in cobra's
+   two-space indented format, one `# description` comment line above each
+   command, and restore the original after `defaultHelp` returns (the same
+   save-and-defer pattern `terseHelpText` uses). A draft file (a D5 stub
+   whose only example is schema-generated) is treated as absent here, the
+   same exclusion D6 applies on the web page — otherwise merging a stub
+   would surface exactly the kind of invalid example this spec exists to
+   remove.
 2. If `arguments` is present, insert an `Arguments:` block into the usage
    template between `Aliases:` and `Examples:` (template at main.go `:1405`).
-3. If not found, leave restish's synthesized example in place — it is the
-   transitional fallback until D5 closes the gap.
+3. If not found, or found as a draft, leave restish's synthesized example
+   in place — it is the transitional fallback until D5 closes the gap.
 
 `--help-full` is unchanged: its `## Input Example` JSON and request schema
 come from restish's long description and stay as the exhaustive view.
