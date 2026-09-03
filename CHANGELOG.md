@@ -26,6 +26,25 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.7.3 — September 4, 2026
+
+### New
+
+- `dci <command> --help` now shows curated, tested usage examples and a
+  description of each positional argument instead of an example synthesized
+  from the API schema. The first commands covered are the anomaly commands —
+  [patch-anomaly](https://help.doit.com/docs/cli/generated/command-groups/anomalies/patch-anomaly),
+  [get-anomaly](https://help.doit.com/docs/cli/generated/command-groups/anomalies/get-anomaly),
+  [list-anomalies](https://help.doit.com/docs/cli/generated/command-groups/anomalies/list-anomalies),
+  and `dci anomalies-recent` — and the local commands (`dci status`, `dci
+  query`, `dci open`, `dci update`, `dci skill`, and others). Every example
+  is checked against the live API before a release ships, so a command line
+  shown in help is one the API accepts. The remaining commands keep their
+  previous help until their examples land.
+- `dci commands --json` carries the same examples, page notes, and related
+  commands for each command, so agents and scripts can read them without
+  parsing help text.
+
 ## v2.7.2 — September 4, 2026
 
 ### New
