@@ -1,0 +1,16 @@
+command: list-billing-transfer-reseller-accounts
+
+examples:
+  - description: Your reseller program management accounts with their handshake state and status (reseller tenants only).
+    command: "dci list-billing-transfer-reseller-accounts"
+  - description: Only the account, status and handshake state columns.
+    command: "dci list-billing-transfer-reseller-accounts -C resellerPmaAccountId,status,handshakeState,dpmaId"
+  - description: The full list as JSON, for scripts.
+    command: "dci list-billing-transfer-reseller-accounts --output json"
+
+notes: |
+  The reseller-tier analog of `list-billing-transfer-program-management-accounts`: one item
+  per reseller PMA, without the end-customer tenants. Use
+  `list-billing-transfer-reseller-accounts-with-tenants` to include them.
+
+related: [list-billing-transfer-reseller-accounts-with-tenants, list-billing-transfer-end-customers-by-reseller, create-billing-transfer-end-customer-mappings]

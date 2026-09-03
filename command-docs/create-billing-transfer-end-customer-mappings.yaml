@@ -1,0 +1,28 @@
+command: create-billing-transfer-end-customer-mappings
+
+examples:
+  - description: Map end-customer AWS accounts under your reseller PMA to their DoiT customers, from a file (reseller tenants only).
+    command: "dci create-billing-transfer-end-customer-mappings < mappings.json"
+    output: |
+      # mappings.json
+      {"dpmaId": "<dpma-id>", "resellerPmaAccountId": "123456789012",
+       "items": [
+         {"ecAccountId": "210987654321", "ecCustomerId": "<customer-id>"},
+         {"ecAccountId": "310987654321", "ecCustomerId": "<customer-id>",
+          "curBasePath": "s3://acme-cur-exports/cur/"}]}
+  - description: Per-item outcomes as JSON, for scripts.
+    command: "dci create-billing-transfer-end-customer-mappings --output json < mappings.json"
+    output: >-
+      A `results` list with one entry per item and its `status` (`mapped`, `already_mapped`
+      or `remapped`); malformed items appear in `invalidItems` and stop the whole batch.
+
+notes: |
+  :::info Who can call this
+  Reseller tenants only: distributor tenants receive `403`. Each item is processed
+  independently and reported in `results[]`; if any item is malformed the API rejects
+  the whole batch up front and lists the offenders in `invalidItems`. Unlike
+  `create-billing-transfer-reseller-handshakes`, this command has no `--dry-run` or
+  `--idempotency-key`.
+  :::
+
+related: [list-billing-transfer-end-customers, list-billing-transfer-end-customers-by-reseller, list-billing-transfer-reseller-accounts, list-billing-transfer-reseller-accounts-with-tenants, create-billing-transfer-reseller-handshakes]

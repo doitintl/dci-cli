@@ -1,0 +1,13 @@
+command: list-billing-transfer-program-management-accounts
+
+examples:
+  - description: Your program management accounts with their mapped reseller tenants and handshake counts (distributor tenants only).
+    command: "dci list-billing-transfer-program-management-accounts"
+  - description: A smaller page; the response carries a `pageToken` for the next one.
+    command: "dci list-billing-transfer-program-management-accounts --max-results 10"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-billing-transfer-program-management-accounts --all --output json"
+  - description: Browse accounts and their tenants in the full-screen viewer.
+    command: "dci list-billing-transfer-program-management-accounts -M interactive"
+
+related: [get-billing-transfer-program-management-accounts-status, create-billing-transfer-reseller-handshakes, list-billing-transfer-end-customers, list-billing-transfer-reseller-accounts]

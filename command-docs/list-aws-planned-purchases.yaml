@@ -1,0 +1,22 @@
+command: list-aws-planned-purchases
+
+arguments:
+  management-account-id: >-
+    12-digit AWS management (payer) account ID of the organization, as shown by
+    `dci list-aws-organizations` (`managementAccountId`).
+
+examples:
+  - description: Planned commitment purchases (laddering projections), one item per commitment type with a projection.
+    command: "dci list-aws-planned-purchases <management-account-id>"
+  - description: Only the compute projection.
+    command: "dci list-aws-planned-purchases <management-account-id> --service compute"
+  - description: The full projections as JSON, including the ladder `steps`, for scripts.
+    command: "dci list-aws-planned-purchases <management-account-id> --output json"
+
+notes: |
+  An organization with no planned purchases (including one not yet onboarded) returns an
+  empty list, not an error; `404` only means the organization does not exist or you
+  cannot access it. Check `onboardingStatus` with `get-aws-organization`. `--service`
+  accepts `compute` or `database`.
+
+related: [list-aws-recommendations, get-aws-recommendation, get-aws-organization, list-aws-organizations-settings]

@@ -1,0 +1,18 @@
+command: list-aws-member-accounts
+
+arguments:
+  management-account-id: >-
+    12-digit AWS management (payer) account ID of the organization, as shown by
+    `dci list-aws-organizations` (`managementAccountId`).
+
+examples:
+  - description: Member accounts with active or historical commitment coverage, with 30-day stats and potential savings.
+    command: "dci list-aws-member-accounts <management-account-id>"
+  - description: A larger page (the server caps `--max-results` at 500).
+    command: "dci list-aws-member-accounts <management-account-id> --max-results 200"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-aws-member-accounts <management-account-id> --all --output json"
+  - description: Browse in the full-screen viewer.
+    command: "dci list-aws-member-accounts <management-account-id> -M interactive"
+
+related: [get-aws-member-account, list-aws-organizations, get-aws-organization, list-aws-savings-plans]

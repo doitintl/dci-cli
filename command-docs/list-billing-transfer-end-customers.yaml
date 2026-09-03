@@ -1,0 +1,18 @@
+command: list-billing-transfer-end-customers
+
+examples:
+  - description: End-customer account mappings under one reseller PMA, identified by the distributor PMA and the reseller PMA account.
+    command: "dci list-billing-transfer-end-customers --dpma-id <dpma-id> --reseller-pma-account-id 123456789012"
+  - description: Include mappings that have been revoked (excluded by default).
+    command: "dci list-billing-transfer-end-customers --dpma-id <dpma-id> --reseller-pma-account-id 123456789012 --include-revoked"
+  - description: Only the account, customer and mapping status columns.
+    command: "dci list-billing-transfer-end-customers --dpma-id <dpma-id> --reseller-pma-account-id 123456789012 -C ecAccountId,ecCustomerId,status,handshakeState"
+  - description: The full list as JSON, for scripts.
+    command: "dci list-billing-transfer-end-customers --dpma-id <dpma-id> --reseller-pma-account-id 123456789012 --output json"
+
+notes: |
+  Callable by the reseller who owns the PMA or the distributor who owns the DPMA. If you
+  only know the reseller PMA account, `list-billing-transfer-end-customers-by-reseller`
+  returns the same result without `--dpma-id`.
+
+related: [list-billing-transfer-end-customers-by-reseller, create-billing-transfer-end-customer-mappings, list-billing-transfer-reseller-accounts-with-tenants, list-billing-transfer-program-management-accounts]

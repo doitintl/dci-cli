@@ -1,0 +1,21 @@
+command: list-aws-recommendations
+
+arguments:
+  management-account-id: >-
+    12-digit AWS management (payer) account ID of the organization, as shown by
+    `dci list-aws-organizations` (`managementAccountId`).
+
+examples:
+  - description: Current and recommended hourly commitment per onboarded commitment type, with the estimated additional savings.
+    command: "dci list-aws-recommendations <management-account-id>"
+  - description: The recommendations as JSON, for scripts.
+    command: "dci list-aws-recommendations <management-account-id> --output json"
+  - description: Only the compute recommendation.
+    command: "dci list-aws-recommendations <management-account-id> --fields compute --output json"
+
+notes: |
+  The response is keyed by commitment type (`compute`, `database`); a type is present only
+  when it is onboarded and a recommendation exists. For the eligible-spend time series
+  behind one recommendation, use `get-aws-recommendation <management-account-id> <service-id>`.
+
+related: [get-aws-recommendation, list-aws-planned-purchases, list-aws-organizations, list-aws-savings-plans]

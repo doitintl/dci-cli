@@ -1,0 +1,16 @@
+command: list-aws-organizations-settings
+
+examples:
+  - description: The commitments purchasing account and per-commitment-type settings for each onboarded AWS organization.
+    command: "dci list-aws-organizations-settings"
+  - description: The nested settings as JSON, for scripts.
+    command: "dci list-aws-organizations-settings --output json"
+  - description: Every page as YAML, easier to read when there are many organizations.
+    command: "dci list-aws-organizations-settings --all --output yaml"
+
+notes: |
+  Commitment settings (policy, term, payment option, automation mode, limits) are stored
+  per customer and commitment type, so they repeat identically on every organization item;
+  only `purchaseAccountId` and which commitment types appear differ per organization.
+
+related: [list-aws-organizations, get-aws-organization, list-aws-recommendations, list-aws-planned-purchases]
