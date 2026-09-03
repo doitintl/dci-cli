@@ -26,6 +26,19 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.7.4 — September 4, 2026
+
+### New
+
+- Every `dci` command now has curated, tested usage examples in
+  `dci <command> --help`, covering all 193 API commands and the local
+  commands. Write commands show the body as ready-to-run `name: value`
+  arguments or a JSON file, destructive commands show the `--dry-run` and
+  `--yes` forms, and positional arguments say which command lists their
+  IDs. The same examples, plus per-command notes and related commands, feed
+  the [command reference](https://help.doit.com/docs/cli/generated/command-groups/)
+  on the Help Center and `dci commands --json`.
+
 ## v2.7.3 — September 4, 2026
 
 ### New
