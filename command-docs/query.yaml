@@ -1,0 +1,15 @@
+command: query
+
+examples:
+  - description: Run an ad-hoc Cloud Analytics query from a JSON config (see `dci query --help-full` for the schema).
+    command: "dci query < query.json"
+  - description: Compose a query interactively, then run it or save it as query.json.
+    command: "dci query"
+  - description: Export the result to a spreadsheet.
+    command: "dci query --output csv < query.json > result.csv"
+  - description: Rows as named objects, for jq.
+    command: "dci query --rows keyed --output json < query.json | jq '.result.rows[0]'"
+  - description: A stacked chart under the table (human mode only).
+    command: "dci query --chart < query.json"
+
+related: [get-report, get-report-config, update-report]

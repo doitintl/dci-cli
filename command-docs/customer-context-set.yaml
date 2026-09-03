@@ -1,0 +1,8 @@
+command: customer-context set
+
+arguments:
+  TOKEN: A customer domain (acme.com), a customer ID, or the URL display name from the DoiT Console URL.
+
+examples:
+  - description: Make a customer the default for every request (DoiT staff only).
+    command: "dci customer-context set acme.com"

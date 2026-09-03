@@ -1,0 +1,33 @@
+command: patch-anomaly
+
+arguments:
+  id: >-
+    Anomaly ID as shown by `dci list-anomalies` or `dci anomalies-recent`.
+    Anomalies have no names, so name resolution does not apply.
+
+examples:
+  - description: Take an anomaly into review.
+    command: "dci patch-anomaly <anomaly-id> customerFeedback.reviewStatus: UNDER_REVIEW"
+  - description: Resolve it as a confirmed anomaly with a reason and a comment.
+    command: >-
+      dci patch-anomaly <anomaly-id>
+      customerFeedback{reviewStatus: RESOLVED, resolution: ANOMALY_CONFIRMED,
+      resolutionNote{reason: MISCONFIGURATION, comment: "Autoscaler max raised by mistake"}}
+    output: >-
+      Exit code 0 and no output; `dci get-anomaly <anomaly-id> --output json`
+      shows the new review status.
+  - description: Dismiss it as not an anomaly, with the body read from a file.
+    command: "dci patch-anomaly <anomaly-id> < feedback.json"
+    output: |
+      # feedback.json
+      {"customerFeedback": {"reviewStatus": "RESOLVED", "resolution": "NOT_ANOMALY",
+        "resolutionNote": {"reason": "EXPECTED_COST_SPIKE"}}}
+
+notes: |
+  :::tip Review workflow
+  `resolution` is required when `reviewStatus` is `RESOLVED` and rejected
+  otherwise; `resolutionNote.reason` must belong to the chosen resolution.
+  The CLI validates field names locally; the API validates these rules.
+  :::
+
+related: [get-anomaly, list-anomalies, anomalies-recent]

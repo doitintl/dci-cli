@@ -1410,7 +1410,10 @@ const dciUsageTemplate = `Usage:{{if .Runnable}}
   {{.Use}} --help{{end}}{{if gt (len .Aliases) 0}}
 
 Aliases:
-  {{.NameAndAliases}}{{end}}{{if .HasExample}}
+  {{.NameAndAliases}}{{end}}{{with commandDocArguments .}}
+
+Arguments:
+{{.}}{{end}}{{if .HasExample}}
 
 Examples:
 {{.Example}}{{end}}{{if .HasAvailableSubCommands}}{{$cmds := .Commands}}{{if eq (len .Groups) 0}}
@@ -1462,6 +1465,8 @@ func findDCICommand() *cobra.Command {
 }
 
 func customizeDCIUsage() {
+	// Arguments: block from the curated command docs (command_docs.go).
+	cobra.AddTemplateFunc("commandDocArguments", renderCommandDocArguments)
 	cobra.AddTemplateFunc("hasVisibleCommandsInGroup", func(cmds []*cobra.Command, groupID string) bool {
 		for _, cmd := range cmds {
 			if cmd.GroupID == groupID && (cmd.IsAvailableCommand() || cmd.Name() == "help") {
@@ -1656,6 +1661,9 @@ func setupCompletion() {
 			}
 			appendFlagExamples(cmd, context.FlagExamples)
 		}
+		// Curated examples (command_docs.go) replace restish's schema-
+		// synthesized one; a missing or draft doc leaves it in place.
+		defer applyCommandDocHelp(cmd)()
 		defaultHelp(cmd, args)
 		if cmd == cli.Root && !hasAPICommands {
 			hint := "\n! To get started, authenticate with: dci login (or set DCI_API_KEY)\n\n"

@@ -1,0 +1,5 @@
+command: login
+
+examples:
+  - description: Sign in through the DoiT Console in your browser.
+    command: "dci login"

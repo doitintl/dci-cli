@@ -1,0 +1,5 @@
+command: logout
+
+examples:
+  - description: Clear the stored session.
+    command: "dci logout"

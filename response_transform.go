@@ -137,9 +137,9 @@ func transformSuccessBody(body interface{}) interface{} {
 // stay out of the default columns. Machine formats (json, yaml, csv) and
 // explicit -C/--fields selections keep the raw field names.
 //
-// Keep in sync with the help-center mirror of this behavior: omni
-// .github/workflows/actions/generate-cli-docs/command-notes/get-insight-results.mdx
-// (rendered into help.doit.com/docs/cli/generated/command-groups/insights/get-insight-results).
+// Keep in sync with the help-center mirror of this behavior: the notes in
+// command-docs/list-insights.yaml (command_docs.go), rendered into
+// help.doit.com/docs/cli/generated/command-groups/insights/list-insights.
 func transformInsightsList(body interface{}) interface{} {
 	if invokedCommandName != "list-insights" {
 		return body

@@ -1,0 +1,9 @@
+command: skill
+
+examples:
+  - description: Install the dci skill for Claude Code (also codex, cursor, gemini, kiro, opencode).
+    command: "dci skill claude"
+  - description: See what the skill contains and how many tokens it costs.
+    command: "dci skill list"
+  - description: Refresh every installed skill file from this CLI version.
+    command: "dci skill update"

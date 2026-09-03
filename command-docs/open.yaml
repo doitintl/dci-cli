@@ -1,0 +1,13 @@
+command: open
+
+arguments:
+  resource: One of report, budget, or allocation.
+  id: The resource ID or its name; names resolve the same way positional arguments do.
+
+examples:
+  - description: Open the DoiT Console home for the active customer.
+    command: "dci open"
+  - description: Deep-link to a budget by name.
+    command: "dci open budget \"Team Backyard\""
+  - description: Deep-link to a report by ID.
+    command: "dci open report <report-id>"

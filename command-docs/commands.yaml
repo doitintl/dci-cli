@@ -1,0 +1,9 @@
+command: commands
+
+examples:
+  - description: The machine-readable catalog of every command, with arguments, flags, and curated examples.
+    command: "dci commands --json"
+  - description: Include beta commands (invoked as dci beta <command>).
+    command: "dci commands --json --beta"
+  - description: Which commands are destructive.
+    command: "dci commands --json | jq -r '.commands[] | select(.destructive) | .path | join(\" \")'"

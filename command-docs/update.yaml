@@ -1,0 +1,11 @@
+command: update
+
+examples:
+  - description: Update to the latest release, on any OS and install method.
+    command: "dci update"
+  - description: Only report what is available; install nothing.
+    command: "dci update --check"
+  - description: Non-interactive update for scripts.
+    command: "dci update --yes"
+  - description: Pin or roll back to a specific release (standalone installs only).
+    command: "dci update --version v2.5.1"

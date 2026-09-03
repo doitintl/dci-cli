@@ -1,0 +1,7 @@
+command: config output-order
+
+examples:
+  - description: Keep key rows nearest the prompt in human table output (the default).
+    command: "dci config output-order terminal"
+  - description: Use the web ordering instead.
+    command: "dci config output-order classic"

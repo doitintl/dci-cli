@@ -1,0 +1,7 @@
+command: skill update
+
+examples:
+  - description: Refresh every installed skill from this CLI version.
+    command: "dci skill update"
+  - description: Refresh one agent's skill, overwriting local edits.
+    command: "dci skill update claude --force"

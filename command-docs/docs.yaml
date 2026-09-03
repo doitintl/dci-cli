@@ -1,0 +1,5 @@
+command: docs
+
+examples:
+  - description: Print every documentation entry point — the guide, the command reference, and the agent corpora.
+    command: "dci docs"
