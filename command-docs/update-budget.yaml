@@ -1,0 +1,28 @@
+command: update-budget
+
+arguments:
+  id: >-
+    Budget ID or name as shown by `dci list-budgets`. Names resolve (exact,
+    unique substring, or close typo); pass `--id` to force a literal ID.
+
+examples:
+  - description: Raise the period amount.
+    command: "dci update-budget \"Team Backyard\" amount: 12000"
+  - description: Set alert thresholds and who is notified.
+    command: >-
+      dci update-budget <budget-id>
+      alerts: [{percentage: 50}, {percentage: 75}, {percentage: 90}],
+      recipients: [finops@acme.com, platform-leads@acme.com]
+  - description: Pull the current budget, edit it, and push it back as code.
+    command: "dci update-budget <budget-id> < budget.json"
+    output: >-
+      Start from `dci get-budget <budget-id> --output json > budget.json`, edit,
+      then push; the response is the updated budget with its utilization.
+  - description: Replace the scope with the body read from a file.
+    command: "dci update-budget <budget-id> < budget.json"
+    output: |
+      # budget.json
+      {"scopes": [{"id": "cloud_provider", "type": "fixed", "mode": "is",
+                   "values": ["amazon-web-services", "google-cloud"]}]}
+
+related: [get-budget, create-budget, list-budgets, delete-budget]

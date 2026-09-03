@@ -1,0 +1,23 @@
+command: list-alerts
+
+examples:
+  - description: Your alerts, newest update first.
+    command: "dci list-alerts"
+  - description: Alerts owned by one person, most recently fired first.
+    command: "dci list-alerts --filter owner:alice@acme.com --sort-by lastAlerted --sort-order desc"
+  - description: Alerts whose name contains a word (ANDs with --filter).
+    command: "dci list-alerts --name-contains \"S3\""
+  - description: Every page as JSON, for scripts.
+    command: "dci list-alerts --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-alerts` presents a curated table by default:
+
+  - **Columns:** `name`, `owner`, `last alerted (UTC)` (from `lastAlerted`; blank when the alert never fired), and `updated (UTC)`.
+  - In interactive tables, `last alerted (UTC)` and `updated (UTC)` render in your **local timezone** (titled `(local)`); machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - **Rows are sorted by last update, newest first.**
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-alert, create-alert, update-alert, delete-alert]

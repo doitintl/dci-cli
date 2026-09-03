@@ -1,0 +1,27 @@
+command: create-annotation
+
+examples:
+  - description: Record what happened on a date so it shows on report charts.
+    command: >-
+      dci create-annotation content: "Moved batch jobs to Spot instances",
+      timestamp: "2026-09-01T00:00:00Z"
+  - description: Attach the annotation to specific reports and tag it with labels.
+    command: >-
+      dci create-annotation content: "Reserved Instances renewed",
+      timestamp: "2026-09-01T00:00:00Z", reports: [<report-id>], labels: [<label-id>]
+  - description: Create it from a file and capture the new ID.
+    command: "dci create-annotation --output json < annotation.json | jq -r .id"
+    output: |
+      # annotation.json
+      {"content": "Moved batch jobs to Spot instances",
+       "timestamp": "2026-09-01T00:00:00Z",
+       "reports": ["<report-id>"],
+       "labels": ["<label-id>"]}
+
+notes: |
+  :::tip IDs, not names
+  `reports` and `labels` take IDs: get them from `dci list-reports` and
+  `dci list-labels`. `timestamp` is an RFC 3339 date-time and is required.
+  :::
+
+related: [get-annotation, list-annotations, update-annotation, delete-annotation]

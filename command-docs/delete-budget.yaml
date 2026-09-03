@@ -1,0 +1,15 @@
+command: delete-budget
+
+arguments:
+  id: >-
+    Budget ID or name as shown by `dci list-budgets`. Names resolve (exact,
+    unique substring, or close typo); the confirmation shows the resolved target.
+
+examples:
+  - description: Preview what would be deleted, without sending a request.
+    command: "dci delete-budget \"Team Backyard\" --dry-run"
+  - description: Delete without a prompt, for scripts and CI (interactive terminals ask first).
+    command: "dci delete-budget <budget-id> --yes"
+    output: Exit code 0 and no output; `dci list-budgets` no longer lists the budget.
+
+related: [create-budget, get-budget, list-budgets, update-budget]

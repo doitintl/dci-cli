@@ -1,0 +1,15 @@
+command: update-annotation
+
+arguments:
+  id: "Annotation ID as shown by `dci list-annotations` (select the `id` column with `-C id,content`)."
+
+examples:
+  - description: Reword an annotation.
+    command: "dci update-annotation <annotation-id> content: \"Moved batch jobs to Spot (completed 3 Sep)\""
+  - description: Move it to a different date.
+    command: "dci update-annotation <annotation-id> timestamp: \"2026-09-03T00:00:00Z\""
+  - description: Change which reports and labels it is attached to.
+    command: "dci update-annotation <annotation-id> reports: [<report-id>], labels: [<label-id>]"
+    output: Exit code 0 and the updated annotation; `dci get-annotation <annotation-id> --output json` shows the new lists.
+
+related: [get-annotation, create-annotation, list-annotations, delete-annotation]

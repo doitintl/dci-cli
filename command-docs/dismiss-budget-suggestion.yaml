@@ -1,0 +1,21 @@
+command: dismiss-budget-suggestion
+
+arguments:
+  id: >-
+    Budget suggestion ID as shown by `dci list-budget-suggestions`
+    (select it with `-C id,name`).
+
+examples:
+  - description: Dismiss a suggestion that does not apply.
+    command: "dci dismiss-budget-suggestion <budget-suggestion-id> reason: not_relevant"
+    output: "`{\"id\": \"<budget-suggestion-id>\", \"status\": \"dismissed\"}`; it no longer appears in the pending list."
+  - description: Dismiss because an existing budget already covers it.
+    command: "dci dismiss-budget-suggestion <budget-suggestion-id> reason: covered_elsewhere"
+
+notes: |
+  :::tip Reasons
+  `reason` is optional and one of `not_relevant`, `wrong_amount`,
+  `covered_elsewhere`, or `other`.
+  :::
+
+related: [list-budget-suggestions, accept-budget-suggestion]

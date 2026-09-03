@@ -1,0 +1,38 @@
+command: update-alert
+
+arguments:
+  id: >-
+    Alert ID as shown by `dci list-alerts`. Alert names resolve too (exact,
+    unique substring, or close typo); pass `--id` to force a literal ID.
+
+examples:
+  - description: Raise the threshold to $1,500 (the body must always carry the full config).
+    command: >-
+      dci update-alert <alert-id>
+      config{condition: value, operator: gt, value: 1500, currency: USD, timeInterval: month,
+      metric{type: basic, value: cost}}
+  - description: Pull the current alert, edit it, and push it back as code.
+    command: "dci update-alert <alert-id> < alert.json"
+    output: >-
+      Start from `dci get-alert <alert-id> --output json > alert.json`, edit
+      `name`, `recipients`, or `config`, then push; the response is the updated alert.
+  - description: Rename an alert and change who gets notified, keeping the file's config.
+    command: "dci update-alert <alert-id> < alert.json"
+    output: |
+      # alert.json
+      {"name": "S3 monthly spend over $1.5k",
+       "recipients": ["finops@acme.com", "platform-leads@acme.com"],
+       "config": {"condition": "value", "operator": "gt", "value": 1500,
+                  "currency": "USD", "timeInterval": "month",
+                  "metric": {"type": "basic", "value": "cost"},
+                  "scopes": [{"id": "service_description", "type": "fixed",
+                              "values": ["Amazon Simple Storage Service"]}]}}
+
+notes: |
+  :::tip Full config on every update
+  `config` (with `metric`, `timeInterval`, and `value`) is required on every
+  update, not just the fields you change. Pull the current record with
+  `dci get-alert <alert-id> --output json`, edit, and push the whole body.
+  :::
+
+related: [get-alert, create-alert, list-alerts, delete-alert]

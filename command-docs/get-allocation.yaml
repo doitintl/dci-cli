@@ -1,0 +1,16 @@
+command: get-allocation
+
+arguments:
+  id: >-
+    Allocation ID or name as shown by `dci list-allocations`. Names resolve
+    (exact, unique substring, or close typo); pass `--id` to force a literal ID.
+
+examples:
+  - description: Show one allocation and its rule.
+    command: "dci get-allocation \"Team Backyard\""
+  - description: The full record as JSON, for scripts or as the starting point of an update-allocation body.
+    command: "dci get-allocation <allocation-id> --output json"
+  - description: Only the fields you need.
+    command: "dci get-allocation <allocation-id> --fields name,allocationType,rule --output json"
+
+related: [list-allocations, create-allocation, update-allocation, delete-allocation]

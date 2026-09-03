@@ -1,0 +1,15 @@
+command: delete-alert
+
+arguments:
+  id: >-
+    Alert ID as shown by `dci list-alerts`. Alert names resolve too (exact,
+    unique substring, or close typo); the confirmation shows the resolved target.
+
+examples:
+  - description: Preview what would be deleted, without sending a request.
+    command: "dci delete-alert <alert-id> --dry-run"
+  - description: Delete without a prompt, for scripts and CI (interactive terminals ask first).
+    command: "dci delete-alert <alert-id> --yes"
+    output: Exit code 0 and no output; `dci list-alerts` no longer lists the alert.
+
+related: [create-alert, get-alert, list-alerts, update-alert]

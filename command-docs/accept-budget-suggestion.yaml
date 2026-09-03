@@ -1,0 +1,22 @@
+command: accept-budget-suggestion
+
+arguments:
+  id: >-
+    Budget suggestion ID as shown by `dci list-budget-suggestions`
+    (select it with `-C id,name`).
+
+examples:
+  - description: Link a suggestion to the budget you created from it.
+    command: "dci accept-budget-suggestion <budget-suggestion-id> budgetId: <budget-id>"
+    output: "`{\"budgetId\": \"<budget-id>\"}`; the suggestion leaves the pending list."
+  - description: Record that you changed the suggested values before accepting.
+    command: "dci accept-budget-suggestion <budget-suggestion-id> editedBeforeAccept: true, budgetId: <budget-id>"
+
+notes: |
+  :::tip Create the budget first
+  Accepting does not create a budget. Run `dci create-budget` with the
+  suggested shape (amount, interval, scope), then pass the new budget's `id`
+  as `budgetId`. The budget must belong to your account.
+  :::
+
+related: [list-budget-suggestions, dismiss-budget-suggestion, create-budget]
