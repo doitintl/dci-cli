@@ -1,0 +1,23 @@
+command: update-insight-status
+
+arguments:
+  source-id: >-
+    The insight source. Only insights created through the public API can be
+    managed, so this is always `public-api`.
+  insight-key: >-
+    Insight key as shown by `dci list-insights --source public-api -C key,title`.
+
+examples:
+  - description: Acknowledge an insight (deprecated; prefer the `status` field of create-insight).
+    command: "dci update-insight-status public-api <insight-key> status: acknowledged"
+
+notes: |
+  :::warning Deprecated
+  This command is deprecated. Set the status when you create or update the
+  insight instead, for example
+  `dci create-insight public-api <insight-key> < insight.json` with `"status": "dismissed"`
+  and a `dismissalDetails` object in the JSON; the rest of the insight's
+  required metadata must be included in the same request.
+  :::
+
+related: [create-insight, get-insight, list-insights]

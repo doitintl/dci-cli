@@ -1,0 +1,19 @@
+command: get-insight
+
+arguments:
+  source-id: >-
+    The source that generated the insight, shown in the `source` column of
+    `dci list-insights` (for example `public-api` for insights you created).
+  insight-key: >-
+    Insight key as shown by `dci list-insights -C key,source,title` (the
+    default table does not show the key).
+
+examples:
+  - description: Show one insight's metadata and savings/risk summary.
+    command: "dci get-insight <source-id> <insight-key>"
+  - description: The full record as JSON, including the long MDX description.
+    command: "dci get-insight <source-id> <insight-key> --output json"
+  - description: Only the status and savings fields, for scripts.
+    command: "dci get-insight <source-id> <insight-key> --fields key,displayStatus,summary --output json"
+
+related: [list-insights, list-insight-resource-results, create-insight]

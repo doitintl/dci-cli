@@ -1,0 +1,13 @@
+command: create-datahub-dataset
+
+examples:
+  - description: Create a dataset; its name is the `provider` you will send events under.
+    command: "dci create-datahub-dataset name: litellm-usage"
+  - description: Add a description and a preset logo for the DoiT console.
+    command: >-
+      dci create-datahub-dataset name: litellm-usage, logoName: litellm,
+      description: "Token spend exported nightly from LiteLLM"
+  - description: Print the created dataset as JSON, for scripts.
+    command: "dci create-datahub-dataset name: warehouse-costs --output json"
+
+related: [ingest-datahub-events, get-datahub-dataset, list-datahub-datasets, update-datahub-dataset, delete-datahub-dataset]

@@ -1,0 +1,25 @@
+command: list-insights
+
+examples:
+  - description: Open insights ranked by potential daily savings; dismissed ones are hidden and easy wins are marked.
+    command: "dci list-insights"
+  - description: Quick, low-effort wins on one cloud (aws, gcp, or azure).
+    command: "dci list-insights --cloud-provider aws --easy-win"
+  - description: Security insights whose title or description mentions public access.
+    command: "dci list-insights --category Security --search-term public"
+  - description: Bring dismissed insights back into the list.
+    command: "dci list-insights --include-dismissed"
+  - description: Every page as JSON, for scripts (the savings sort is kept).
+    command: "dci list-insights --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-insights` shapes the raw API response before rendering:
+
+  - **Dismissed insights are excluded by default.** Pass `--include-dismissed` to keep them; when rows were removed, the response carries a `dismissedOmitted` count.
+  - **Results are sorted by `summary.potentialDailySavings` (USD), highest first,** in every output format, so the most valuable insights lead the list.
+  - **The default table shows a curated column set:** `title`, `dailySavings` (formatted as USD, e.g. `$500.00`; blank when zero), `provider` (from `cloudProvider`), `categories`, `lastUpdated`, and `source`. Easy wins carry an ` (easy win)` title suffix and, in interactive terminals, a green title; an insight's `reportUrl` becomes a clickable link on its title.
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-insight, list-insight-resource-results, create-insight]

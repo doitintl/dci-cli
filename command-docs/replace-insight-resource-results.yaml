@@ -1,0 +1,27 @@
+command: replace-insight-resource-results
+
+arguments:
+  source-id: >-
+    The insight source. Only insights created through the public API can be
+    managed, so this is always `public-api`.
+  insight-key: >-
+    Insight key as shown by `dci list-insights --source public-api -C key,title`
+    (the default table does not show the key).
+
+examples:
+  - description: Replace the insight's resource results with the set in a file; unresolved results missing from it are removed.
+    command: "dci replace-insight-resource-results public-api <insight-key> < resources.json"
+    output: |
+      # resources.json
+      {"resourceResults": [{
+        "account": "123456789012", "cloudProvider": "aws",
+        "resourceId": "i-0abc123def4567890", "resourceType": "instance", "location": "eu-west-2",
+        "resultType": "potential_daily_savings_with_recommendation",
+        "result": {"value": 12.5, "current": "m5.2xlarge", "recommendation": "m5.large"}
+      }]}
+  - description: The same replacement, printing the stored results with their server-computed severity and resolved fields.
+    command: "dci replace-insight-resource-results public-api <insight-key> --output json < resources.json"
+  - description: Remove every resource result from the insight.
+    command: "dci replace-insight-resource-results public-api <insight-key> resourceResults: []"
+
+related: [list-insight-resource-results, create-insight, create-insights, get-insight]

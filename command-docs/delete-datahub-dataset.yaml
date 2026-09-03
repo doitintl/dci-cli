@@ -1,0 +1,15 @@
+command: delete-datahub-dataset
+
+arguments:
+  name: >-
+    Dataset name as shown by `dci list-datahub-datasets`. The name is the
+    dataset's identifier; there is no separate ID.
+
+examples:
+  - description: Preview what would be deleted, without sending a request.
+    command: "dci delete-datahub-dataset <dataset-name> --dry-run"
+  - description: Delete the dataset and its events without a prompt, for scripts and CI (interactive terminals ask first).
+    command: "dci delete-datahub-dataset <dataset-name> --yes"
+    output: Exit code 0 and no output; `dci list-datahub-datasets` no longer lists the dataset.
+
+related: [delete-datahub-datasets, delete-datahub-events-by-filter, list-datahub-datasets, get-datahub-dataset]

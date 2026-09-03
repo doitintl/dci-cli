@@ -1,0 +1,14 @@
+command: delete-datahub-events-by-filter
+
+examples:
+  - description: Preview deleting a dataset's events in a time range (RFC 3339 timestamps), without sending a request.
+    command: >-
+      dci delete-datahub-events-by-filter dataset: litellm-usage,
+      startTime: "2026-08-01T00:00:00Z", endTime: "2026-08-31T23:59:59Z" --dry-run
+  - description: Delete specific events by ID without a prompt (event IDs and a time range are mutually exclusive).
+    command: >-
+      dci delete-datahub-events-by-filter dataset: litellm-usage,
+      eventIds: [beb21d99-a8c9-4dc0-8a69-5d684cc41e6c] --yes
+    output: Exit code 0 and no output; the events no longer appear in Cloud Analytics reports on the dataset.
+
+related: [ingest-datahub-events, delete-datahub-dataset, delete-datahub-datasets, list-datahub-datasets]

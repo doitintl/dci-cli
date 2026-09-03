@@ -1,0 +1,17 @@
+command: get-asset
+
+arguments:
+  id: >-
+    Asset ID as shown by `dci list-assets -C id,name,type` (the default table
+    does not show the ID), for example `g-suite-2319621428`. Asset IDs are
+    passed to the API verbatim.
+
+examples:
+  - description: Show one asset, including its subscription and seat details.
+    command: "dci get-asset <asset-id>"
+  - description: The full record as JSON, for scripts.
+    command: "dci get-asset <asset-id> --output json"
+  - description: Only the fields you need.
+    command: "dci get-asset <asset-id> --fields id,name,type,quantity --output json"
+
+related: [list-assets, update-asset, create-asset]

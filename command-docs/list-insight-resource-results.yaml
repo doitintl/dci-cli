@@ -1,0 +1,21 @@
+command: list-insight-resource-results
+
+arguments:
+  source-id: >-
+    The source that generated the insight, shown in the `source` column of
+    `dci list-insights`.
+  insight-key: >-
+    Insight key as shown by `dci list-insights -C key,source,title` (the
+    default table does not show the key).
+
+examples:
+  - description: The affected resources of one insight, up to 1000 per page.
+    command: "dci list-insight-resource-results <source-id> <insight-key>"
+  - description: A compact table of where each resource lives and how severe the finding is.
+    command: "dci list-insight-resource-results <source-id> <insight-key> -C resourceId,account,location,severity"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-insight-resource-results <source-id> <insight-key> --all --output json"
+  - description: Browse a large result set in the full-screen viewer.
+    command: "dci list-insight-resource-results <source-id> <insight-key> -M interactive"
+
+related: [get-insight, list-insights, replace-insight-resource-results]

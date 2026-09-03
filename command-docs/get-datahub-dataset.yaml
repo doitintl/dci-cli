@@ -1,0 +1,14 @@
+command: get-datahub-dataset
+
+arguments:
+  name: >-
+    Dataset name as shown by `dci list-datahub-datasets`. The name is the
+    dataset's identifier; there is no separate ID.
+
+examples:
+  - description: Show one dataset, including its record count and who last updated it.
+    command: "dci get-datahub-dataset <dataset-name>"
+  - description: The full record as JSON, for scripts.
+    command: "dci get-datahub-dataset <dataset-name> --output json"
+
+related: [list-datahub-datasets, create-datahub-dataset, update-datahub-dataset, ingest-datahub-events]
