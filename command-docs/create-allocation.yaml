@@ -1,0 +1,25 @@
+command: create-allocation
+
+examples:
+  - description: Allocate one billing account's spend to a team, with the body read from a file.
+    command: "dci create-allocation < allocation.json"
+    output: |
+      # allocation.json
+      {"name": "Team Backyard",
+       "description": "Everything billed to the Backyard billing account",
+       "anomalyDetection": true,
+       "rule": {"formula": "A",
+                "components": [{"key": "billing_account_id", "type": "fixed", "mode": "is",
+                                "values": ["012345-ABCDEF-678901"]}]}}
+  - description: Match by label with a two-component formula (A is the first component, B the second).
+    command: >-
+      dci create-allocation name: "Backyard prod", description: "team=backyard in production",
+      rule{formula: "A AND B", components: [{key: team, type: label, mode: is, values: [backyard]},
+      {key: env, type: label, mode: is, values: [prod]}]}
+  - description: Create it inside a folder and capture the new ID for a script.
+    command: >-
+      dci create-allocation name: "Team Backyard", description: "Backyard spend",
+      rule{formula: A, components: [{key: billing_account_id, type: fixed, mode: is, values: ["012345-ABCDEF-678901"]}]},
+      folderId: <folder-id> --output json | jq -r .id
+
+related: [get-allocation, list-allocations, update-allocation, delete-allocation]

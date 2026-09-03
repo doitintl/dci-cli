@@ -1,0 +1,22 @@
+command: create-alert
+
+examples:
+  - description: Alert when Amazon S3 spend in a month exceeds $1,000, with the body read from a file.
+    command: "dci create-alert < alert.json"
+    output: |
+      # alert.json
+      {"name": "S3 monthly spend over $1k",
+       "recipients": ["finops@acme.com"],
+       "config": {"condition": "value", "operator": "gt", "value": 1000,
+                  "currency": "USD", "timeInterval": "month",
+                  "metric": {"type": "basic", "value": "cost"},
+                  "scopes": [{"id": "service_description", "type": "fixed",
+                              "values": ["Amazon Simple Storage Service"]}]}}
+  - description: Alert on a 20% month-over-month cost increase across the whole account (condition defaults to percentage-change).
+    command: >-
+      dci create-alert name: "Monthly cost up 20%",
+      config{metric{type: basic, value: cost}, operator: gt, value: 20, timeInterval: month}
+  - description: Create the alert and capture its ID for a script.
+    command: "dci create-alert --output json < alert.json | jq -r .id"
+
+related: [get-alert, list-alerts, update-alert, delete-alert]

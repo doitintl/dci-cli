@@ -1,0 +1,16 @@
+command: get-alert
+
+arguments:
+  id: >-
+    Alert ID as shown by `dci list-alerts`. Alert names resolve too (exact,
+    unique substring, or close typo); pass `--id` to force a literal ID.
+
+examples:
+  - description: Show one alert's configuration.
+    command: "dci get-alert <alert-id>"
+  - description: The full record as JSON, for scripts or as the starting point of an update-alert body.
+    command: "dci get-alert <alert-id> --output json"
+  - description: Only the fields you need.
+    command: "dci get-alert <alert-id> --fields name,recipients,lastAlerted --output json"
+
+related: [list-alerts, create-alert, update-alert, delete-alert]

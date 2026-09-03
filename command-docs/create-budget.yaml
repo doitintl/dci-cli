@@ -1,0 +1,35 @@
+command: create-budget
+
+examples:
+  - description: A recurring monthly AWS budget of $10,000 with 50/75/90% alerts, with the body read from a file.
+    command: "dci create-budget < budget.json"
+    output: |
+      # budget.json
+      {"name": "AWS monthly",
+       "description": "All AWS spend, reviewed by FinOps",
+       "type": "recurring", "timeInterval": "month",
+       "amount": 10000, "currency": "USD",
+       "startPeriod": 1788220800000,
+       "alerts": [{"percentage": 50}, {"percentage": 75}, {"percentage": 90}],
+       "recipients": ["finops@acme.com"],
+       "scopes": [{"id": "cloud_provider", "type": "fixed", "mode": "is",
+                   "values": ["amazon-web-services"]}]}
+  - description: A budget that tracks last period's spend instead of a fixed amount, with 5% growth per month.
+    command: >-
+      dci create-budget name: "Team Backyard", type: recurring, timeInterval: month,
+      usePrevSpend: true, growthPerPeriod: 5, currency: USD, startPeriod: 1788220800000
+  - description: A fixed budget for one quarter (startPeriod and endPeriod are epoch milliseconds, UTC).
+    command: >-
+      dci create-budget name: "Q4 migration", type: fixed, amount: 25000, currency: USD,
+      startPeriod: 1788220800000, endPeriod: 1798675200000
+  - description: Create the budget and capture its ID, for example to pass to accept-budget-suggestion.
+    command: "dci create-budget --output json < budget.json | jq -r .id"
+
+notes: |
+  :::tip Dates are epoch milliseconds
+  `startPeriod` and `endPeriod` are UTC epoch **milliseconds** (for example
+  `1788220800000` is 2026-09-01T00:00:00Z). `amount` is required unless
+  `usePrevSpend` is `true`; `endPeriod` is required for `type: fixed`.
+  :::
+
+related: [get-budget, list-budgets, update-budget, delete-budget, list-budget-suggestions]

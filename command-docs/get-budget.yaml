@@ -1,0 +1,16 @@
+command: get-budget
+
+arguments:
+  id: >-
+    Budget ID or name as shown by `dci list-budgets`. Names resolve (exact,
+    unique substring, or close typo); pass `--id` to force a literal ID.
+
+examples:
+  - description: Current utilization and configuration of one budget, by name.
+    command: "dci get-budget \"Team Backyard\""
+  - description: The full record as JSON, for scripts or as the starting point of an update-budget body.
+    command: "dci get-budget <budget-id> --output json"
+  - description: Just the numbers.
+    command: "dci get-budget <budget-id> --fields name,amount,currentUtilization,forecastedUtilization --output json"
+
+related: [list-budgets, budgets-at-risk, create-budget, update-budget, delete-budget]

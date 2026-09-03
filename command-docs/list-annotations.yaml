@@ -1,0 +1,22 @@
+command: list-annotations
+
+examples:
+  - description: Your annotations, newest first.
+    command: "dci list-annotations"
+  - description: Annotations mentioning a word, oldest first.
+    command: "dci list-annotations --filter content:budget --sort-by timestamp --sort-order asc"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-annotations --all --output json"
+  - description: Include the id column so you can pass it to get-, update-, or delete-annotation.
+    command: "dci list-annotations -C id,content,timestamp"
+
+notes: |
+  :::info CLI default view
+  `dci list-annotations` presents a curated table by default:
+
+  - **Columns:** `content`, `labels` (label names, comma-joined), `reports` (report ids resolved to report names, comma-joined), and `annotated (UTC)` (from `timestamp`).
+  - In interactive tables, `annotated (UTC)` renders in your **local timezone** and is titled `annotated (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-annotation, create-annotation, update-annotation, delete-annotation]

@@ -1,0 +1,19 @@
+command: list-budget-suggestions
+
+examples:
+  - description: Pending AI-generated budget suggestions (the set is small and returned in full).
+    command: "dci list-budget-suggestions"
+  - description: Include the id column so you can accept or dismiss a suggestion.
+    command: "dci list-budget-suggestions -C id,name,amount,confidence"
+  - description: Everything as JSON, including each suggestion's rationale and scope.
+    command: "dci list-budget-suggestions --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-budget-suggestions` presents a curated table by default:
+
+  - **Columns:** `name`, `amount` (the amount object folded into one money cell, e.g. `$3,120`), `confidence`, `interval` (from `timeInterval`), and `status`.
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [accept-budget-suggestion, dismiss-budget-suggestion, create-budget, list-budgets]

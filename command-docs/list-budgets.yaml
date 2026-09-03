@@ -1,0 +1,32 @@
+command: list-budgets
+
+examples:
+  - description: Your budgets with amount, spend to date, and risk.
+    command: "dci list-budgets"
+  - description: Budgets projected to breach, earliest breach first (same as `dci budgets-at-risk`).
+    command: "dci list-budgets --filter riskStatus:atRisk"
+  - description: One owner's budgets whose name contains a word (ANDs with --filter).
+    command: "dci list-budgets --filter owner:alice@acme.com --name-contains aws"
+  - description: Budgets created on or after 1 August 2026 00:00 UTC (epoch milliseconds).
+    command: "dci list-budgets --min-creation-time 1785542400000"
+  - description: Every page as JSON, for scripts (also carries riskAggregations across the whole result).
+    command: "dci list-budgets --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-budgets` presents a curated table by default:
+
+  - **Columns:** `budget name` (a clickable link to the budget in the DoiT console in interactive terminals), `owner`, `amount` and `spend to date` (from `currentUtilization`; both carry the budget's currency symbol), `risk` (from `riskStatus`), and `updated (UTC)`.
+  - In interactive tables, `updated (UTC)` renders in your **local timezone** and is titled `updated (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - **The API's row order is kept** — notably the projected-breach-date order under `--filter riskStatus:atRisk`.
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+  :::tip Filters
+  `--filter` keys: `owner`, `budgetName`, `lastModified` (epoch milliseconds),
+  and `riskStatus` (`atRisk`, `onTrack`, `unknown`). Join terms with `|`;
+  different keys AND, the same key repeated ORs. `--max-results` is capped at
+  250 on this endpoint.
+  :::
+
+related: [budgets-at-risk, get-budget, create-budget, update-budget, delete-budget]
