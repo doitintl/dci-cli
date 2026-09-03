@@ -1,0 +1,11 @@
+command: budgets-at-risk
+
+examples:
+  - description: Budgets already over their amount or forecast to breach it this period, earliest breach first.
+    command: "dci budgets-at-risk"
+  - description: JSON for scripts; riskAggregations covers the full filtered set, not just the page.
+    command: "dci budgets-at-risk --output json"
+  - description: Just the first five.
+    command: "dci budgets-at-risk --max-results 5"
+
+related: [list-budgets, get-budget]

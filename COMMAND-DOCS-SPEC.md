@@ -1,8 +1,9 @@
 # Design spec: curated command docs — examples, notes, and a usable reference page
 
-Status: **draft for maintainer review**. Scope decisions 1–4 and 6 were taken
-2026-09-03 (§11); decision 5 (delivery) is recommended here and open for
-confirmation.
+Status: **P1 implemented** (this repo: `command_docs.go`, `command-docs/`,
+`tools/commanddocs`, the `command-docs` CI job); P2 (omni, scribe, authoring)
+and P3 (gates) pending. Scope decisions 1–4 and 6 were taken 2026-09-03
+(§11); decision 5 (delivery) is recommended here and open for confirmation.
 
 Audited at commit `a842a1f` (dci-cli), omni `dev`, scribe `main`; every claim
 cites the file it is based on.

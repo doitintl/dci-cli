@@ -1,0 +1,16 @@
+command: get-anomaly
+
+arguments:
+  id: >-
+    Anomaly ID as shown by `dci list-anomalies` or `dci anomalies-recent`.
+    Anomalies have no names, so name resolution does not apply.
+
+examples:
+  - description: Show one anomaly.
+    command: "dci get-anomaly <anomaly-id>"
+  - description: The full record as JSON, for scripts or to check the review status after a patch-anomaly.
+    command: "dci get-anomaly <anomaly-id> --output json"
+  - description: Only the fields you need.
+    command: "dci get-anomaly <anomaly-id> --fields id,serviceName,costOfAnomaly,status --output json"
+
+related: [list-anomalies, anomalies-recent, patch-anomaly]

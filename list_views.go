@@ -18,9 +18,9 @@ package main
 // order is semantic — anomalies sort server-side (--sort-by/--sort-order)
 // and budgets reorder by projected breach date under riskStatus:atRisk.
 //
-// Keep user-facing behavior changes here in sync with the help-center CLI
-// docs (generated from omni's generate-cli-docs action; command notes live in
-// omni .github/workflows/actions/generate-cli-docs/command-notes/).
+// Keep user-facing behavior changes here in sync with the command's notes in
+// command-docs/<command>.yaml (command_docs.go), which the Help Center CLI
+// reference renders (COMMAND-DOCS-SPEC.md D6/D7).
 
 import (
 	"sort"

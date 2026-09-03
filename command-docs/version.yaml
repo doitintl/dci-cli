@@ -1,0 +1,5 @@
+command: version
+
+examples:
+  - description: Print the installed version.
+    command: "dci version"

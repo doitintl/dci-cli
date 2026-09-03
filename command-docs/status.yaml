@@ -1,0 +1,7 @@
+command: status
+
+examples:
+  - description: Show who you are signed in as, the active customer context, and the CLI configuration.
+    command: "dci status"
+  - description: Force agent mode to see the machine-oriented output.
+    command: "dci status --agent"

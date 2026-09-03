@@ -1,0 +1,26 @@
+command: list-anomalies
+
+examples:
+  - description: The most recent anomalies, ten per page.
+    command: "dci list-anomalies --max-results 10 --sort-by startTime --sort-order desc"
+  - description: Critical anomalies only, most expensive first (severity values are lowercase).
+    command: "dci list-anomalies --filter severityLevel:critical --sort-by costOfAnomaly --sort-order desc"
+  - description: Anomalies whose usage started on or after 1 August 2026 00:00 UTC (epoch milliseconds).
+    command: "dci list-anomalies --min-creation-time 1785542400000"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-anomalies --all --output json"
+  - description: Browse in the full-screen viewer; Enter prints the selected anomaly's id.
+    command: "dci list-anomalies -M interactive"
+
+notes: |
+  :::info CLI default view
+  `dci list-anomalies` presents a curated table by default:
+
+  - **Columns:** `service` (from `serviceName`), `severity` (from `severityLevel`), `anomaly cost` (from `costOfAnomaly`), `platform`, `status`, and `started (UTC)` (from `startTime`).
+  - `started (UTC)` **always stays in UTC**, regardless of timezone settings: it labels the anomaly's usage window (a UTC billing bucket), so a local-time rendering would relabel which day was anomalous — see [Timestamps and timezones](/docs/cli#timestamps).
+  - **The server's sort order is kept** — control it with `--sort-by` (`startTime`, `severityLevel`, `costOfAnomaly`) and `--sort-order` (`asc` or `desc`).
+  - `--filter` keys: `serviceName`, `billingAccount`, `platform`, `severityLevel` (values `information`, `warning`, `critical`); combine terms with `|`.
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-anomaly, anomalies-recent, patch-anomaly]

@@ -1,0 +1,7 @@
+command: skill list
+
+examples:
+  - description: List the embedded skill files with token estimates.
+    command: "dci skill list"
+  - description: The same as JSON.
+    command: "dci skill list --json"

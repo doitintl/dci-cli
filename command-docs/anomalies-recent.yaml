@@ -1,0 +1,11 @@
+command: anomalies-recent
+
+examples:
+  - description: What happened in the last 24 hours (the default window).
+    command: "dci anomalies-recent"
+  - description: The last 7 days, critical only (durations use Go syntax — hours, not days).
+    command: "dci anomalies-recent --window 168h --severity critical"
+  - description: JSON for scripts; anomalySummary and totalCount cover the whole window, not just the page.
+    command: "dci anomalies-recent --window 72h --output json"
+
+related: [list-anomalies, get-anomaly, patch-anomaly]

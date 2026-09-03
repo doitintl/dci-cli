@@ -1,0 +1,5 @@
+command: customer-context clear
+
+examples:
+  - description: Drop the persisted default; requests run as your own identity again.
+    command: "dci customer-context clear"

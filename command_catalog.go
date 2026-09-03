@@ -49,6 +49,17 @@ type commandCatalogEntry struct {
 	// the catalog schema version is unchanged.
 	Stage       string `json:"stage,omitempty"`
 	EarlyAccess string `json:"early_access,omitempty"`
+	// Examples, Notes, and Related come from the curated command docs
+	// (command_docs.go); additive, so the catalog schema version is unchanged.
+	Examples []commandCatalogExample `json:"examples,omitempty"`
+	Notes    string                  `json:"notes,omitempty"`
+	Related  []string                `json:"related,omitempty"`
+}
+
+type commandCatalogExample struct {
+	Description string `json:"description"`
+	Command     string `json:"command"`
+	Output      string `json:"output,omitempty"`
 }
 
 type commandCatalogArgument struct {
@@ -97,7 +108,11 @@ func registerCommandCatalog() {
 				if err != nil {
 					return fmt.Errorf("load beta command catalog: %w", err)
 				}
-				catalog.Commands = append(catalog.Commands, betaCatalogEntries(betaAPI)...)
+				betaEntries := betaCatalogEntries(betaAPI)
+				for index := range betaEntries {
+					applyCommandDocToCatalogEntry(&betaEntries[index])
+				}
+				catalog.Commands = append(catalog.Commands, betaEntries...)
 				sort.Slice(catalog.Commands, func(i, j int) bool {
 					return strings.Join(catalog.Commands[i].Path, " ") < strings.Join(catalog.Commands[j].Path, " ")
 				})
@@ -208,6 +223,9 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 		entries = append(entries, localCatalogEntries(command, nil)...)
 	}
 	entries = append(entries, questionCommandCatalogEntries()...)
+	for index := range entries {
+		applyCommandDocToCatalogEntry(&entries[index])
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		return strings.Join(entries[i].Path, " ") < strings.Join(entries[j].Path, " ")
 	})
@@ -223,6 +241,40 @@ func buildCommandCatalog(api cli.API) commandCatalog {
 				"required": []string{"error.code", "error.message", "error.retryable"},
 			},
 		},
+	}
+}
+
+// applyCommandDocToCatalogEntry copies the curated examples, notes, and
+// related commands onto a catalog entry and replaces the body argument's
+// schema-synthesized example with the first curated example's parsed body.
+// Drafts and commands without a doc leave the entry unchanged.
+func applyCommandDocToCatalogEntry(entry *commandCatalogEntry) {
+	doc, ok := lookupCommandDoc(strings.Join(entry.Path, " "))
+	if !ok {
+		return
+	}
+	for _, example := range doc.Examples {
+		entry.Examples = append(entry.Examples, commandCatalogExample{
+			Description: example.Description,
+			Command:     strings.Join(strings.Fields(example.Command), " "),
+			Output:      example.Output,
+		})
+	}
+	entry.Notes = doc.Notes
+	entry.Related = doc.Related
+	positional := 0
+	for _, argument := range entry.Arguments {
+		if argument.Location == "path" {
+			positional++
+		}
+	}
+	for index := range entry.Arguments {
+		if entry.Arguments[index].Location != "body" {
+			continue
+		}
+		if body, found := commandDocBodyExample(doc, positional); found {
+			entry.Arguments[index].Example = body
+		}
 	}
 }
 

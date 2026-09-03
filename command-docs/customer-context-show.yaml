@@ -1,0 +1,5 @@
+command: customer-context show
+
+examples:
+  - description: Show the persisted default customer context.
+    command: "dci customer-context show"
