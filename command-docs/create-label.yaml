@@ -1,0 +1,11 @@
+command: create-label
+
+examples:
+  - description: Create a label (colors are blue, skyBlue, teal, mint, lime, softYellow, apricot, lavender, purple, rosePink, slateGrey).
+    command: "dci create-label name: FinOps, color: teal"
+  - description: A label with spaces in its name.
+    command: "dci create-label name: \"Team Backyard\", color: lavender"
+  - description: Capture the new label's ID for a script, then assign it.
+    command: "dci create-label name: FinOps, color: teal --output json | jq -r .id"
+
+related: [list-labels, get-label, update-label, delete-label, assign-objects-to-label]

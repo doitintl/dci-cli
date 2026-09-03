@@ -1,0 +1,25 @@
+command: list-reports
+
+examples:
+  - description: Your most recently updated reports (one page of 50).
+    command: "dci list-reports"
+  - description: Reports owned by one user (server-side filter; keys are reportName, owner, type, updateTime, folderId, joined with `|`).
+    command: "dci list-reports --filter \"owner:alice@acme.com\""
+  - description: Reports whose name contains a word, case-insensitively (combines with `--filter` using AND).
+    command: "dci list-reports --name-contains sprint"
+  - description: Every report as JSON, for scripts.
+    command: "dci list-reports --all --output json"
+  - description: Browse in the full-screen viewer; Enter prints the selected report's id.
+    command: "dci list-reports -M interactive"
+
+notes: |
+  :::info CLI default view
+  `dci list-reports` presents a curated table by default:
+
+  - **Columns:** `report name` (from `reportName`; a clickable link to the report in the DoiT console in interactive terminals), `owner`, `updated (UTC)` (from `updateTime`), `folder` (`folderId` resolved to the folder name; blank for top-level reports), and `labels` (label names, comma-joined).
+  - In interactive tables, `updated (UTC)` renders in your **local timezone** and is titled `updated (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - **Rows are sorted by last update, newest first.**
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-report, get-report-config, create-report, update-report, delete-report]

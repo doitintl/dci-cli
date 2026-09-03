@@ -1,0 +1,39 @@
+command: get-report
+
+arguments:
+  id: >-
+    Report ID or name as shown by `dci list-reports`. Names match exactly, by
+    unique substring, or by close typo; run without an argument in a terminal
+    to pick from a filter-as-you-type list.
+
+examples:
+  - description: Run a saved report and show its results as a pivot (groups as rows, periods as columns, totals and trend).
+    command: "dci get-report <report-id>"
+  - description: The same, by report name.
+    command: "dci get-report \"Monthly AWS Spend\""
+  - description: Override the report's time settings with an explicit date range (both dates required, yyyy-mm-dd).
+    command: "dci get-report <report-id> --start-date 2026-01-01 --end-date 2026-01-31"
+  - description: The last 30 days as JSON rows keyed by column name, for scripts.
+    command: "dci get-report <report-id> --time-range P30D --rows keyed --output json"
+
+notes: |
+  :::info Result rendering
+  In an interactive terminal the result renders as a **pivot** by default:
+  groups as rows, time periods as columns, a totals row, a first-to-last
+  `trend` column, and heatmap shading by magnitude. Machine formats (`json`,
+  `yaml`, `csv`, `toon`), agent mode, and explicit `-C` column selections keep
+  the flat row layout; pass `--flat` to get flat rows in a terminal or
+  `--pivot` to force the matrix anywhere. Period columns are always UTC, since
+  they label billing buckets. `--chart` draws a chart under the table (human
+  mode only), `--raw-numbers` prints exact unformatted values, and
+  `--rows keyed` returns `result.rows` as objects keyed by schema name. See
+  [Report results](/docs/cli#report-results).
+  :::
+
+  :::tip Time overrides
+  `--time-range` takes an ISO 8601 duration such as `P7D`, `P3M`, or `P1Y`, counted
+  back from today. `--start-date` and `--end-date` must be given together and
+  cannot be combined with `--time-range`. Neither changes the saved report.
+  :::
+
+related: [get-report-config, list-reports, update-report, query, async-run-report-by-id]

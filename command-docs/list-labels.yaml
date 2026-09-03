@@ -1,0 +1,22 @@
+command: list-labels
+
+examples:
+  - description: Your labels, newest first (one page of 50).
+    command: "dci list-labels"
+  - description: Custom labels only, sorted by name (filter fields are name and type; sort fields are id, name, type, createTime, updateTime).
+    command: "dci list-labels --filter type:custom --sort-by name --sort-order asc"
+  - description: Labels whose name contains a word, case-insensitively (combines with `--filter` using AND).
+    command: "dci list-labels --name-contains team"
+  - description: Every label as JSON, for scripts.
+    command: "dci list-labels --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-labels` presents a curated table by default:
+
+  - **Columns:** `name`, `type`, `color`, and `updated (UTC)` (from `updateTime`).
+  - In interactive tables, `updated (UTC)` renders in your **local timezone** and is titled `updated (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-label, create-label, update-label, delete-label, get-label-assignments, assign-objects-to-label]

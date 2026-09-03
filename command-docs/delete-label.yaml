@@ -1,0 +1,16 @@
+command: delete-label
+
+arguments:
+  id: >-
+    Label ID or name as shown by `dci list-labels`. Interactive terminals ask
+    for confirmation and show the resolved name and ID before deleting.
+
+examples:
+  - description: Delete a label by name (a confirm dialog shows the resolved label; Cancel is the default).
+    command: "dci delete-label \"Team Backyard\""
+  - description: Preview locally what would be deleted, without sending a request.
+    command: "dci delete-label <label-id> --dry-run"
+  - description: Delete without a prompt, for scripts and CI (exit code 30 if confirmation is missing).
+    command: "dci delete-label <label-id> --yes"
+
+related: [list-labels, get-label, create-label, update-label, get-label-assignments]

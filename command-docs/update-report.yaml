@@ -1,0 +1,17 @@
+command: update-report
+
+arguments:
+  id: >-
+    Report ID or name as shown by `dci list-reports`.
+
+examples:
+  - description: Rename a report.
+    command: "dci update-report <report-id> name: \"Monthly cost by service\""
+  - description: Change the time settings to weekly buckets over the last 3 months.
+    command: "dci update-report <report-id> config{timeInterval: week, timeRange{amount: 3, mode: last, unit: month}}"
+  - description: Move a report into a folder (folder IDs come from `dci list-folders`; `root` is the top level).
+    command: "dci update-report <report-id> folderId: <folder-id>"
+  - description: Push an edited configuration pulled with `dci get-report-config`.
+    command: "dci update-report <report-id> < report.json"
+
+related: [get-report-config, get-report, create-report, delete-report, list-reports]

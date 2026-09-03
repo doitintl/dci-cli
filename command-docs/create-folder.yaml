@@ -1,0 +1,18 @@
+command: create-folder
+
+examples:
+  - description: Create a top-level folder for reports and allocations.
+    command: "dci create-folder name: FinOps"
+  - description: Create a folder inside another one (parent IDs come from `dci list-folders`).
+    command: "dci create-folder name: \"AWS reports\", description: \"Owned by the platform team\", parentFolderId: <folder-id>"
+  - description: Capture the new folder's ID for a script.
+    command: "dci create-folder name: FinOps --output json | jq -r .id"
+
+notes: |
+  :::tip Putting things in the folder
+  A folder is created empty. Move a report into it with
+  `dci update-report <report-id> folderId: <folder-id>` (and an allocation with
+  `dci update-allocation`).
+  :::
+
+related: [list-folders, get-folder, update-folder, delete-folder, update-report]

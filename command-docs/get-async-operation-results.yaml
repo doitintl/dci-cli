@@ -1,0 +1,21 @@
+command: get-async-operation-results
+
+arguments:
+  operation-id: >-
+    Operation ID returned by `dci async-run-inline` or `dci async-run-report-by-id`.
+    Operations have no names, so name resolution does not apply.
+
+examples:
+  - description: Read the result of a succeeded background report run.
+    command: "dci get-async-operation-results <operation-id>"
+    output: >-
+      The report result (`result.rows` zipped with `result.schema`), plus the
+      report's `id`, `reportName`, `owner`, and `urlUI` when the run was started
+      from a saved report. Not finished yet returns HTTP 425; failed or canceled
+      returns HTTP 422.
+  - description: The full result as JSON, for scripts.
+    command: "dci get-async-operation-results <operation-id> --output json"
+  - description: Rows as named objects, for jq.
+    command: "dci get-async-operation-results <operation-id> --rows keyed --output json | jq '.result.rows[0]'"
+
+related: [get-async-operation, async-run-inline, async-run-report-by-id, get-report]

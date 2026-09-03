@@ -1,0 +1,32 @@
+command: create-report
+
+examples:
+  - description: Save a report from a JSON file (see `dci create-report --help-full` for the config schema).
+    command: "dci create-report < report.json"
+    output: |
+      # report.json
+      {"name": "Monthly cost by service",
+       "description": "Top 10 services, last 3 months",
+       "config": {"dataSource": "billing", "timeInterval": "month",
+         "timeRange": {"mode": "last", "amount": 3, "unit": "month", "includeCurrent": false},
+         "metrics": [{"type": "basic", "value": "cost"}],
+         "group": [{"id": "service_description", "type": "fixed",
+           "limit": {"metric": {"type": "basic", "value": "cost"}, "sort": "desc", "value": 10}}]}}
+  - description: A small report as an inline shorthand body.
+    command: >-
+      dci create-report name: "Monthly cost", config{metrics: [{type: basic, value: cost}],
+      timeInterval: month, timeRange{amount: 3, mode: last, unit: month}}
+  - description: Create it inside a folder (folder IDs come from `dci list-folders`).
+    command: "dci create-report folderId: <folder-id> < report.json"
+  - description: Capture the new report's ID for a script.
+    command: "dci create-report --output json < report.json | jq -r .id"
+
+notes: |
+  :::tip Test the config first
+  The `config` object is the same one `dci query` runs ad hoc, so iterate on
+  the query until the numbers look right, then wrap it with a `name` and save.
+  `dci get-report-config <report-id>` shows how an existing report is
+  configured, which is the quickest way to start a similar one.
+  :::
+
+related: [get-report, get-report-config, update-report, delete-report, list-reports, query]

@@ -1,0 +1,29 @@
+command: assign-objects-to-label
+
+arguments:
+  id: >-
+    Label ID as shown by `dci list-labels`. This command changes which objects
+    carry the label, so interactive terminals ask for confirmation.
+
+examples:
+  - description: Put a label on a report (object IDs come from the matching list command, here `dci list-reports`).
+    command: "dci assign-objects-to-label <label-id> add: [{objectType: report, objectId: <report-id> }]"
+  - description: Label a budget and remove the label from a report in one call, with the body read from a file.
+    command: "dci assign-objects-to-label <label-id> < assign.json"
+    output: |
+      # assign.json
+      {"add": [{"objectId": "<budget-id>", "objectType": "budget"}],
+       "remove": [{"objectId": "<report-id>", "objectType": "report"}]}
+  - description: Preview locally without sending a request.
+    command: "dci assign-objects-to-label <label-id> --dry-run add: [{objectType: report, objectId: <report-id> }]"
+  - description: Apply without a prompt, for scripts and CI (exit code 30 if confirmation is missing).
+    command: "dci assign-objects-to-label <label-id> --yes add: [{objectType: report, objectId: <report-id> }]"
+
+notes: |
+  :::info Object types
+  `objectType` is one of `alert`, `allocation`, `budget`, `metric`, `report`,
+  or `annotation`. Check the current assignments with
+  `dci get-label-assignments <label-id>`.
+  :::
+
+related: [get-label-assignments, list-labels, get-label, create-label]

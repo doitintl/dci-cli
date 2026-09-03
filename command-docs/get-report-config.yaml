@@ -1,0 +1,22 @@
+command: get-report-config
+
+arguments:
+  id: >-
+    Report ID as shown by `dci list-reports`.
+
+examples:
+  - description: Show how a saved report is configured (metrics, grouping, filters, time range).
+    command: "dci get-report-config <report-id>"
+  - description: Pull the configuration into a file to edit and push back with `dci update-report`.
+    command: "dci get-report-config <report-id> --output json > report.json"
+  - description: Just the config block, as YAML.
+    command: "dci get-report-config <report-id> --fields config --output yaml"
+
+notes: |
+  :::tip Reports as code
+  `get-report-config` returns the definition, `get-report` runs it. The pull,
+  edit, push loop is `dci get-report-config <report-id> --output json > report.json`,
+  edit the file, then `dci update-report <report-id> < report.json`.
+  :::
+
+related: [get-report, update-report, create-report, list-reports]

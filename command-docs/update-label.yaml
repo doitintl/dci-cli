@@ -1,0 +1,15 @@
+command: update-label
+
+arguments:
+  id: >-
+    Label ID or name as shown by `dci list-labels`.
+
+examples:
+  - description: Rename a label.
+    command: "dci update-label <label-id> name: \"Platform team\""
+  - description: Change its color (blue, skyBlue, teal, mint, lime, softYellow, apricot, lavender, purple, rosePink, slateGrey).
+    command: "dci update-label <label-id> color: purple"
+  - description: Both at once, addressing the label by its current name.
+    command: "dci update-label \"Team Backyard\" name: \"Platform team\", color: purple"
+
+related: [get-label, list-labels, create-label, delete-label, assign-objects-to-label]

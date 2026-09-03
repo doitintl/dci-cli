@@ -1,0 +1,16 @@
+command: delete-report
+
+arguments:
+  id: >-
+    Report ID or name as shown by `dci list-reports`. Interactive terminals ask
+    for confirmation and show the resolved name and ID before deleting.
+
+examples:
+  - description: Delete a report by name (a confirm dialog shows the resolved report; Cancel is the default).
+    command: "dci delete-report \"Old draft\""
+  - description: Preview locally what would be deleted, without sending a request.
+    command: "dci delete-report <report-id> --dry-run"
+  - description: Delete without a prompt, for scripts and CI (exit code 30 if confirmation is missing).
+    command: "dci delete-report <report-id> --yes"
+
+related: [list-reports, get-report, create-report, update-report]
