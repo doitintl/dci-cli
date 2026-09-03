@@ -1,0 +1,35 @@
+command: update-cloudflow-connection
+
+arguments:
+  connection-id: >-
+    Connection ID (`connectionId`) as shown by `dci list-cloudflow-connections`. Connections are
+    addressed by ID only; name resolution does not apply.
+
+examples:
+  - description: Preview disabling a connection without sending anything.
+    command: "dci update-cloudflow-connection <connection-id> --dry-run enabled: false"
+  - description: Disable it for real in a script (flows that use it stop being able to act).
+    command: "dci update-cloudflow-connection <connection-id> --yes enabled: false"
+  - description: Rename and describe a connection.
+    command: >-
+      dci update-cloudflow-connection <connection-id> --yes name: "AWS production", description: "Managed by FinOps"
+  - description: Add a collaborator, with the body read from a file.
+    command: "dci update-cloudflow-connection <connection-id> --yes < collaborators.json"
+    output: |
+      # collaborators.json
+      {"collaborators": [{"email": "ops@acme.com", "role": "editor"}, {"email": "finops@acme.com", "role": "owner"}]}
+
+notes: |
+  :::caution Confirmation required
+  A connection change can disable every flow that depends on it, so the CLI classifies this
+  command as destructive: interactive terminals show a confirmation prompt, scripts must pass
+  `--yes`, and `--dry-run` prints a local preview without sending anything — see the CLI
+  guide's [Destructive commands](/docs/cli#destructive-commands).
+  :::
+
+  :::tip Partial update
+  Every field is optional; omitted fields keep their current value. At most one of `gcpConfig`
+  or `awsConfig` may be set per request.
+  :::
+
+related: [get-cloudflow-connection, list-cloudflow-connections, create-cloudflow-connection, delete-cloudflow-connection]

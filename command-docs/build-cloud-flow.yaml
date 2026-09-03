@@ -1,0 +1,37 @@
+command: build-cloud-flow
+
+examples:
+  - description: Build a new draft flow from a fully specified prompt read from a file (free text with commas must go through stdin).
+    command: "dci build-cloud-flow < build.json"
+    output: |
+      # build.json
+      {"question": "Every Monday at 09:00 UTC, run the report named Monthly AWS Spend, map each row to a DataHub event, and push the events to the finance-reports dataset. Use a schedule trigger."}
+      # Result: {"flowId": "...", "conversationId": "...", "answer": "...", "steps": [...]} — the flow is an unpublished draft.
+  - description: A short prompt in shorthand (no commas in the text).
+    command: >-
+      dci build-cloud-flow question: "Every Monday morning run the Monthly AWS Spend report and post a summary to Slack"
+  - description: Capture the new flow's ID for the next steps (export, test-run, refine).
+    command: "dci build-cloud-flow --output json < build.json | jq -r .flowId"
+
+notes: |
+  :::info CLI result shape
+  The API answers with a `text/event-stream` of build events. The CLI parses that stream into
+  one result: `flowId` (the created flow), `conversationId` (pass it to `dci refine-cloud-flow`
+  to continue the same builder conversation), the builder's `answer`, and the build `steps`
+  that ran. If the stream is not recognized, the raw text is printed unchanged.
+  :::
+
+  :::tip Getting a usable first draft
+  - **Specify every slot up front** — trigger, source, destination names, field mapping. A fully
+    specified prompt builds in one shot; an underspecified one costs a clarification round
+    (answer it with `refine-cloud-flow` and the same `conversationId`) and tends to drift.
+  - **Pass free text on stdin.** Restish shorthand treats commas structurally, so a `question`
+    containing commas must be sent as JSON: `dci build-cloud-flow < build.json`.
+  - **Inspect before trusting.** The flow lands as a draft in your own tenant. Run
+    `dci export-cloudflow-flow <flow-id>` to review the nodes, then
+    `dci test-run-cloudflow-flow <flow-id> --dry-run` to validate — builder-generated code
+    nodes in particular often need repair via export → edit → import.
+  - `dci build-cloudflow` is accepted as an alias.
+  :::
+
+related: [refine-cloud-flow, export-cloudflow-flow, import-cloudflow-flow, test-run-cloudflow-flow, list-cloudflows]

@@ -1,0 +1,35 @@
+command: refine-cloud-flow
+
+arguments:
+  flow-id: >-
+    ID of the flow to refine — the `id` column of `dci list-cloudflows`, or the `flowId`
+    returned by `dci build-cloud-flow`. Flows are addressed by ID only; name resolution does
+    not apply.
+
+examples:
+  - description: Ask the builder to change an existing flow.
+    command: >-
+      dci refine-cloud-flow <flow-id> question: "Add an approval step before the node that deletes disks"
+  - description: Continue the conversation that built the flow, answering its clarifying question.
+    command: >-
+      dci refine-cloud-flow <flow-id> question: "Use the finance-reports dataset", conversationId: <conversation-id>
+  - description: A longer instruction read from a file (free text with commas must go through stdin).
+    command: "dci refine-cloud-flow <flow-id> < refine.json"
+    output: |
+      # refine.json
+      {"question": "Rename the flow to Weekly AWS spend to DataHub, change the schedule to Fridays at 17:00 UTC, and post the run link to Slack when it finishes."}
+
+notes: |
+  :::info CLI result shape
+  Like `build-cloud-flow`, the event stream is parsed into `flowId`, `conversationId`, the
+  builder's `answer`, and the build `steps` that ran.
+  :::
+
+  :::caution Verify that the change was saved
+  A refine round can answer with a plan yet save nothing (few steps, none of them saving node
+  parameters). Re-export with `dci export-cloudflow-flow <flow-id>` after every refine and diff
+  the bundle before believing the change happened. `dci refine-cloudflow` is accepted as an
+  alias.
+  :::
+
+related: [build-cloud-flow, export-cloudflow-flow, import-cloudflow-flow, test-run-cloudflow-flow, list-cloudflows]

@@ -1,0 +1,30 @@
+command: ask-ava-sync
+
+examples:
+  - description: A one-shot question that leaves no conversation behind (recommended for scripts and agents).
+    command: >-
+      dci ask-ava-sync ephemeral: true, question: "Why did costs spike yesterday?"
+  - description: Start a persisted conversation; the response carries a conversationId and answerId.
+    command: >-
+      dci ask-ava-sync question: "What are my top cost drivers this month?" --output json
+  - description: Continue that conversation.
+    command: >-
+      dci ask-ava-sync question: "Break down EC2 by region", conversationId: <conversation-id>
+  - description: Just the answer text, for a pipeline.
+    command: >-
+      dci ask-ava-sync ephemeral: true, question: "Which service grew the most this month?" --output json | jq -r .answer
+
+notes: |
+  :::tip Ephemeral or persisted
+  `ephemeral: true` skips conversation persistence — the recommended mode for programmatic use.
+  With the default `ephemeral: false`, the response includes a `conversationId` (continue with
+  another question, or clean up with `dci delete-ava-conversation`) and an `answerId` (needed
+  by `dci submit-ava-feedback`).
+  :::
+
+  :::caution Errors can arrive with HTTP 200
+  If generation fails after the response has begun, the body carries an `error` field instead
+  of `answer` while the status stays 200 — check for `answer` before using the result.
+  :::
+
+related: [ask-ava-streaming, delete-ava-conversation, submit-ava-feedback]

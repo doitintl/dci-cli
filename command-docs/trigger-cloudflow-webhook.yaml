@@ -1,0 +1,33 @@
+command: trigger-cloudflow-webhook
+
+arguments:
+  flow-id: >-
+    ID of a published flow whose first node is a webhook trigger — the `id` column of
+    `dci list-cloudflows`. Flows are addressed by ID only.
+
+examples:
+  - description: Preview the request locally without starting a run.
+    command: "dci trigger-cloudflow-webhook <flow-id> --dry-run event: deploy, environment: production"
+  - description: Start a run in a script, with the webhook payload read from a file.
+    command: "dci trigger-cloudflow-webhook <flow-id> --yes < payload.json"
+    output: |
+      # payload.json — any JSON object; it reaches the flow as the webhook payload
+      {"event": "deploy", "environment": "production", "service": "checkout"}
+      # Response: {"executionLink": "https://console.doit.com/..."} (HTTP 202)
+  - description: Open the execution in the Console straight from the response.
+    command: "dci trigger-cloudflow-webhook <flow-id> --yes event: deploy --output json | jq -r .executionLink"
+
+notes: |
+  :::caution Confirmation required
+  Triggering a flow runs real automation, so the CLI classifies this command as destructive:
+  interactive terminals show a confirmation prompt, scripts must pass `--yes`, and `--dry-run`
+  prints a local preview without sending anything — see the CLI guide's
+  [Destructive commands](/docs/cli#destructive-commands).
+  :::
+
+  :::tip Drafts
+  The flow must be published. To exercise an unpublished draft, use
+  `dci test-run-cloudflow-flow <flow-id>` instead.
+  :::
+
+related: [test-run-cloudflow-flow, list-cloudflow-flow-runs, get-cloudflow-flow-run, list-cloudflows]

@@ -1,0 +1,18 @@
+command: ask-ava-streaming
+
+examples:
+  - description: Ask Ava a question and watch the answer stream in.
+    command: >-
+      dci ask-ava-streaming question: "Why did my GCP costs spike last week?"
+  - description: Continue an existing conversation.
+    command: >-
+      dci ask-ava-streaming question: "Break that down by project", conversationId: <conversation-id>
+
+notes: |
+  :::tip Scripts and agents should use ask-ava-sync
+  This command returns the raw Server-Sent Events stream — answer text mixed with conversation
+  and message metadata. For a clean JSON `answer` (plus `conversationId` and `answerId` when the
+  conversation is persisted), use `dci ask-ava-sync`.
+  :::
+
+related: [ask-ava-sync, delete-ava-conversation, submit-ava-feedback]

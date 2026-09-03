@@ -1,0 +1,38 @@
+command: test-run-cloudflow-flow
+
+arguments:
+  flow-id: >-
+    ID of the flow to test — the `id` column of `dci list-cloudflows`, or the `id` returned by
+    `dci import-cloudflow-flow` / `flowId` from `dci build-cloud-flow`. Unpublished drafts are
+    accepted. Flows are addressed by ID only.
+
+examples:
+  - description: Validate a draft with the same checks publishing applies, without starting a run.
+    command: "dci test-run-cloudflow-flow <flow-id> --dry-run"
+    output: >-
+      `valid: true`, or a 422 whose `details[]` names every invalid node (`nodeId` and message)
+      so they can all be fixed in one pass.
+  - description: Start one test run; the idempotency key guarantees a retry can never start a second run.
+    command: "dci test-run-cloudflow-flow <flow-id> --idempotency-key \"$(uuidgen)\""
+    output: >-
+      A 202 snapshot of the run taken at dispatch: `id`, `status: pending`, `isTest: true`.
+      Follow it with `dci get-cloudflow-flow-run <flow-id> <run-id>`.
+  - description: Capture the run ID for a polling loop.
+    command: "dci test-run-cloudflow-flow <flow-id> --idempotency-key \"$(uuidgen)\" --output json | jq -r .id"
+
+notes: |
+  :::info CLI behavior
+  `--dry-run` here is the API's own dry run — the request is sent and the server-side flow
+  validator answers; nothing starts. The CLI generates a throwaway idempotency key for dry runs;
+  pass your own `--idempotency-key` for real runs.
+  :::
+
+  :::caution Retrying a failed request
+  A run can start even when the response fails (for example a 5xx). Before minting a new key,
+  check `dci list-cloudflow-flow-runs <flow-id> --mode test` — re-sending with the *same* key
+  is always safe and never starts a second run. Test runs execute nodes for real (approval steps
+  are never bypassed) but are excluded from run history, statistics, and schedule budgets, and
+  they hold the flow's concurrency lock (409 while the flow is already running).
+  :::
+
+related: [get-cloudflow-flow-run, list-cloudflow-flow-runs, import-cloudflow-flow, export-cloudflow-flow, trigger-cloudflow-webhook]

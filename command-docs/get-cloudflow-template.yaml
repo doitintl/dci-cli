@@ -1,0 +1,16 @@
+command: get-cloudflow-template
+
+arguments:
+  template-id: >-
+    Template ID as shown by `dci list-cloudflow-templates`. Templates are addressed by ID only;
+    name resolution does not apply.
+
+examples:
+  - description: Show one template.
+    command: "dci get-cloudflow-template <template-id>"
+  - description: The full record as JSON, including the operator instructions.
+    command: "dci get-cloudflow-template <template-id> --output json"
+  - description: Just the name and instructions.
+    command: "dci get-cloudflow-template <template-id> --fields name,instructions --output json"
+
+related: [list-cloudflow-templates, list-cloudflows, build-cloud-flow]

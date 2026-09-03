@@ -1,0 +1,34 @@
+command: export-cloudflow-flow
+
+arguments:
+  flow-id: >-
+    ID of the flow to export — the `id` column of `dci list-cloudflows`. Flows are addressed by
+    ID only; name resolution does not apply. Every subflow the flow references is exported with it.
+
+examples:
+  - description: Save the flow as a portable bundle.
+    command: "dci export-cloudflow-flow <flow-id> > bundle.json"
+    output: >-
+      A `cloudflow.doit.com/FlowBundle` JSON document — the flow, its subflows, and the
+      requirements (connections, Datastore tables, global variables) a target tenant must bind
+      at import. No credentials, tenant IDs, or execution state.
+  - description: Strip local and global variable values (names, types, and required-ness still travel).
+    command: "dci export-cloudflow-flow <flow-id> --include-variable-values=false > bundle.json"
+  - description: See which connections the bundle expects before importing it elsewhere.
+    command: "dci export-cloudflow-flow <flow-id> | jq '.requirements.connections'"
+
+notes: |
+  :::info Output format
+  The bundle is a document meant to be saved and replayed, so this command prints JSON by
+  default — redirecting it to a file is safe without `--output json`.
+  :::
+
+  :::tip What travels and what does not
+  Connection, Datastore-table, and global-variable references become named `requirements`
+  that `import-cloudflow-flow` rebinds. Policy and Slack-channel references cannot travel and
+  are listed under `unsupportedReferences`; the nodes that use them are flagged incomplete
+  after import. A schedule trigger's configuration travels, but nothing runs until the imported
+  draft is published.
+  :::
+
+related: [import-cloudflow-flow, list-cloudflows, build-cloud-flow, refine-cloud-flow, test-run-cloudflow-flow]

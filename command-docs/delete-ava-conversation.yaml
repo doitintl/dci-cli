@@ -1,0 +1,21 @@
+command: delete-ava-conversation
+
+examples:
+  - description: Preview the deletion locally without sending anything.
+    command: "dci delete-ava-conversation --conversation-id <conversation-id> --dry-run"
+  - description: Delete without a prompt, for scripts.
+    command: "dci delete-ava-conversation --conversation-id <conversation-id> --yes"
+    output: Exit code 0 and no output.
+
+notes: |
+  :::caution Confirmation required
+  Interactive terminals show a confirmation prompt; scripts must pass `--yes` — see the CLI
+  guide's [Destructive commands](/docs/cli#destructive-commands).
+  :::
+
+  :::tip The ID is a flag
+  The conversation is identified by `--conversation-id`, not a positional argument. Get the ID
+  from the `conversationId` a persisted (`ephemeral: false`) `dci ask-ava-sync` call returns.
+  :::
+
+related: [ask-ava-sync, ask-ava-streaming, submit-ava-feedback]

@@ -1,0 +1,46 @@
+command: import-cloudflow-flow
+
+examples:
+  - description: Validate a bundle first — writes nothing and returns the import plan.
+    command: "dci import-cloudflow-flow --dry-run < bundle.json"
+    output: >-
+      `valid`, every validation `error` at once, the `flowsToCreate`, and each requirement's
+      `resolution` (`bound`, `suggested`, `willCreate`, or `unbound`) with candidate IDs in
+      this tenant.
+  - description: Import for real; a fresh idempotency key is required on every real import.
+    command: "dci import-cloudflow-flow --idempotency-key \"$(uuidgen)\" < bundle.json"
+    output: >-
+      `flows[]` with each created flow's new `id`, `status: draft`, and any `incompleteNodes`
+      to finish in the builder before publishing.
+  - description: Bind a connection requirement and set import options by sending the full request shape.
+    command: "dci import-cloudflow-flow --idempotency-key \"$(uuidgen)\" < import.json"
+    output: |
+      # import.json — the exported bundle under "bundle", plus bindings and options
+      {"bundle": {"kind": "cloudflow.doit.com/FlowBundle", "schemaVersion": 1, "rootFlow": "main",
+         "flows": [{"key": "main", "name": "Nightly cleanup", "firstNode": "trigger",
+           "nodes": [{"key": "trigger", "name": "Manual trigger", "type": "manualTrigger"}]}],
+         "requirements": {"connections": [{"key": "aws-main", "name": "AWS production", "provider": "amazon-web-services"}]}},
+       "bindings": {"connections": {"aws-main": "<connection-id>"}},
+       "options": {"createMissingTables": true, "namePrefix": "Copy of "}}
+
+notes: |
+  :::info CLI behavior
+  - **A bare bundle is wrapped for you.** Piping the output of `export-cloudflow-flow` straight
+    in works: the CLI nests it under the request's `bundle` field. Send the full
+    `bundle` / `bindings` / `options` shape only when you need bindings or options.
+  - **`--dry-run` is the API's dry run**, not a local preview: the request is sent, nothing is
+    written, and the response is the import plan. The CLI generates a throwaway idempotency key
+    for dry runs, so `--idempotency-key` is only needed on the real import — where the API
+    requires it (`idempotency_key_required`). Generate a fresh one per import; re-sending the
+    same key returns the cached response instead of importing again.
+  :::
+
+  :::tip Authoring loop
+  Imports are create-only and land as drafts. Requirement keys for `bindings` come from the
+  dry-run plan (or the bundle's `requirements`); connection IDs come from
+  `dci list-cloudflow-connections`. Unbound connections and tables leave their nodes flagged
+  incomplete; unbound global variables are created automatically. After importing, validate
+  and exercise the draft with `dci test-run-cloudflow-flow`.
+  :::
+
+related: [export-cloudflow-flow, test-run-cloudflow-flow, list-cloudflow-connections, build-cloud-flow, list-cloudflows]
