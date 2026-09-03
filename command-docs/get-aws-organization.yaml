@@ -1,0 +1,16 @@
+command: get-aws-organization
+
+arguments:
+  management-account-id: >-
+    12-digit AWS management (payer) account ID of the organization, as shown by
+    `dci list-aws-organizations` (`managementAccountId`).
+
+examples:
+  - description: One AWS organization's onboarding status, 30-day ESR and savings, totals and potential savings.
+    command: "dci get-aws-organization <management-account-id>"
+  - description: The full record as JSON, including the six-month `monthlyStats` and 30-day `dailyCoverage` series behind the console charts.
+    command: "dci get-aws-organization <management-account-id> --output json"
+  - description: Only onboarding status and savings totals per commitment type.
+    command: "dci get-aws-organization <management-account-id> --fields displayName,onboardingStatus,savingsTotals --output json"
+
+related: [list-aws-organizations, list-aws-member-accounts, list-aws-recommendations, list-aws-planned-purchases, list-aws-organizations-settings]

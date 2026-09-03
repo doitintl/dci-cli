@@ -1,0 +1,17 @@
+command: get-billing-transfer-program-management-accounts-status
+
+examples:
+  - description: IAM status and timestamps for each of your program management accounts (distributor tenants only).
+    command: "dci get-billing-transfer-program-management-accounts-status"
+  - description: Only the account, its IAM status and when it was last updated.
+    command: "dci get-billing-transfer-program-management-accounts-status -C accountId,iamStatus,updatedAt"
+  - description: The full records as JSON, including the `iamDiff` of missing and extra permissions, for polling scripts.
+    command: "dci get-billing-transfer-program-management-accounts-status --output json"
+
+notes: |
+  A lightweight polling surface: it returns each PMA's `iamStatus`, `iamDiff` and
+  timestamps only, with no tenant fan-out, handshake counts or pagination. Use
+  `list-billing-transfer-program-management-accounts` for the mapped tenants and
+  handshake status per account.
+
+related: [list-billing-transfer-program-management-accounts, create-billing-transfer-reseller-handshakes, list-billing-transfer-end-customers]

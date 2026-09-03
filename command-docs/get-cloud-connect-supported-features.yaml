@@ -1,0 +1,14 @@
+command: get-cloud-connect-supported-features
+
+arguments:
+  account-id: >-
+    Cloud account connected via CloudConnect: a 12-digit AWS account ID or an Azure tenant
+    ID. The account must belong to the active customer.
+
+examples:
+  - description: Which features the connected account supports and whether it has the permissions each one needs.
+    command: "dci get-cloud-connect-supported-features <account-id>"
+  - description: The list as JSON, for scripts that gate on `hasRequiredPermissions`.
+    command: "dci get-cloud-connect-supported-features <account-id> --output json"
+
+related: [get-aws-account, create-account-role, update-aws-feature]

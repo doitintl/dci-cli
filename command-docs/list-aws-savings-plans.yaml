@@ -1,0 +1,23 @@
+command: list-aws-savings-plans
+
+arguments:
+  management-account-id: >-
+    12-digit AWS management (payer) account ID of the organization, as shown by
+    `dci list-aws-organizations` (`managementAccountId`).
+
+examples:
+  - description: Savings Plans across the organization, with commitment, utilization and last-month savings.
+    command: "dci list-aws-savings-plans <management-account-id>"
+  - description: Active Compute Savings Plans only.
+    command: "dci list-aws-savings-plans <management-account-id> --type compute --status active"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-aws-savings-plans <management-account-id> --all --output json"
+  - description: Browse in the full-screen viewer.
+    command: "dci list-aws-savings-plans <management-account-id> -M interactive"
+
+notes: |
+  Filters: `--type` (`compute`, `ec2_instance`, `sagemaker`, `database`) and `--status`
+  (`active`, `expired`, `queued`, `queued_returning`, `pending_return`, `returning`,
+  `payment_pending`, `payment_failed`). Omit both to return every plan.
+
+related: [list-aws-reserved-instances, list-aws-organizations, list-aws-member-accounts, list-aws-recommendations]

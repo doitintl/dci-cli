@@ -1,0 +1,21 @@
+command: list-billing-transfer-end-customers-by-reseller
+
+arguments:
+  reseller-pma-account-id: >-
+    12-digit AWS account ID of the reseller's program management account, as shown by
+    `dci list-billing-transfer-reseller-accounts` (`resellerPmaAccountId`).
+
+examples:
+  - description: End-customer account mappings under one reseller PMA.
+    command: "dci list-billing-transfer-end-customers-by-reseller <reseller-pma-account-id>"
+  - description: Include mappings that have been revoked (excluded by default).
+    command: "dci list-billing-transfer-end-customers-by-reseller <reseller-pma-account-id> --include-revoked"
+  - description: The full list as JSON, for scripts.
+    command: "dci list-billing-transfer-end-customers-by-reseller <reseller-pma-account-id> --output json"
+
+notes: |
+  Same result as `list-billing-transfer-end-customers`, keyed by the reseller PMA account
+  alone (no `--dpma-id` needed). Callable by the reseller who owns the PMA or the
+  distributor who owns its DPMA.
+
+related: [list-billing-transfer-end-customers, list-billing-transfer-reseller-accounts, list-billing-transfer-reseller-accounts-with-tenants, create-billing-transfer-end-customer-mappings]

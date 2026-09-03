@@ -1,0 +1,25 @@
+command: list-aws-reserved-instances
+
+arguments:
+  management-account-id: >-
+    12-digit AWS management (payer) account ID of the organization, as shown by
+    `dci list-aws-organizations` (`managementAccountId`).
+
+examples:
+  - description: Reserved Instances across the organization, with utilization and savings.
+    command: "dci list-aws-reserved-instances <management-account-id>"
+  - description: Active RIs in one region.
+    command: "dci list-aws-reserved-instances <management-account-id> --status active --region us-east-1"
+  - description: Convertible RIs of one instance family (the part of the instance type before the dot).
+    command: "dci list-aws-reserved-instances <management-account-id> --instance-family m5 --offering-class convertible"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-aws-reserved-instances <management-account-id> --all --output json"
+
+notes: |
+  Filters: `--status` (`active`, `retired`, `payment_pending`, `payment_failed`, `queued`,
+  `queued_deleted`), `--instance-type` (exact, e.g. `m5.large`), `--instance-family`
+  (e.g. `m5`), `--region`, and `--offering-class` (`standard` or `convertible`). Instance
+  type, family and region filters are case-sensitive exact matches. Omit all filters to
+  return every RI.
+
+related: [list-aws-savings-plans, list-aws-organizations, get-aws-organization, list-aws-member-accounts]

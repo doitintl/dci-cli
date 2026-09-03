@@ -1,0 +1,15 @@
+command: list-billing-transfer-reseller-accounts-with-tenants
+
+examples:
+  - description: Your reseller program management accounts, each with the end-customer tenants connected under it (reseller tenants only).
+    command: "dci list-billing-transfer-reseller-accounts-with-tenants"
+  - description: Include end-customer mappings that have been revoked (excluded by default).
+    command: "dci list-billing-transfer-reseller-accounts-with-tenants --include-revoked"
+  - description: The full tree as JSON, for scripts.
+    command: "dci list-billing-transfer-reseller-accounts-with-tenants --output json"
+
+notes: |
+  `region`, `iamStatus` and `lastRefreshTime` on each item are inherited from the parent
+  distributor PMA root; the reseller node itself carries no IAM or region metadata.
+
+related: [list-billing-transfer-reseller-accounts, list-billing-transfer-end-customers-by-reseller, list-billing-transfer-end-customers, create-billing-transfer-end-customer-mappings]

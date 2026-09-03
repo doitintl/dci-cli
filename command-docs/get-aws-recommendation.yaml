@@ -1,0 +1,25 @@
+command: get-aws-recommendation
+
+arguments:
+  management-account-id: >-
+    12-digit AWS management (payer) account ID of the organization, as shown by
+    `dci list-aws-organizations` (`managementAccountId`).
+  service-id: >-
+    Commitment type: `compute` or `database`. It must be onboarded for the organization
+    (see `onboardingStatus` in `dci list-aws-organizations`).
+
+examples:
+  - description: The compute Savings Plan recommendation with daily eligible-spend buckets (the default granularity).
+    command: "dci get-aws-recommendation <management-account-id> compute"
+  - description: The database recommendation with one eligible-spend bucket per month.
+    command: "dci get-aws-recommendation <management-account-id> database --granularity month"
+  - description: Hourly eligible-spend totals as JSON, for your own analysis.
+    command: "dci get-aws-recommendation <management-account-id> compute --granularity hour --output json"
+
+notes: |
+  `--granularity` accepts `hour`, `day` (default), `week` or `month`. Coarser buckets
+  report `minUsage`, `medianUsage` and `maxUsage` per bucket; `hour` reports `totalUsage`
+  per hour. `list-aws-recommendations` returns the recommendation block for every onboarded
+  commitment type at once, without the eligible-usage series.
+
+related: [list-aws-recommendations, list-aws-planned-purchases, get-aws-organization, list-aws-organizations-settings]

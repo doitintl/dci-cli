@@ -1,0 +1,19 @@
+command: list-aws-organizations
+
+examples:
+  - description: The AWS organizations visible to the active customer, with onboarding status and savings metrics; the entry point for every other `*-aws-*` command.
+    command: "dci list-aws-organizations"
+  - description: Just the IDs and names, to pick a `<management-account-id>`.
+    command: "dci list-aws-organizations --fields managementAccountId,displayName --output json"
+  - description: Every page as JSON, for scripts (sum the items for customer-level totals).
+    command: "dci list-aws-organizations --all --output json"
+  - description: Browse in the full-screen viewer.
+    command: "dci list-aws-organizations -M interactive"
+
+notes: |
+  The `managementAccountId` of each item is the positional argument every organization-scoped
+  command takes (`list-aws-member-accounts`, `list-aws-savings-plans`,
+  `list-aws-reserved-instances`, `list-aws-recommendations`, `list-aws-planned-purchases`).
+  Fetch the organizations first, then run the per-organization commands.
+
+related: [get-aws-organization, list-aws-member-accounts, list-aws-organizations-settings, list-aws-savings-plans, list-aws-recommendations]

@@ -1,0 +1,39 @@
+command: create-billing-transfer-reseller-handshakes
+
+examples:
+  - description: Map reseller PMAs to your distributor PMA in place, without issuing AWS Organizations handshakes (distributor tenants only).
+    command: "dci create-billing-transfer-reseller-handshakes < mapping.json"
+    output: |
+      # mapping.json
+      {"dpmaId": "<dpma-id>",
+       "items": [{"resellerCustomerId": "<customer-id>", "resellerPmaAccountId": "123456789012"}]}
+  - description: Simulate a batch that would issue handshakes; the response has the same shape as a real run but nothing is sent to AWS.
+    command: "dci create-billing-transfer-reseller-handshakes --dry-run < handshakes.json"
+    output: |
+      # handshakes.json
+      {"dpmaId": "<dpma-id>", "sendHandshakes": true,
+       "items": [
+         {"resellerCustomerId": "<customer-id>", "resellerPmaAccountId": "123456789012"},
+         {"resellerCustomerId": "<customer-id>", "resellerPmaAccountId": "210987654321"}]}
+  - description: Issue the handshakes for real, with an idempotency key so a retry returns the cached result instead of re-sending.
+    command: "dci create-billing-transfer-reseller-handshakes --idempotency-key <idempotency-key> < handshakes.json"
+    output: >-
+      `results[]` carries one entry per item with its `status` (`handshake_issued`, `no_op`,
+      `mapped`, `remapped` or `failed`) and `summary` totals them.
+  - description: Per-item outcomes as JSON, for scripts.
+    command: "dci create-billing-transfer-reseller-handshakes --idempotency-key <idempotency-key> --output json < handshakes.json"
+
+notes: |
+  :::tip `--dry-run` is the API's simulation here
+  For this command `--dry-run` is forwarded to the API, which validates the batch and
+  returns the full `results`/`summary` shape without issuing any AWS Organizations
+  handshakes (`handshakeId` is absent). This differs from the CLI's local `--dry-run`
+  preview on `delete-*` commands, which never contacts the API.
+  :::
+
+  `sendHandshakes` defaults to `false`: without it the batch is mapped in place and no
+  handshake is issued. Duplicate `resellerPmaAccountId` values within one batch are
+  rejected with `422` before anything is processed. `--idempotency-key` accepts up to 255
+  characters; a UUID v4 or ULID is recommended.
+
+related: [list-billing-transfer-program-management-accounts, get-billing-transfer-program-management-accounts-status, create-billing-transfer-end-customer-mappings, list-billing-transfer-end-customers]

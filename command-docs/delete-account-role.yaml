@@ -1,0 +1,24 @@
+command: delete-account-role
+
+arguments:
+  account-id: >-
+    12-digit AWS account ID of a CloudConnect-connected account (the `accountID` given to
+    `dci create-account-role`; `dci get-aws-account <account-id>` shows its current state).
+
+examples:
+  - description: Preview the deletion locally without contacting the API.
+    command: "dci delete-account-role <account-id> --dry-run"
+  - description: Disconnect the account; an interactive terminal asks for confirmation first.
+    command: "dci delete-account-role <account-id>"
+  - description: Skip the confirmation prompt in scripts.
+    command: "dci delete-account-role <account-id> --yes"
+    output: Exit code 0 and no output; `dci get-aws-account <account-id>` then returns 404.
+
+notes: |
+  :::warning Destructive
+  Removes the CloudConnect record for the account, so DoiT stops assuming the role. The
+  CLI requires confirmation: interactive terminals prompt, scripts pass `--yes` (or set
+  `DCI_CONFIRM_DESTRUCTIVE=1`). The IAM role itself stays in your AWS account.
+  :::
+
+related: [create-account-role, get-aws-account, update-aws-feature, get-cloud-connect-supported-features]

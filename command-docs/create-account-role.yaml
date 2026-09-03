@@ -1,0 +1,29 @@
+command: create-account-role
+
+examples:
+  - description: Connect an AWS account by registering the IAM role DoiT assumes, with the features to enable.
+    command: >-
+      dci create-account-role accountID: "123456789012",
+      roleArn: "arn:aws:iam::123456789012:role/DoiTRole", enabledFeatures: [real-time-data]
+    output: >-
+      The account record: `roleArn`, `enabledFeatures`, `timeLinked`, and `supportedFeatures`
+      with `hasRequiredPermissions` per feature.
+  - description: Enable real-time anomaly detection, which also needs the CloudTrail S3 bucket and its region.
+    command: "dci create-account-role < role.json"
+    output: |
+      # role.json
+      {"accountID": "123456789012",
+       "roleArn": "arn:aws:iam::123456789012:role/DoiTRole",
+       "enabledFeatures": ["real-time-data"],
+       "s3Bucket": "acme-cloudtrail-logs", "s3BucketRegion": "us-east-1"}
+  - description: The resulting record as JSON, to check `supportedFeatures[].hasRequiredPermissions` in a script.
+    command: "dci create-account-role --output json < role.json"
+
+notes: |
+  Creates or updates the CloudConnect record for the account, so re-running with the same
+  `accountID` updates the existing connection. `s3Bucket` and `s3BucketRegion` are only
+  needed for CloudTrail real-time anomaly detection and must be given together. After
+  connecting, `dci get-cloud-connect-supported-features <account-id>` shows which features
+  the role has sufficient permissions for.
+
+related: [get-aws-account, update-aws-feature, delete-account-role, get-cloud-connect-supported-features]

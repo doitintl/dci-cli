@@ -1,0 +1,33 @@
+command: update-aws-feature
+
+arguments:
+  account-id: >-
+    12-digit AWS account ID of a CloudConnect-connected account (the `accountID` given to
+    `dci create-account-role`; `dci get-aws-account <account-id>` shows its current features).
+
+examples:
+  - description: Preview the change locally; the CLI treats this command as destructive and asks for confirmation.
+    command: >-
+      dci update-aws-feature <account-id> --dry-run
+      enabledFeatures: [real-time-data], s3Bucket: "acme-cloudtrail-logs", s3BucketRegion: us-east-1
+  - description: Replace the account's enabled features, including the CloudTrail bucket real-time anomaly detection reads from.
+    command: "dci update-aws-feature <account-id> --yes < feature.json"
+    output: |
+      # feature.json
+      {"enabledFeatures": ["real-time-data"],
+       "s3Bucket": "acme-cloudtrail-logs", "s3BucketRegion": "us-east-1"}
+  - description: The updated record as JSON, to confirm `supportedFeatures[].hasRequiredPermissions`.
+    command: "dci update-aws-feature <account-id> --yes --output json < feature.json"
+
+notes: |
+  :::warning Requires confirmation
+  Changing `enabledFeatures` can switch off data ingestion for the account, so the CLI
+  gates this command like a delete: interactive terminals prompt, scripts pass `--yes`
+  (or set `DCI_CONFIRM_DESTRUCTIVE=1`), and `--dry-run` prints the intended call without
+  sending it.
+  :::
+
+  `s3Bucket` and `s3BucketRegion` are required together and only apply to CloudTrail
+  real-time anomaly detection.
+
+related: [get-aws-account, create-account-role, delete-account-role, get-cloud-connect-supported-features]
