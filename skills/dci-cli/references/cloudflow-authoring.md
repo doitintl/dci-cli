@@ -202,7 +202,11 @@ verified end-to-end against production, 2026-09-01):
    read early nodes while later ones still run. `input` is `null` for every non-action node
    *by design* (only action nodes record inputs); `output` is recorded by every node that
    finishes. Payloads carry `totalBytes` and are truncated past 64KB (`truncated: true`);
-   sensitive values are redacted.
+   sensitive values are redacted. A run that failed comes back as the same run object with
+   `status: "failed"`, a top-level `error` string (the upstream failure message), and per-node
+   statuses showing where it stopped — an infrastructure failure there (e.g. a transient
+   BigQuery error in a report fetch) is retryable with a **new** idempotency key, not a flow
+   bug.
 4. **Claim honestly**: "the flow works" only after a test run completed and the per-node
    outputs matched intent. Before that, say it validated and imported.
 

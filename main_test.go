@@ -4101,6 +4101,27 @@ func TestJSONApplicationError(t *testing.T) {
 			wantOK: false,
 		},
 		{
+			name: "2xx failed flow-run resource passes through",
+			resp: cli.Response{Status: 200, Body: map[string]interface{}{
+				"id":     "eqbE2PDt8x462CvXIFmN",
+				"flowId": "UDn1SIGaaN8uHZM80N58",
+				"status": "error",
+				"error":  "An internal error occurred and the request could not be completed.",
+				"nodes":  []interface{}{map[string]interface{}{"name": "Fetch report"}},
+			}},
+			wantOK: false,
+		},
+		{
+			name: "2xx error with only empty companions still fires",
+			resp: cli.Response{Status: 200, Body: map[string]interface{}{
+				"error":     "boom",
+				"requestId": nil,
+				"detail":    "  ",
+			}},
+			wantMsg: "boom",
+			wantOK:  true,
+		},
+		{
 			name:   "2xx empty string error is ignored",
 			resp:   cli.Response{Status: 200, Body: map[string]interface{}{"error": ""}},
 			wantOK: false,

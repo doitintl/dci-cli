@@ -2639,6 +2639,13 @@ func bodyLooksLikeHTML(s string) bool {
 // items. The map assertion below lets that array pass through untouched. Do not
 // recurse into arrays or nested objects here, or it will false-positive on
 // legitimate partial-result responses.
+//
+// A body where `error` sits alongside other populated fields is a *resource*
+// that failed, not a failed request — GET /cloudflow/v1/flows/{id}/runs/{runId}
+// returns 200 with the full run object (id, status, nodes, ...) plus a
+// top-level `error` string when the run itself failed, and swallowing that
+// payload hides everything the caller asked for. Fire only when `error` is
+// essentially the whole body: every other top-level field nil or empty.
 func jsonApplicationError(resp cli.Response) (string, bool) {
 	if resp.Status < 200 || resp.Status >= 300 {
 		return "", false
@@ -2646,6 +2653,20 @@ func jsonApplicationError(resp cli.Response) (string, bool) {
 	body, ok := resp.Body.(map[string]interface{})
 	if !ok {
 		return "", false
+	}
+	for key, value := range body {
+		if key == "error" {
+			continue
+		}
+		switch v := value.(type) {
+		case nil:
+		case string:
+			if strings.TrimSpace(v) != "" {
+				return "", false
+			}
+		default:
+			return "", false
+		}
 	}
 	switch v := body["error"].(type) {
 	case string:
