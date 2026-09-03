@@ -1,0 +1,28 @@
+command: update-customer
+
+arguments:
+  customer-id: >-
+    ID of the customer your credentials belong to, as returned by `dci get-customer`. It must
+    match the customer resolved from the bearer token; a token scoped to a different customer
+    gets `403`.
+
+examples:
+  - description: Change the currency used for monetary values.
+    command: "dci update-customer <customer-id> settings.currency: EUR"
+    output: Exit code 0 and no output; `dci get-customer <customer-id> --output json` shows the new value.
+  - description: Restrict which email domains can be invited (requires the UsersManager permission).
+    command: "dci update-customer <customer-id> settings.allowedInviteDomains: [acme.com, acme.io]"
+  - description: Replace the contact emails; an empty array clears them.
+    command: "dci update-customer <customer-id> contact.emails: [finops@acme.com, billing@acme.com]"
+  - description: Set the Console URL display name; an empty string removes the active slug.
+    command: "dci update-customer <customer-id> urlSlug: acme"
+
+notes: |
+  :::tip Merge-patch semantics
+  Omitted fields keep their current value, and so does an explicit `null` — except `urlSlug`,
+  where an empty string removes the slug. `settings.currency` accepts only the codes listed in
+  the schema and cannot be cleared; `allowedInviteDomains` and `contact.emails` are cleared with
+  an empty array. Requires the `Settings` permission and DoiT API access (`platform:externalApi`).
+  :::
+
+related: [get-customer, validate]

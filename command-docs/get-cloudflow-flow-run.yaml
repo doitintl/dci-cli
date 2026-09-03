@@ -1,0 +1,26 @@
+command: get-cloudflow-flow-run
+
+arguments:
+  flow-id: "ID of the flow the run belongs to — the `id` column of `dci list-cloudflows`."
+  run-id: >-
+    Run ID, as listed by `dci list-cloudflow-flow-runs <flow-id>` or returned as `id` by
+    `dci test-run-cloudflow-flow`.
+
+examples:
+  - description: Show a run's status and where it stopped.
+    command: "dci get-cloudflow-flow-run <flow-id> <run-id>"
+  - description: Read what each node consumed and produced, for debugging a failed or wrong-but-green run.
+    command: "dci get-cloudflow-flow-run <flow-id> <run-id> --output json"
+  - description: Per-node status and error only.
+    command: "dci get-cloudflow-flow-run <flow-id> <run-id> --output json | jq '.nodes[] | {name, status, error}'"
+
+notes: |
+  :::tip Reading node payloads
+  `input` is `null` for every non-action node by design — only action nodes (cloud and DoiT
+  operations) record inputs. `output` is recorded by every node that finishes, so read a
+  transform or code node's behavior from its `output`. Payloads appear as soon as a node reaches
+  a terminal status, so a poll loop can read early nodes while later ones still run; each payload
+  is capped at 64KB (`truncated: true` and `totalBytes` when cut) and sensitive values are redacted.
+  :::
+
+related: [list-cloudflow-flow-runs, test-run-cloudflow-flow, list-cloudflows]

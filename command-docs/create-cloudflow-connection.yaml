@@ -1,0 +1,28 @@
+command: create-cloudflow-connection
+
+examples:
+  - description: Create a GCP connection scoped to one project.
+    command: >-
+      dci create-cloudflow-connection name: "GCP analytics project", gcpConfig{level: project, projectId: my-analytics-project}
+    output: >-
+      HTTP 201 with the new `connectionId`, its `status`, and — for GCP — a generated
+      `deploymentCommand` to run in the target project.
+  - description: Create an AWS connection with the body read from a file.
+    command: "dci create-cloudflow-connection < connection.json"
+    output: |
+      # connection.json — exactly one of awsConfig or gcpConfig
+      {"name": "AWS production", "description": "Managed by FinOps",
+       "awsConfig": {"managementAccount": "123456789012", "roleName": "DoiTCloudFlow",
+         "context": [{"accountId": "123456789012", "regions": ["us-east-1", "eu-west-1"]}]}}
+  - description: Create it disabled, with a collaborator, and enable it later with update-cloudflow-connection.
+    command: >-
+      dci create-cloudflow-connection name: "AWS sandbox", enabled: false,
+      collaborators: [{email: ops@acme.com, role: editor}], awsConfig.managementAccount: "123456789012"
+
+notes: |
+  :::tip One provider per connection
+  Supply exactly one of `gcpConfig` or `awsConfig`; both or neither is rejected with
+  `400 invalid_connection_config`. Collaborator roles are `owner`, `editor`, or `user`.
+  :::
+
+related: [list-cloudflow-connections, get-cloudflow-connection, update-cloudflow-connection, delete-cloudflow-connection]

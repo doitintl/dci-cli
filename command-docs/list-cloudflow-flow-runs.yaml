@@ -1,0 +1,20 @@
+command: list-cloudflow-flow-runs
+
+arguments:
+  flow-id: "ID of the flow whose runs to list — the `id` column of `dci list-cloudflows`."
+
+examples:
+  - description: The flow's runs, newest first (test runs included).
+    command: "dci list-cloudflow-flow-runs <flow-id>"
+  - description: Test runs only — for example to check whether a test run started before a failed response.
+    command: "dci list-cloudflow-flow-runs <flow-id> --mode test"
+  - description: Every production run as JSON, for scripts.
+    command: "dci list-cloudflow-flow-runs <flow-id> --mode standard --all --output json"
+
+notes: |
+  :::tip Per-node detail
+  This listing carries run-level status only. Fetch one run with
+  `dci get-cloudflow-flow-run <flow-id> <run-id>` to read what each node consumed and produced.
+  :::
+
+related: [get-cloudflow-flow-run, test-run-cloudflow-flow, list-cloudflows]

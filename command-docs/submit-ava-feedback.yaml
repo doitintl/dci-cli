@@ -1,0 +1,23 @@
+command: submit-ava-feedback
+
+examples:
+  - description: Mark an answer as helpful.
+    command: "dci submit-ava-feedback < feedback.json"
+    output: |
+      # feedback.json — both IDs come from a persisted (ephemeral: false) ask-ava-sync response
+      {"answerId": "<answer-id>", "conversationId": "<conversation-id>", "feedback": {"positive": true}}
+  - description: Mark it as unhelpful and say why.
+    command: "dci submit-ava-feedback < negative-feedback.json"
+    output: |
+      # negative-feedback.json
+      {"answerId": "<answer-id>", "conversationId": "<conversation-id>",
+       "feedback": {"positive": false, "text": "The answer ignored the date range I asked about"}}
+
+notes: |
+  :::tip Where the IDs come from
+  `answerId` and `conversationId` are returned by `dci ask-ava-sync` only when the conversation
+  is persisted (`ephemeral: false`, the default); ephemeral answers cannot receive feedback.
+  `dci ava-feedback` is accepted as an alias.
+  :::
+
+related: [ask-ava-sync, ask-ava-streaming, delete-ava-conversation]

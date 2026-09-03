@@ -1,0 +1,16 @@
+command: get-cloudflow-connection
+
+arguments:
+  connection-id: >-
+    Connection ID (`connectionId`) as shown by `dci list-cloudflow-connections`. Connections are
+    addressed by ID only; name resolution does not apply.
+
+examples:
+  - description: Show one connection.
+    command: "dci get-cloudflow-connection <connection-id>"
+  - description: The full record as JSON, including the provider configuration and its deployment status.
+    command: "dci get-cloudflow-connection <connection-id> --output json"
+  - description: Only the fields you need.
+    command: "dci get-cloudflow-connection <connection-id> --fields connectionId,name,status,enabled --output json"
+
+related: [list-cloudflow-connections, create-cloudflow-connection, update-cloudflow-connection, delete-cloudflow-connection]

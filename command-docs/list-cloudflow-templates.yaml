@@ -1,0 +1,20 @@
+command: list-cloudflow-templates
+
+examples:
+  - description: The catalogue of CloudFlow templates (blueprints).
+    command: "dci list-cloudflow-templates"
+  - description: Find templates by keyword (client-side, case-insensitive, scans every page).
+    command: "dci list-cloudflow-templates --search anomaly"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-cloudflow-templates --all --output json"
+  - description: Browse in the full-screen viewer.
+    command: "dci list-cloudflow-templates -M interactive"
+
+notes: |
+  :::info Read-only
+  Templates cannot be edited through the API. Creating a flow from a template is done in the
+  Console; the CLI currently has no command for it. To author flows from the terminal, use
+  `dci build-cloud-flow` or the export → edit → import loop.
+  :::
+
+related: [get-cloudflow-template, list-cloudflows, build-cloud-flow]

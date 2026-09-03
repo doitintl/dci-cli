@@ -1,0 +1,24 @@
+command: get-customer
+
+arguments:
+  customer-id: >-
+    ID of the customer your credentials belong to — the same ID that appears in the Console URL
+    of your account. It must match the customer resolved from the bearer token; a token scoped
+    to a different customer gets `403`, even if that customer is otherwise reachable.
+
+examples:
+  - description: Show your customer's general settings and contact info.
+    command: "dci get-customer <customer-id>"
+  - description: The full record as JSON, for scripts or to check a value after an update-customer.
+    command: "dci get-customer <customer-id> --output json"
+  - description: Only the fields you need.
+    command: "dci get-customer <customer-id> --fields id,name,primaryDomain,settings --output json"
+
+notes: |
+  :::info Permissions
+  Requires the `Settings` permission and DoiT API access (`platform:externalApi`). Fields are
+  nested exactly as `update-customer` writes them — `currency`, `allowedInviteDomains`, and
+  `mfaRequired` under `settings`, `emails` under `contact`.
+  :::
+
+related: [update-customer, validate, status]

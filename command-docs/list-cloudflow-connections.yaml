@@ -1,0 +1,20 @@
+command: list-cloudflow-connections
+
+examples:
+  - description: The cloud provider connections in your tenant — which clouds your flows can reach.
+    command: "dci list-cloudflow-connections"
+  - description: Find connections by keyword (client-side, case-insensitive, scans every page).
+    command: "dci list-cloudflow-connections --search production"
+  - description: Just the columns that matter for binding a bundle's requirements.
+    command: "dci list-cloudflow-connections -C connectionId,name,status,enabled"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-cloudflow-connections --all --output json"
+
+notes: |
+  :::tip Where the IDs go
+  `connectionId` is what `get-`, `update-`, and `delete-cloudflow-connection` take, and what
+  `import-cloudflow-flow` expects in `bindings.connections` when rebinding an exported bundle.
+  The API does not filter or sort this listing server-side, so use `--search` to narrow it.
+  :::
+
+related: [get-cloudflow-connection, create-cloudflow-connection, update-cloudflow-connection, delete-cloudflow-connection, import-cloudflow-flow]

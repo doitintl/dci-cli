@@ -1,0 +1,27 @@
+command: list-cloudflows
+
+examples:
+  - description: Your CloudFlows, with the IDs that export, refine, and test-run take.
+    command: "dci list-cloudflows"
+  - description: Find flows by keyword (client-side, case-insensitive, scans every page).
+    command: "dci list-cloudflows --search cleanup"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-cloudflows --all --output json"
+  - description: Browse in the full-screen viewer.
+    command: "dci list-cloudflows -M interactive"
+
+notes: |
+  :::info CLI default view
+  `dci list-cloudflows` presents a curated table by default:
+
+  - **Columns:** `name`, `id`, `published`, `trigger` (from `triggerType`), `run status` (from `lastExecutionStatus`), `last run (UTC)` (from `lastExecutedTime`), and `next run (UTC)` (from `nextRun`).
+  - In interactive tables, `last run (UTC)` and `next run (UTC)` render in your **local timezone** (titled `(local)`); machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+  Flows are addressed by ID only — `export-cloudflow-flow`, `refine-cloud-flow`,
+  `test-run-cloudflow-flow`, and the run commands take the literal `id` shown here; there is no
+  name resolution for flows. The API does not filter or sort this listing server-side, so use
+  `--search` to narrow it.
+
+related: [export-cloudflow-flow, build-cloud-flow, refine-cloud-flow, test-run-cloudflow-flow, list-cloudflow-flow-runs, trigger-cloudflow-webhook]
