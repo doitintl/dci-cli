@@ -26,10 +26,36 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
-## v2.7.2 — September 1, 2026
+## v2.7.2 — September 4, 2026
 
 ### New
 
+- DoiT employees no longer need an Anthropic API key for the AI session:
+  once signed in with `dci login`, `dci ai` runs on DoiT-provided access —
+  short-lived tokens fetched automatically with your existing DoiT sign-in,
+  refreshed behind the scenes, never written to disk. An explicit key (the
+  `ANTHROPIC_API_KEY` environment variable, or a key saved with `/key set`)
+  still takes precedence, and `DCI_AI_PROVIDED=off` opts out.
+- `dci budgets-at-risk` and `dci anomalies-recent` answer two common
+  questions directly — which budgets are currently at risk, and what
+  anomalies appeared recently (bounded with `--window`) — without
+  hand-building the filter and sort on `dci list-budgets` or
+  `dci list-anomalies` each time.
+- `--chart=treemap` draws each group's share of a report's total as
+  proportional rectangles in the report's colors, with exact shares in the
+  legend. It needs no time axis, so it also charts single-period reports
+  the other chart modes cannot.
+- The AI session's input now shows a command's remaining arguments as faint
+  ghost text — path parameters first, then required body fields — consumed
+  as you type real values. Tab accepts what the ghost offers next: an empty
+  pickable slot opens the name picker (the ghost says so: "enter to pick
+  from a list"), a value slot shows a hint from the command's documented
+  example, and the next body field inserts its `name:` prefix for you.
+- Array body fields guide and guard: the ghost shows the literal syntax to
+  type (`tags: [a, b]`), Tab carries the opening bracket, and the line is
+  checked before submission — a plain value where the command expects a
+  list is rejected with the corrected line to copy
+  ("did you mean: tags: [prod, billing]").
 - The bundled agent skill now teaches
   [CloudFlow](https://help.doit.com/docs/operate/cloudflow/intro) flow
   authoring: agents can build or refine flows from a natural-language request
@@ -54,6 +80,40 @@ the CLI guide.
   spellings `dci build-cloudflow` and `dci refine-cloudflow`.
 - `dci list-cloudflows` shows each flow's `id` first — the value
   `dci export-cloudflow-flow` and `dci refine-cloud-flow` need.
+- Table output for humans now lands the rows you came for nearest the
+  prompt: lists sort newest-last, insights rank top-savings-last, and
+  report groups put the largest spenders just above the TOTAL row.
+  Configurable with `--output-order`, the `DCI_OUTPUT_ORDER` environment
+  variable, or `dci config`; JSON/YAML/CSV, agent mode, and piped output
+  keep the classic ordering.
+- When a command's output is taller than the terminal, a dim hint next to
+  the prompt tells you there's more ("↑ N more lines above — scroll up").
+- `--help` shows more of what the API documents: command categories carry
+  a one-line description, and flags with a documented example show it.
+- `dci beta run-report` resolves report names like the rest of the CLI: a
+  typed name resolves to its ID, multi-word names work unquoted, and zero
+  arguments open the interactive report picker — in the shell and in the
+  AI session alike.
+- When a command run from the AI session fails on wrong arguments, the
+  result now ends with the command's one-line usage, so you can fix the
+  call without leaving the session.
+
+### Fixed
+
+- `dci get-cloudflow-flow-run` prints a failed run in full — status,
+  per-node results, and the failure message — instead of collapsing it
+  into an error envelope that hid exactly the detail needed to diagnose
+  the run.
+- In the AI session: Enter with the completion popup open submits the
+  fully typed command instead of a similarly named suggestion, and
+  completion continues past a group name (`/beta run` completes to
+  `beta run-report`). A logged-out session now points at `/login` instead
+  of telling you to leave the session and run `dci login`.
+- The sign-in success page's click-to-run suggestion no longer fights the
+  terminal for keystrokes, and Esc cancels pickers and confirmation
+  prompts in the shell, matching the AI session.
+- `dci get-report --chart` renders the chart next to the prompt instead of
+  above a long table, where it scrolled out of view.
 
 ## v2.7.1 — August 26, 2026
 
