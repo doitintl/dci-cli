@@ -1,0 +1,14 @@
+command: get-custom-theme
+
+arguments:
+  id: Custom theme ID as shown by `dci list-custom-themes`; the theme name is accepted too.
+
+examples:
+  - description: Show one custom theme.
+    command: "dci get-custom-theme <custom-theme-id>"
+  - description: The full record as JSON, including the dark and light palettes.
+    command: "dci get-custom-theme <custom-theme-id> --output json"
+  - description: Only the colors.
+    command: "dci get-custom-theme <custom-theme-id> --fields primaryColor,colors --output json"
+
+related: [list-custom-themes, create-custom-theme, update-custom-theme, delete-custom-theme, set-active-theme]

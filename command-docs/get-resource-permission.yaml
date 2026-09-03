@@ -1,0 +1,17 @@
+command: get-resource-permission
+
+arguments:
+  resource-type: One of `reports`, `budgets`, `alerts`, or `allocations`.
+  resource-id: >-
+    ID of the resource, as shown by the matching list command (`dci list-reports`,
+    `dci list-budgets`, `dci list-alerts`, `dci list-allocations`).
+
+examples:
+  - description: Who can access a report, and with which role.
+    command: "dci get-resource-permission reports <report-id>"
+  - description: A budget's permissions as JSON, for scripts.
+    command: "dci get-resource-permission budgets <budget-id> --output json"
+  - description: Only the per-user roles and the organization-wide access level.
+    command: "dci get-resource-permission allocations <allocation-id> --fields permissions,public --output json"
+
+related: [update-resource-permission, list-reports, list-budgets, list-alerts, list-allocations]

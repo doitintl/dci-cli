@@ -1,0 +1,10 @@
+command: set-active-theme
+
+examples:
+  - description: Activate a custom theme by ID (from `dci list-custom-themes`) for the authenticated user.
+    command: "dci set-active-theme themeId: <custom-theme-id>"
+  - description: Clear the active theme and fall back to the built-in default.
+    command: "dci set-active-theme themeId: default"
+    output: The updated active theme is returned; `dci get-active-theme` confirms it.
+
+related: [get-active-theme, list-custom-themes, get-custom-theme, create-custom-theme]

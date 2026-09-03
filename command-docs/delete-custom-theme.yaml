@@ -1,0 +1,14 @@
+command: delete-custom-theme
+
+arguments:
+  id: Custom theme ID as shown by `dci list-custom-themes`; the theme name is accepted too.
+
+examples:
+  - description: Preview the deletion without sending a request.
+    command: "dci delete-custom-theme <custom-theme-id> --dry-run"
+    output: A local preview of the operation; nothing is deleted.
+  - description: Delete without the confirmation prompt, for scripts.
+    command: "dci delete-custom-theme <custom-theme-id> --yes"
+    output: Exit code 0; the theme disappears from `dci list-custom-themes`.
+
+related: [list-custom-themes, get-custom-theme, create-custom-theme, update-custom-theme, get-active-theme]

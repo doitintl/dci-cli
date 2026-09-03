@@ -1,0 +1,13 @@
+command: list-geographic-access-custom-regions
+
+examples:
+  - description: The custom regions owned by the authenticated tenant.
+    command: "dci list-geographic-access-custom-regions"
+  - description: Just the ID, name, and country codes, as a table.
+    command: "dci list-geographic-access-custom-regions -C id,name,countryCodes"
+  - description: Only regions whose name or country codes contain a term (client-side filter).
+    command: "dci list-geographic-access-custom-regions --search nordics"
+  - description: The full list as JSON, for scripts.
+    command: "dci list-geographic-access-custom-regions --output json"
+
+related: [create-geographic-access-custom-region, get-geographic-access-custom-region, update-geographic-access-custom-region, delete-geographic-access-custom-region, list-geographic-access-countries]

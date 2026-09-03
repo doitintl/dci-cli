@@ -1,0 +1,18 @@
+command: create-custom-theme
+
+examples:
+  - description: Create a theme with a primary color and matching dark and light palettes (hex colors, quoted so the shell does not read `#` as a comment).
+    command: >-
+      dci create-custom-theme name: "Team Backyard", primaryColor: "#0B57D0",
+      colors{dark: ["#8AB4F8", "#81C995", "#FDD663"], light: ["#0B57D0", "#188038", "#E37400"]}
+  - description: Create it from a JSON file.
+    command: "dci create-custom-theme < theme.json"
+    output: |
+      # theme.json
+      {"name": "Team Backyard", "primaryColor": "#0B57D0",
+       "colors": {"dark": ["#8AB4F8", "#81C995", "#FDD663"],
+                  "light": ["#0B57D0", "#188038", "#E37400"]}}
+  - description: Capture the new theme's ID to activate it next.
+    command: "dci create-custom-theme < theme.json --output json | jq -r .id"
+
+related: [list-custom-themes, get-custom-theme, update-custom-theme, delete-custom-theme, set-active-theme]

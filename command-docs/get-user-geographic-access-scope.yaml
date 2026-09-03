@@ -1,0 +1,15 @@
+command: get-user-geographic-access-scope
+
+arguments:
+  target-customer-id: >-
+    Customer ID of the hierarchy root or one of its child customers.
+    `dci get-customer --output json` shows the authenticated customer's ID.
+  user-id: User ID as shown by `dci list-users`; the user must belong to the target customer.
+
+examples:
+  - description: Show a user's geographic scope (`unassigned`, `global`, a `country`, or a `customRegion`).
+    command: "dci get-user-geographic-access-scope <target-customer-id> <user-id>"
+  - description: The scope as JSON, for scripts.
+    command: "dci get-user-geographic-access-scope <target-customer-id> <user-id> --output json"
+
+related: [update-user-geographic-access-scope, delete-user-geographic-access-scope, get-customer-geographic-access-scope, list-users]

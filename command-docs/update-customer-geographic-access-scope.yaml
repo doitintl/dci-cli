@@ -1,0 +1,25 @@
+command: update-customer-geographic-access-scope
+
+arguments:
+  target-customer-id: >-
+    Customer ID of the hierarchy root or one of its child customers.
+    `dci get-customer --output json` shows the authenticated customer's ID.
+
+examples:
+  - description: Limit a customer to one country (ISO 3166-1 alpha-2 code from `dci list-geographic-access-countries`).
+    command: "dci update-customer-geographic-access-scope <target-customer-id> type: country, countryCode: DE"
+  - description: Limit it to a custom region (ID from `dci list-geographic-access-custom-regions`).
+    command: "dci update-customer-geographic-access-scope <target-customer-id> type: customRegion, customRegionId: cr_01J6M8Q9H3Y7T2K5V4N1P0X8ZA"
+  - description: Allow every country and custom region.
+    command: "dci update-customer-geographic-access-scope <target-customer-id> type: global"
+    output: The updated scope is returned; `type` tells you which shape applied.
+
+notes: |
+  :::info One shape per request
+  The body is exactly one of `type: global`, `type: country` with `countryCode`,
+  or `type: customRegion` with `customRegionId`; the request replaces the
+  previous scope atomically. To leave the customer unassigned, use
+  `dci delete-customer-geographic-access-scope` instead.
+  :::
+
+related: [get-customer-geographic-access-scope, delete-customer-geographic-access-scope, update-user-geographic-access-scope, list-geographic-access-countries, list-geographic-access-custom-regions]

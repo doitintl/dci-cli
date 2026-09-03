@@ -1,0 +1,22 @@
+command: update-custom-theme
+
+arguments:
+  id: Custom theme ID as shown by `dci list-custom-themes`; the theme name is accepted too.
+
+examples:
+  - description: Rename a theme.
+    command: "dci update-custom-theme <custom-theme-id> name: \"Team Backyard v2\""
+  - description: Change only the primary color (quoted so the shell does not read `#` as a comment).
+    command: "dci update-custom-theme <custom-theme-id> primaryColor: \"#188038\""
+  - description: Replace both palettes; `dark` and `light` must be sent together.
+    command: >-
+      dci update-custom-theme <custom-theme-id>
+      colors{dark: ["#8AB4F8", "#81C995"], light: ["#0B57D0", "#188038"]}
+  - description: Update from a JSON file.
+    command: "dci update-custom-theme <custom-theme-id> < theme.json"
+    output: |
+      # theme.json
+      {"name": "Team Backyard v2", "primaryColor": "#188038",
+       "colors": {"dark": ["#8AB4F8", "#81C995"], "light": ["#0B57D0", "#188038"]}}
+
+related: [get-custom-theme, list-custom-themes, create-custom-theme, delete-custom-theme, set-active-theme]
