@@ -1,0 +1,22 @@
+command: list-users
+
+examples:
+  - description: Active and invited users in the organization.
+    command: "dci list-users"
+  - description: Look up one user by exact email (matched case-insensitively).
+    command: "dci list-users --email user@example.com"
+  - description: Pending invitations only (client-side substring match over every text field).
+    command: "dci list-users --search invited"
+  - description: Everything as JSON, for scripts.
+    command: "dci list-users --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-users` presents a curated table by default:
+
+  - **Columns:** `email`, `role` (`roleId` resolved to the role name), `status`, `last login (UTC)` (from `lastLogin`), and `mfa enrolled` (from `mfaEnrolled`; blank when unknown).
+  - In interactive tables, `last login (UTC)` renders in your **local timezone** and is titled `last login (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [invite-user, update-user, delete-user, list-roles]

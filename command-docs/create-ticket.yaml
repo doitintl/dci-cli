@@ -1,0 +1,21 @@
+command: create-ticket
+
+examples:
+  - description: Open a Google Cloud support request from a JSON file.
+    command: "dci create-ticket < ticket.json"
+    output: |
+      # ticket.json
+      {"ticket": {"subject": "BigQuery job stuck in PENDING",
+        "body": "Job bquxjob_1234 in project prod-analytics has been pending since 09:00 UTC.",
+        "platform": "google_cloud_platform", "product": "BigQuery", "severity": "normal"}}
+  - description: A short low-severity request about DoiT itself, written inline.
+    command: >-
+      dci create-ticket ticket{subject: "Invoice question", body: "Which contract covers invoice INV-2026-08?",
+      platform: doit, product: Billing, severity: low}
+  - description: Create the ticket and keep only its ID and console link, for scripts.
+    command: "dci create-ticket --fields id,urlUI --output json < ticket.json"
+    output: >-
+      Add `requester` to the body only when calling as a service account; user callers must
+      omit it — their verified email is the requester.
+
+related: [get-ticket, list-tickets, create-ticket-comment, update-ticket, add-ticket-tags]

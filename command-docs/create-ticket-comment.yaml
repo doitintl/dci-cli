@@ -1,0 +1,21 @@
+command: create-ticket-comment
+
+arguments:
+  ticket-id: >-
+    Numeric ticket ID as shown by `dci list-tickets` (the `id` field in JSON output).
+    Tickets have no names, so name resolution does not apply.
+
+examples:
+  - description: Reply on a ticket.
+    command: >-
+      dci create-ticket-comment <ticket-id> body: "We rotated the service-account key and the job now succeeds."
+  - description: Leave an internal note (DoiT employees only; `private` is ignored for customers).
+    command: >-
+      dci create-ticket-comment <ticket-id> body: "Escalated to the BigQuery team.", private: true
+  - description: Post a longer comment from a file and capture the new comment's ID.
+    command: "dci create-ticket-comment <ticket-id> --fields id,created --output json < comment.json"
+    output: |
+      # comment.json
+      {"body": "Timeline: 09:00 job submitted, 09:05 stuck in PENDING, 12:10 cancelled and resubmitted."}
+
+related: [list-ticket-comments, get-ticket, create-ticket, update-ticket]

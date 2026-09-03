@@ -1,0 +1,16 @@
+command: update-ticket
+
+arguments:
+  ticket-id: >-
+    Numeric ticket ID as shown by `dci list-tickets` (the `id` field in JSON output).
+    Tickets have no names, so name resolution does not apply.
+
+examples:
+  - description: Mark a request as resolved (the only status customers may set).
+    command: "dci update-ticket <ticket-id> status: solved"
+  - description: Reopen a request and assign it to a DoiT employee (DoiT employees only).
+    command: "dci update-ticket <ticket-id> assignee: support-agent@doit.com, status: open"
+  - description: Put a request on hold and read back the applied fields as JSON.
+    command: "dci update-ticket <ticket-id> status: hold --output json"
+
+related: [get-ticket, list-tickets, create-ticket-comment]

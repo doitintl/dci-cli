@@ -1,0 +1,15 @@
+command: archive-contract-template
+
+arguments:
+  template-id: >-
+    Template ID (`templateId`) as shown by `dci list-contract-templates`. Templates are not
+    resolved by name.
+
+examples:
+  - description: Preview the archive without sending a request.
+    command: "dci archive-contract-template <template-id> --dry-run"
+  - description: Archive (soft-delete) the template, confirmed for scripts; contracts already created from it are unaffected.
+    command: "dci archive-contract-template <template-id> --yes"
+    output: The template comes back with `status` set to `archived` and an `archivedAt` timestamp.
+
+related: [list-contract-templates, get-contract-template, create-contract-template, update-contract-template]

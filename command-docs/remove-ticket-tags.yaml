@@ -1,0 +1,17 @@
+command: remove-ticket-tags
+
+arguments:
+  ticket-id: >-
+    Numeric ticket ID as shown by `dci list-tickets` (the `id` field in JSON output).
+    Tickets have no names, so name resolution does not apply.
+
+examples:
+  - description: Remove one tag; tags not listed are kept, and removing an absent tag is a no-op.
+    command: "dci remove-ticket-tags <ticket-id> tags: [follow-up]"
+    output: >-
+      Customers send the tag exactly as they added it (`follow-up`); the `customer_tag/`
+      namespace mapping is applied server-side, as on add.
+  - description: Remove several tags at once and read the response as JSON.
+    command: "dci remove-ticket-tags <ticket-id> tags: [billing, follow-up] --output json"
+
+related: [add-ticket-tags, list-ticket-tags, get-ticket, list-tickets]

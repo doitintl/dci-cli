@@ -1,0 +1,13 @@
+command: list-contract-templates
+
+examples:
+  - description: All contract templates owned by your tenant.
+    command: "dci list-contract-templates"
+  - description: Identifier, name, platform, status, and eligibility start only.
+    command: "dci list-contract-templates -C templateId,name,platform,status,eligibleFrom"
+  - description: Only rows mentioning `archived` anywhere in their text fields (client-side match, e.g. on `status`).
+    command: "dci list-contract-templates --search archived"
+  - description: Everything as JSON, for scripts.
+    command: "dci list-contract-templates --output json"
+
+related: [get-contract-template, create-contract-template, update-contract-template, archive-contract-template]

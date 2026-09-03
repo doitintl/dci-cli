@@ -1,0 +1,23 @@
+command: create-contract
+
+arguments:
+  customer-id: >-
+    ID of the customer (tenant) the contract is created for — a direct child tenant (T1 for a T2
+    contract, T2 for a T3 contract). It is the `customerId` field on every `dci list-contracts` row.
+
+examples:
+  - description: Create a draft contract from a JSON file; activate it with `dci activate-contract`.
+    command: "dci create-contract <customer-id> < contract.json"
+    output: |
+      # contract.json
+      {"name": "Acme AWS resale FY27", "renewalPolicy": "auto",
+        "startDate": "2026-10-01T00:00:00Z", "endDate": "2027-09-30T00:00:00Z",
+        "doitInvoicingEnabled": true,
+        "invoicesEmail": "billing@acme.com", "contractUpdatesEmail": "finops@acme.com"}
+  - description: The minimum inline body — name, renewal policy, and start date.
+    command: >-
+      dci create-contract <customer-id> name: "Acme AWS resale FY27", renewalPolicy: manual, startDate: "2026-10-01T00:00:00Z"
+  - description: Keep the new `contractId` for the activate step, for scripts.
+    command: "dci create-contract <customer-id> --fields contractId,status --output json < contract.json"
+
+related: [activate-contract, get-contract, list-contracts, update-contract, cancel-contract]

@@ -1,0 +1,18 @@
+command: invite-user
+
+examples:
+  - description: Invite a user with a role; role IDs come from `dci list-roles`.
+    command: "dci invite-user email: user@example.com, roleId: <role-id>"
+  - description: Fill in the name and job function as well.
+    command: >-
+      dci invite-user email: user@example.com, firstName: Jane, lastName: Doe,
+      jobTitle: "Software / Ops Engineer", roleId: <role-id>
+  - description: Assign the user to an organization from a JSON file (organization IDs come from `dci list-organizations`).
+    command: "dci invite-user < invite.json"
+    output: |
+      # invite.json
+      {"email": "user@example.com", "roleId": "<role-id>", "organizationId": "<organization-id>"}
+  - description: Keep the new invite's ID for `resend-invite` or `cancel-invite`.
+    command: "dci invite-user email: user@example.com, roleId: <role-id> --fields user --output json"
+
+related: [list-users, resend-invite, cancel-invite, update-user, list-roles]

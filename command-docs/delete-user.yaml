@@ -1,0 +1,14 @@
+command: delete-user
+
+arguments:
+  id: >-
+    User ID as shown by `dci list-users` (the `id` field). This also removes the retained row of
+    a cancelled invite. Users are not resolved by name; pass the ID.
+
+examples:
+  - description: Preview what would be deleted without sending a request.
+    command: "dci delete-user <user-id> --dry-run"
+  - description: Delete the user without an interactive prompt, for scripts.
+    command: "dci delete-user <user-id> --yes"
+
+related: [list-users, update-user, cancel-invite, invite-user]

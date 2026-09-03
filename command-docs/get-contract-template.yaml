@@ -1,0 +1,16 @@
+command: get-contract-template
+
+arguments:
+  template-id: >-
+    Template ID (`templateId`) as shown by `dci list-contract-templates`. Templates are not
+    resolved by name.
+
+examples:
+  - description: Show one contract template.
+    command: "dci get-contract-template <template-id>"
+  - description: The full record as JSON, including price books and billing rules.
+    command: "dci get-contract-template <template-id> --output json"
+  - description: Only the price books.
+    command: "dci get-contract-template <template-id> --fields priceBooks --output json"
+
+related: [list-contract-templates, create-contract-template, update-contract-template, archive-contract-template]

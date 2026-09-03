@@ -1,0 +1,17 @@
+command: add-ticket-tags
+
+arguments:
+  ticket-id: >-
+    Numeric ticket ID as shown by `dci list-tickets` (the `id` field in JSON output).
+    Tickets have no names, so name resolution does not apply.
+
+examples:
+  - description: Add two tags; tags already on the ticket are kept, and re-adding one is a no-op.
+    command: "dci add-ticket-tags <ticket-id> tags: [billing, follow-up]"
+    output: >-
+      `applied_tags` echoes the strings actually stored — trimmed and lowercased, and
+      prefixed with `customer_tag/` when the caller is a customer.
+  - description: The stored tag strings as JSON, for scripts.
+    command: "dci add-ticket-tags <ticket-id> tags: [billing] --output json"
+
+related: [remove-ticket-tags, list-ticket-tags, get-ticket, list-tickets]

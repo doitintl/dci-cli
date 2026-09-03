@@ -1,0 +1,29 @@
+command: update-user
+
+arguments:
+  id: >-
+    User ID as shown by `dci list-users` (the `id` field). Users are not resolved by name;
+    pass the ID.
+
+examples:
+  - description: Preview a role change without sending it (role IDs come from `dci list-roles`).
+    command: "dci update-user <user-id> roleId: <role-id> --dry-run"
+  - description: Change the role, confirmed for scripts.
+    command: "dci update-user <user-id> roleId: <role-id> --yes"
+  - description: Update name, job function, and language in one call.
+    command: >-
+      dci update-user <user-id> firstName: Jane, lastName: Doe, jobTitle: "Finance / Accounting", language: en --yes
+  - description: Set phone details from a file (`phone` is the country code; `phoneExtension` is 8–15 digits).
+    command: "dci update-user <user-id> --yes < user.json"
+    output: |
+      # user.json
+      {"phone": "+44", "phoneExtension": "2071234567"}
+
+notes: |
+  :::caution Confirmation required
+  `update-user` can change a user's role, so the CLI classifies it as destructive: it refuses
+  to run without `--yes` (or an interactive confirmation) and exits with code `30` otherwise.
+  Use `--dry-run` to preview the request locally. `jobFunction` is deprecated — send `jobTitle`.
+  :::
+
+related: [list-users, invite-user, delete-user, list-roles]

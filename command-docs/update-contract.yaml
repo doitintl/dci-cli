@@ -1,0 +1,34 @@
+command: update-contract
+
+arguments:
+  customer-id: >-
+    ID of the customer (tenant) that holds the contract — your own tenant or, for partners, a
+    descendant tenant. It is the `customerId` field on every `dci list-contracts` row.
+  contract-id: >-
+    Contract ID (`id`) as shown by `dci list-contracts <customer-id>`. Contracts are not
+    resolved by name.
+
+examples:
+  - description: Preview the new version locally without sending it.
+    command: "dci update-contract <customer-id> <contract-id> --dry-run < contract.json"
+  - description: Create the new version, confirmed for scripts.
+    command: "dci update-contract <customer-id> <contract-id> --yes < contract.json"
+    output: |
+      # contract.json
+      {"name": "Acme AWS resale FY27", "renewalPolicy": "fixed",
+        "startDate": "2026-10-01T00:00:00Z", "endDate": "2027-09-30T00:00:00Z",
+        "invoicesEmail": "billing@acme.com", "contractUpdatesEmail": "finops@acme.com"}
+  - description: A small inline change; the response's `version` is the new version number.
+    command: >-
+      dci update-contract <customer-id> <contract-id> name: "Acme AWS resale FY27 (amended)",
+      renewalPolicy: fixed, startDate: "2026-10-01T00:00:00Z" --yes --output json
+
+notes: |
+  :::caution Confirmation required
+  `update-contract` alters a financial contract, so the CLI classifies it as destructive: it
+  refuses to run without `--yes` (or an interactive confirmation) and exits with code `30`
+  otherwise. Each call creates a whole new version, so `name`, `renewalPolicy`, and
+  `startDate` are required every time; the contract `type` cannot change.
+  :::
+
+related: [get-contract, list-contracts, create-contract, activate-contract, cancel-contract]

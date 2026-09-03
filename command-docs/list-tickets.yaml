@@ -1,0 +1,22 @@
+command: list-tickets
+
+examples:
+  - description: Your most recent support requests, newest first.
+    command: "dci list-tickets"
+  - description: Urgent and high-severity tickets only (same key twice is OR; different keys are AND).
+    command: "dci list-tickets --filter \"severity:urgent|severity:high\""
+  - description: Tickets created on or after 1 August 2026 00:00 UTC (epoch milliseconds), twenty per page.
+    command: "dci list-tickets --min-creation-time 1785542400000 --max-results 20"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-tickets --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-tickets` presents a curated table by default:
+
+  - **Columns:** `subject` (a clickable link to the ticket in the DoiT console in interactive terminals), `status`, `severity`, and `updated (UTC)` (from `updateTime`).
+  - In interactive tables, `updated (UTC)` renders in your **local timezone** and is titled `updated (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-ticket, create-ticket, list-ticket-comments, update-ticket]

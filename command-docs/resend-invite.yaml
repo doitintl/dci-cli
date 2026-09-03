@@ -1,0 +1,28 @@
+command: resend-invite
+
+arguments:
+  id: >-
+    ID of the invited user — the `id` of a `dci list-users` row whose status is `invited`,
+    also returned as `user.id` by `dci invite-user`.
+
+examples:
+  - description: Send a fresh invitation email and reset the expiry to 48 hours from now.
+    command: >-
+      dci resend-invite <invite-id> --idempotency-key "$(uuidgen)"
+    output: >-
+      Old email links stop working; a `Cancelled` invite is reactivated to `Pending`.
+      Retrying with the same key returns the cached result instead of sending again.
+  - description: Simulate the resend server-side without sending anything.
+    command: "dci resend-invite <invite-id> --dry-run"
+  - description: Same, as JSON for scripts.
+    command: "dci resend-invite <invite-id> --idempotency-key <request-key> --output json"
+
+notes: |
+  :::info Dry run is server-side
+  `resend-invite` carries the API's own `dryRun` parameter, so `--dry-run` sends a simulation
+  request and returns the real response shape marked as a dry run. An `--idempotency-key` is
+  required on every real call (UUID v4 or ULID recommended); when you omit it under `--dry-run`
+  the CLI generates a throwaway key for you.
+  :::
+
+related: [cancel-invite, invite-user, list-users]

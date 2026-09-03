@@ -48,7 +48,9 @@ func TestCommandDocsEmbeddedFilesParse(t *testing.T) {
 		for index, example := range doc.Examples {
 			words := exampleInvocationWords(example.Command)
 			for position, word := range words {
-				if strings.HasPrefix(word, "<") && len(word) > 1 && !isCommandDocPlaceholder(word) {
+				// Shorthand punctuation may be glued to a placeholder inside a
+				// body (`<dpma-id>,` or `<id>}`); judge the placeholder itself.
+				if strings.HasPrefix(word, "<") && len(word) > 1 && !isCommandDocPlaceholder(strings.TrimRight(word, ",}]")) {
 					t.Errorf("%s: example %d token %q is not a valid <placeholder> (lowercase letters, digits, dashes); stdin is a bare < followed by a file", key, index+1, word)
 				}
 				if word == "<" && position == len(words)-1 {
