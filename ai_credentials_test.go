@@ -164,13 +164,20 @@ func TestAIProvidedTokenSourceRejectsEmptyToken(t *testing.T) {
 func TestFetchAIProvidedToken(t *testing.T) {
 	seedCachedToken(t, "cli-bearer")
 
-	t.Run("success sends the cached bearer", func(t *testing.T) {
+	// Pin the customer context: the vend URL carries it, and the 401 wording
+	// branches on whether one is set — ambient config must not leak in.
+	t.Setenv("DCI_CUSTOMER_CONTEXT", "acme.com")
+
+	t.Run("success sends the cached bearer and customer context", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				t.Errorf("method = %s, want POST", r.Method)
 			}
 			if got := r.Header.Get("Authorization"); got != "Bearer cli-bearer" {
 				t.Errorf("Authorization = %q", got)
+			}
+			if got := r.URL.Query().Get("customerContext"); got != "acme.com" {
+				t.Errorf("customerContext = %q, want acme.com", got)
 			}
 			fmt.Fprint(w, `{"access_token":"sk-ant-oat01-test","expires_in":1800}`)
 		}))
@@ -208,12 +215,77 @@ func TestFetchAIProvidedToken(t *testing.T) {
 		})
 	}
 
+	t.Run("401 without a customer context names that fix, not re-login", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer server.Close()
+		t.Setenv(aiProvidedURLEnvName, server.URL)
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
+		t.Setenv("DCI_CONFIG_DIR", t.TempDir()) // no customer_context file either
+		_, err := fetchAIProvidedToken(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "customer context") {
+			t.Fatalf("expected a customer-context error, got %v", err)
+		}
+	})
+
 	t.Run("missing sign-in never dials", func(t *testing.T) {
 		seedCachedToken(t, "")
 		t.Setenv(aiProvidedURLEnvName, "http://127.0.0.1:1") // would fail if dialed
 		_, err := fetchAIProvidedToken(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "dci login") {
 			t.Fatalf("expected a sign-in error, got %v", err)
+		}
+	})
+}
+
+func TestAIProvidedEndpointCustomerContext(t *testing.T) {
+	t.Run("appends the active context to the API-base URL", func(t *testing.T) {
+		t.Setenv(aiProvidedURLEnvName, "")
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "acme.com")
+		endpoint, err := aiProvidedEndpoint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(endpoint, aiProvidedPath+"?customerContext=acme.com") {
+			t.Fatalf("endpoint = %q", endpoint)
+		}
+	})
+
+	t.Run("appends the active context to an override URL", func(t *testing.T) {
+		t.Setenv(aiProvidedURLEnvName, "https://example.test/vend")
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "acme.com")
+		endpoint, err := aiProvidedEndpoint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if endpoint != "https://example.test/vend?customerContext=acme.com" {
+			t.Fatalf("endpoint = %q", endpoint)
+		}
+	})
+
+	t.Run("an override URL keeps its own context", func(t *testing.T) {
+		t.Setenv(aiProvidedURLEnvName, "https://example.test/vend?customerContext=other.com")
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "acme.com")
+		endpoint, err := aiProvidedEndpoint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if endpoint != "https://example.test/vend?customerContext=other.com" {
+			t.Fatalf("endpoint = %q", endpoint)
+		}
+	})
+
+	t.Run("no context leaves the URL untouched", func(t *testing.T) {
+		t.Setenv(aiProvidedURLEnvName, "https://example.test/vend")
+		t.Setenv("DCI_CUSTOMER_CONTEXT", "")
+		t.Setenv("DCI_CONFIG_DIR", t.TempDir())
+		endpoint, err := aiProvidedEndpoint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if endpoint != "https://example.test/vend" {
+			t.Fatalf("endpoint = %q", endpoint)
 		}
 	})
 }
