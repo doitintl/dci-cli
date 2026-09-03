@@ -1,0 +1,11 @@
+command: list-products
+
+examples:
+  - description: Every product across all platforms.
+    command: "dci list-products"
+  - description: Products of one platform, using an ID from `dci list-platforms`.
+    command: "dci list-products --platform google-cloud"
+  - description: Products whose name contains a term, matched client-side.
+    command: "dci list-products --search kubernetes"
+
+related: [list-platforms]

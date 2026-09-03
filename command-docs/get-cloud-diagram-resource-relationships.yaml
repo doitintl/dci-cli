@@ -1,0 +1,21 @@
+command: get-cloud-diagram-resource-relationships
+
+arguments:
+  id: >-
+    Layer ID: the `ssid` of a layer listed by `dci get-cloud-diagram-components`
+    (also the `ss_id` field in `dci get-cloud-diagrams-stats` and `dci search-cloud-diagrams` results).
+  rid: >-
+    Anchor resource ID: the `_id` of a node, element, or group on that layer, as returned by
+    `dci search-cloud-diagrams` or `dci export-cloud-diagram-json`.
+
+examples:
+  - description: Direct neighbours of a resource along the diagram's links, in both directions.
+    command: "dci get-cloud-diagram-resource-relationships <layer-id> <resource-id>"
+  - description: Everything downstream of it, following links transitively (capped at 200 relations).
+    command: "dci get-cloud-diagram-resource-relationships <layer-id> <resource-id> --direction downstream --depth transitive"
+  - description: Group membership instead of links — the members of a group, or the groups that contain a resource.
+    command: "dci get-cloud-diagram-resource-relationships <layer-id> <resource-id> --kind group_members"
+  - description: Links and groups merged, as JSON; check `truncated` before trusting the count.
+    command: "dci get-cloud-diagram-resource-relationships <layer-id> <resource-id> --kind both --output json"
+
+related: [search-cloud-diagrams, get-statussheet-components, get-cloud-diagram-cost-snapshot]

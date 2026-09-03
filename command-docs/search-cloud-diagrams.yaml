@@ -1,0 +1,11 @@
+command: search-cloud-diagrams
+
+examples:
+  - description: Search layers, component names, and component property values for a term.
+    command: "dci search-cloud-diagrams query: payments-db"
+  - description: Limit the search to one layer and return up to five hits per category.
+    command: "dci search-cloud-diagrams query: payments-db, size: 5, ss_id: <layer-id>"
+  - description: The next page of a larger result, as JSON.
+    command: "dci search-cloud-diagrams --output json query: payments-db, size: 20, from: 20"
+
+related: [find-cloud-diagrams, get-statussheet-components, get-cloud-diagram-resource-relationships, get-cloud-diagram-components]

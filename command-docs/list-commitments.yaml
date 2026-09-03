@@ -1,0 +1,19 @@
+command: list-commitments
+
+examples:
+  - description: Your commitments, newest first.
+    command: "dci list-commitments"
+  - description: Google Cloud commitments only, ending soonest first.
+    command: "dci list-commitments --filter provider:google-cloud --sort-by endDate --sort-order asc"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-commitments --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-commitments` presents a curated table by default:
+
+  - **Columns:** `name`, `provider` (from `cloudProvider`), `commitment`, `attainment`, and `forecast` (from `totalCommitmentValue`, `totalCurrentAttainment`, and `totalForecastValue`, all with the commitment's currency symbol), plus `start` and `end` dates.
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-commitment]

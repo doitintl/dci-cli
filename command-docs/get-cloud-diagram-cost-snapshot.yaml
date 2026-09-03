@@ -1,0 +1,16 @@
+command: get-cloud-diagram-cost-snapshot
+
+arguments:
+  id: >-
+    Layer ID: the `ssid` of a layer listed by `dci get-cloud-diagram-components`
+    (also the `ss_id` field in `dci get-cloud-diagrams-stats` and `dci search-cloud-diagrams` results).
+
+examples:
+  - description: Cost snapshot for a diagram layer — total spend, period-over-period change, top resources and services, and a daily trend.
+    command: "dci get-cloud-diagram-cost-snapshot <layer-id>"
+  - description: A fixed month with weekly trend buckets.
+    command: "dci get-cloud-diagram-cost-snapshot <layer-id> --start-date 2026-08-01 --end-date 2026-08-31 --interval week"
+  - description: Just the headline numbers and the top resources, as JSON.
+    command: "dci get-cloud-diagram-cost-snapshot <layer-id> --fields total,currency,trendingPct,topResources --output json"
+
+related: [get-cloud-diagram-components, get-cloud-diagram-resource-relationships, get-cloud-diagrams-stats]

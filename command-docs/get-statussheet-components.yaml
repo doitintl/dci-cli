@@ -1,0 +1,21 @@
+command: get-statussheet-components
+
+arguments:
+  id: >-
+    Layer ID: the `ssid` of a layer listed by `dci get-cloud-diagram-components`
+    (also the `ss_id` field in `dci get-cloud-diagrams-stats` and `dci search-cloud-diagrams` results).
+
+examples:
+  - description: Fetch specific nodes of a layer by component ID (IDs come from `dci search-cloud-diagrams` or `dci export-cloud-diagram-json`).
+    command: "dci get-statussheet-components <layer-id> node: [<node-id>]"
+  - description: Nodes and groups in one call, projected to a few fields.
+    command: >-
+      dci get-statussheet-components <layer-id> --p "name cld_id cld_type"
+      node: [<node-id>], group: [<group-id>]
+  - description: A longer selection read from a file.
+    command: "dci get-statussheet-components <layer-id> < components.json"
+    output: |
+      # components.json
+      {"node": ["<node-id>", "<node-id>"], "element": ["<element-id>"], "link": ["<link-id>"]}
+
+related: [get-cloud-diagram-components, export-cloud-diagram-json, search-cloud-diagrams, list-cloud-diagram-node-activities]

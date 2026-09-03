@@ -1,0 +1,14 @@
+command: get-cloud-diagram-layer-snapshot
+
+arguments:
+  id: >-
+    Layer ID: the `ssid` of a layer listed by `dci get-cloud-diagram-components`
+    (also the `ss_id` field in `dci get-cloud-diagrams-stats` and `dci search-cloud-diagrams` results).
+
+examples:
+  - description: Show one saved snapshot of a layer; snapshot IDs come from `dci list-cloud-diagram-layer-snapshots`.
+    command: "dci get-cloud-diagram-layer-snapshot <layer-id> --snapshot-id <snapshot-id>"
+  - description: As JSON, e.g. to follow `prevState` back through the snapshot chain.
+    command: "dci get-cloud-diagram-layer-snapshot <layer-id> --snapshot-id <snapshot-id> --output json"
+
+related: [list-cloud-diagram-layer-snapshots, list-cloud-diagram-activity-groups, export-cloud-diagram-json]

@@ -1,0 +1,9 @@
+command: list-organizations
+
+examples:
+  - description: The organizations defined for your customer.
+    command: "dci list-organizations"
+  - description: IDs and names as JSON, for scripts.
+    command: "dci list-organizations --output json"
+
+related: [list-roles, list-account-team, validate]

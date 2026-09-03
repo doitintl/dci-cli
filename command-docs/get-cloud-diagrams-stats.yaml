@@ -1,0 +1,11 @@
+command: get-cloud-diagrams-stats
+
+examples:
+  - description: Every diagram with its cloud account, import status, and change counts.
+    command: "dci get-cloud-diagrams-stats"
+  - description: Activity stats for August 2026 (RFC 3339 timestamps).
+    command: "dci get-cloud-diagrams-stats --start 2026-08-01T00:00:00Z --end 2026-09-01T00:00:00Z"
+  - description: As JSON, e.g. to pick the `ss_id` (layer ID) that the other cloud-diagram commands take.
+    command: "dci get-cloud-diagrams-stats --output json"
+
+related: [get-cloud-diagram-components, list-cloud-diagram-activity-groups, get-cloud-diagram-cost-snapshot]

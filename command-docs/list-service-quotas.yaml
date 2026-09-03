@@ -1,0 +1,11 @@
+command: list-service-quotas
+
+examples:
+  - description: The quotas DoiT monitors for you, most utilized first.
+    command: "dci list-service-quotas"
+  - description: AWS quotas at 80% utilization or higher (where the `warning` status begins).
+    command: "dci list-service-quotas --cloud-provider aws --min-utilization-percent 80"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-service-quotas --all --output json"
+
+related: [list-cloud-incidents, list-platforms]

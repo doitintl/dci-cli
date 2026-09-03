@@ -1,0 +1,21 @@
+command: validate
+
+examples:
+  - description: Who am I — the domain and email the API resolves your credentials to.
+    command: "dci validate"
+    output: >-
+      A one-row table with `domain` and `email`. An authentication or permission error means
+      the cached login or `DCI_API_KEY` is not accepted for the active customer context.
+  - description: Check access under another customer context before switching to it.
+    command: "dci validate --customer-context acme.com"
+  - description: As JSON, for a CI preflight step.
+    command: "dci validate --output json"
+
+notes: |
+  :::tip Authentication vs. access
+  `dci login` proves authentication; `dci validate` confirms both identity and access under
+  the active customer context, so run it after switching contexts or when a command fails
+  with `PERMISSION_DENIED`. `dci status` shows the local session state without calling the API.
+  :::
+
+related: [status, login, list-account-team]

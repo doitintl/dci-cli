@@ -1,0 +1,9 @@
+command: list-platforms
+
+examples:
+  - description: The available platforms, with the IDs that `dci list-products --platform` takes.
+    command: "dci list-platforms"
+  - description: As compact TOON, the agent-mode default.
+    command: "dci list-platforms --output toon"
+
+related: [list-products]
