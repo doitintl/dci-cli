@@ -1,0 +1,15 @@
+command: update-asset
+
+arguments:
+  id: >-
+    Asset ID as shown by `dci list-assets -C id,name,type` (the default table
+    does not show the ID), for example `g-suite-2319621428`. Only license
+    subscriptions such as Google Workspace or Office 365 can be updated.
+
+examples:
+  - description: Set the subscription to 25 licenses.
+    command: "dci update-asset <asset-id> quantity: 25"
+  - description: The same change, printing the updated asset as JSON.
+    command: "dci update-asset <asset-id> quantity: 25 --output json"
+
+related: [get-asset, list-assets, create-asset]

@@ -1,0 +1,39 @@
+command: create-insight
+
+arguments:
+  source-id: >-
+    The insight source. Only insights created through the public API can be
+    managed, so this is always `public-api`.
+  insight-key: >-
+    Your own unique key for the insight within the source, for example
+    `idle-ec2-instances`. Existing keys are listed by
+    `dci list-insights --source public-api -C key,title`.
+
+examples:
+  - description: Create an insight with the required metadata (the same key again updates it in place).
+    command: >-
+      dci create-insight public-api idle-ec2-instances
+      key: idle-ec2-instances, title: "Idle EC2 instances",
+      shortDescription: "Instances under 5% CPU for the last 14 days",
+      cloudProvider: aws, categories: [FinOps]
+  - description: Create it with the long description, an easy-win rationale, and a report link, from a file.
+    command: "dci create-insight public-api idle-ec2-instances < insight.json"
+    output: |
+      # insight.json
+      {"key": "idle-ec2-instances", "title": "Idle EC2 instances",
+       "shortDescription": "Instances under 5% CPU for the last 14 days",
+       "detailedDescriptionMdx": "## Why this matters\nThese instances have been idle for two weeks...",
+       "easyWinDescription": "Stopping idle instances needs no code change.",
+       "reportUrl": "https://console.doit.com/customers/acme/analytics/reports/idle-ec2",
+       "cloudProvider": "aws", "categories": ["FinOps"]}
+  - description: Dismiss the insight by re-sending it with a status (this replaces the deprecated update-insight-status).
+    command: "dci create-insight public-api idle-ec2-instances < dismiss.json"
+    output: |
+      # dismiss.json
+      {"key": "idle-ec2-instances", "title": "Idle EC2 instances",
+       "shortDescription": "Instances under 5% CPU for the last 14 days",
+       "cloudProvider": "aws", "categories": ["FinOps"],
+       "status": "dismissed",
+       "dismissalDetails": {"reason": "not relevant", "comment": "Sandbox account, stopped nightly"}}
+
+related: [replace-insight-resource-results, get-insight, list-insights, create-insights, delete-insight]

@@ -1,0 +1,22 @@
+command: list-assets
+
+examples:
+  - description: The customer's assets, newest first.
+    command: "dci list-assets"
+  - description: Only Google Workspace subscriptions.
+    command: "dci list-assets --filter type:g-suite"
+  - description: Google Cloud and AWS assets (the same key twice means OR).
+    command: "dci list-assets --filter \"type:google-cloud|type:amazon-web-services\""
+  - description: Every page with IDs, for scripts.
+    command: "dci list-assets --all --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-assets` presents a curated table by default:
+
+  - **Columns:** `name` (a clickable link to the asset in the DoiT console in interactive terminals), `type`, and `created (UTC)` (from `createTime`).
+  - In interactive tables, `created (UTC)` renders in your **local timezone** and is titled `created (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-asset, update-asset, create-asset]

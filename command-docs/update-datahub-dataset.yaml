@@ -1,0 +1,17 @@
+command: update-datahub-dataset
+
+arguments:
+  name: >-
+    Dataset name as shown by `dci list-datahub-datasets`. The name is the
+    dataset's identifier and cannot be changed; to rename, delete the dataset
+    and create a new one.
+
+examples:
+  - description: Change the description; omitted fields keep their stored values.
+    command: "dci update-datahub-dataset <dataset-name> description: \"Token spend exported nightly from LiteLLM\""
+  - description: Set the preset logo shown in the DoiT console.
+    command: "dci update-datahub-dataset <dataset-name> logoName: litellm"
+  - description: Clear the description and the logo by sending empty strings.
+    command: "dci update-datahub-dataset <dataset-name> description: \"\", logoName: \"\""
+
+related: [get-datahub-dataset, list-datahub-datasets, create-datahub-dataset, delete-datahub-dataset]

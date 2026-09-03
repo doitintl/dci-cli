@@ -1,0 +1,10 @@
+command: delete-insights
+
+examples:
+  - description: Preview which insights match the key, without sending a request.
+    command: "dci delete-insights --insight-key <insight-key> --dry-run"
+  - description: Delete every batch-source insight with that key, and their resource results, without a prompt (interactive terminals ask first).
+    command: "dci delete-insights --insight-key <insight-key> --yes"
+    output: Exit code 0 and no output; `dci list-insights --source public-api` no longer lists the insight.
+
+related: [delete-insight, list-insights, create-insights]

@@ -1,0 +1,20 @@
+command: list-datahub-datasets
+
+examples:
+  - description: All datasets, with when and by whom each was last updated.
+    command: "dci list-datahub-datasets"
+  - description: Only datasets whose name or description mentions LiteLLM (client-side substring match).
+    command: "dci list-datahub-datasets --search litellm"
+  - description: The raw records, including descriptions and record counts, as JSON.
+    command: "dci list-datahub-datasets --output json"
+
+notes: |
+  :::info CLI default view
+  `dci list-datahub-datasets` presents a curated table by default:
+
+  - **Columns:** `name`, `updated (UTC)` (from `lastUpdated`), and `updated by` (from `updatedBy`).
+  - In interactive tables, `updated (UTC)` renders in your **local timezone** and is titled `updated (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
+  - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
+  :::
+
+related: [get-datahub-dataset, create-datahub-dataset, update-datahub-dataset, ingest-datahub-events]

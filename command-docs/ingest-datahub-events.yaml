@@ -1,0 +1,22 @@
+command: ingest-datahub-events
+
+examples:
+  - description: Send one cost event to a dataset (`provider` is the dataset name; `time` is RFC 3339).
+    command: >-
+      dci ingest-datahub-events events: [{provider: litellm-usage,
+      time: "2026-09-01T00:00:00Z", metrics: [{type: cost, value: 42.5}]}]
+  - description: Send a batch with dimensions and your own event IDs, from a file.
+    command: "dci ingest-datahub-events < events.json"
+    output: |
+      # events.json
+      {"events": [{
+        "provider": "litellm-usage", "time": "2026-09-01T00:00:00Z",
+        "id": "2026-09-01-team-backyard",
+        "dimensions": [{"key": "project_id", "type": "fixed", "value": "backyard-prod"},
+                       {"key": "team", "type": "label", "value": "backyard"}],
+        "metrics": [{"type": "cost", "value": 42.5}, {"type": "tokens", "value": 1250000}]
+      }]}
+  - description: Print the ingestion response as JSON, for a pipeline log.
+    command: "dci ingest-datahub-events --output json < events.json"
+
+related: [create-datahub-dataset, list-datahub-datasets, delete-datahub-events-by-filter, ingest-datahub-events-csv]

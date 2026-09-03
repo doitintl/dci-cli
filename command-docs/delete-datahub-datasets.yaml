@@ -1,0 +1,10 @@
+command: delete-datahub-datasets
+
+examples:
+  - description: Preview which datasets would be deleted, without sending a request.
+    command: "dci delete-datahub-datasets datasets: [litellm-usage, warehouse-costs] --dry-run"
+  - description: Delete several datasets and all their data without a prompt, for scripts and CI (interactive terminals ask first).
+    command: "dci delete-datahub-datasets datasets: [litellm-usage, warehouse-costs] --yes"
+    output: Exit code 0 and no output; `dci list-datahub-datasets` no longer lists them.
+
+related: [delete-datahub-dataset, delete-datahub-events-by-filter, list-datahub-datasets]

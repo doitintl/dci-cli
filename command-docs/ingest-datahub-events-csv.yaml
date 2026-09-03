@@ -1,0 +1,18 @@
+command: ingest-datahub-events-csv
+
+examples:
+  - description: The request shape (CSV file plus the dataset name as `provider`). Not functional from the CLI yet, which cannot encode multipart uploads; use `dci ingest-datahub-events` or upload the CSV in the DoiT console.
+    command: "dci ingest-datahub-events-csv provider: litellm-usage, file: @events.csv"
+
+notes: |
+  :::warning Not available from the CLI yet
+  This operation takes a `multipart/form-data` body (the CSV file plus a
+  `provider` field). The CLI only encodes JSON request bodies, so the
+  shorthand body above fails with `not sure how to marshal multipart/form-data`
+  before any request is sent. Until that changes, ingest data with
+  `dci ingest-datahub-events` (JSON events, one command per batch) or upload
+  the CSV in the DoiT console — see
+  [CSV ingestion](/docs/integrations/datahub/import-data/upload-csv).
+  :::
+
+related: [ingest-datahub-events, create-datahub-dataset, list-datahub-datasets]

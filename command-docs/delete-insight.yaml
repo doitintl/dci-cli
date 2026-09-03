@@ -1,0 +1,18 @@
+command: delete-insight
+
+arguments:
+  source-id: >-
+    The insight source. Only insights created through the public API can be
+    deleted, so this is always `public-api`.
+  insight-key: >-
+    Insight key as shown by `dci list-insights --source public-api -C key,title`
+    (the default table does not show the key).
+
+examples:
+  - description: Preview what would be deleted, without sending a request.
+    command: "dci delete-insight public-api <insight-key> --dry-run"
+  - description: Delete the insight and all its resource results without a prompt, for scripts and CI (interactive terminals ask first).
+    command: "dci delete-insight public-api <insight-key> --yes"
+    output: Exit code 0 and no output; `dci list-insights --source public-api` no longer lists the insight.
+
+related: [delete-insights, get-insight, list-insights, create-insight]

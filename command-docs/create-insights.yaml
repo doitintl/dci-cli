@@ -1,0 +1,22 @@
+command: create-insights
+
+examples:
+  - description: Create or update several insights, each with its resource results inline, from a file.
+    command: "dci create-insights < insights.json"
+    output: |
+      # insights.json
+      {"results": [{
+        "key": "idle-ec2-instances", "title": "Idle EC2 instances",
+        "shortDescription": "Instances under 5% CPU for the last 14 days",
+        "cloudProvider": "aws", "categories": ["FinOps"],
+        "resourceResults": [{
+          "account": "123456789012", "cloudProvider": "aws",
+          "resourceId": "i-0abc123def4567890", "resourceType": "instance", "location": "eu-west-2",
+          "resultType": "potential_daily_savings_with_recommendation",
+          "result": {"value": 12.5, "current": "m5.2xlarge", "recommendation": "m5.large"}
+        }]
+      }]}
+  - description: The same batch, printing the API response as JSON for a pipeline log.
+    command: "dci create-insights --output json < insights.json"
+
+related: [create-insight, replace-insight-resource-results, list-insights, delete-insights]
