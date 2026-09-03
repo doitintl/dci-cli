@@ -1,0 +1,14 @@
+command: list-ticket-tags
+
+arguments:
+  ticket-id: >-
+    Numeric ticket ID as shown by `dci list-tickets` (the `id` field in JSON output).
+    Tickets have no names, so name resolution does not apply.
+
+examples:
+  - description: The tags currently on a ticket (customers see their own tags with the `customer_tag/` prefix stripped).
+    command: "dci list-ticket-tags <ticket-id>"
+  - description: As JSON, for scripts; `tags` is always present and empty when there are none.
+    command: "dci list-ticket-tags <ticket-id> --output json"
+
+related: [add-ticket-tags, remove-ticket-tags, get-ticket]

@@ -1,0 +1,16 @@
+command: list-ticket-comments
+
+arguments:
+  ticket-id: >-
+    Numeric ticket ID as shown by `dci list-tickets` (the `id` field in JSON output).
+    Tickets have no names, so name resolution does not apply.
+
+examples:
+  - description: All comments on a ticket, in one response (customers see public comments only).
+    command: "dci list-ticket-comments <ticket-id>"
+  - description: Wrap long comment bodies instead of truncating them.
+    command: "dci list-ticket-comments <ticket-id> -M wrap"
+  - description: Author, timestamp, and text as JSON, for scripts.
+    command: "dci list-ticket-comments <ticket-id> --fields author,created,body --output json"
+
+related: [create-ticket-comment, get-ticket, list-tickets]

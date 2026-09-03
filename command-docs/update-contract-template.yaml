@@ -1,0 +1,30 @@
+command: update-contract-template
+
+arguments:
+  template-id: >-
+    Template ID (`templateId`) as shown by `dci list-contract-templates`. Templates are not
+    resolved by name.
+
+examples:
+  - description: Preview the update locally without sending it.
+    command: "dci update-contract-template <template-id> --dry-run < template.json"
+  - description: Apply the update, confirmed for scripts.
+    command: "dci update-contract-template <template-id> --yes < template.json"
+    output: |
+      # template.json
+      {"name": "AWS resale standard", "platform": "amazon-web-services",
+        "eligibleFrom": "2026-10-01T00:00:00Z", "eligibleTo": "2028-09-30T00:00:00Z"}
+  - description: Extend the eligibility window inline; the required fields travel with it.
+    command: >-
+      dci update-contract-template <template-id> name: "AWS resale standard", platform: amazon-web-services,
+      eligibleFrom: "2026-10-01T00:00:00Z", eligibleTo: "2028-09-30T00:00:00Z" --yes
+
+notes: |
+  :::caution Confirmation required
+  `update-contract-template` changes what future contracts are built from, so the CLI
+  classifies it as destructive: it refuses to run without `--yes` (or an interactive
+  confirmation) and exits with code `30` otherwise. The body replaces the template, so
+  `name`, `platform`, and `eligibleFrom` are required every time.
+  :::
+
+related: [get-contract-template, list-contract-templates, create-contract-template, archive-contract-template]

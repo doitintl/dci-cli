@@ -1,0 +1,19 @@
+command: create-contract-template
+
+examples:
+  - description: Create a template with one price book from a JSON file.
+    command: "dci create-contract-template < template.json"
+    output: |
+      # template.json
+      {"name": "AWS resale standard", "platform": "amazon-web-services",
+        "eligibleFrom": "2026-10-01T00:00:00Z", "eligibleTo": "2027-09-30T00:00:00Z",
+        "priceBooks": [{"name": "Standard AWS",
+          "rules": [{"name": "Support uplift", "cloud": "amazon-web-services",
+            "percentageChange": 3, "applyInLine": true, "includeCredits": false}]}]}
+  - description: The minimum inline body — name, platform, and the date it becomes eligible.
+    command: >-
+      dci create-contract-template name: "AWS resale standard", platform: amazon-web-services, eligibleFrom: "2026-10-01T00:00:00Z"
+  - description: Keep the new `templateId`, for scripts.
+    command: "dci create-contract-template --fields templateId,status --output json < template.json"
+
+related: [list-contract-templates, get-contract-template, update-contract-template, archive-contract-template]

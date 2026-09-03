@@ -1,0 +1,20 @@
+command: activate-contract
+
+arguments:
+  customer-id: >-
+    ID of the customer (tenant) that holds the contract — your own tenant or, for partners, a
+    descendant tenant. It is the `customerId` field on every `dci list-contracts` row.
+  contract-id: >-
+    Contract ID (`id`) as shown by `dci list-contracts <customer-id>` or returned as `contractId`
+    by `dci create-contract`. Contracts are not resolved by name.
+
+examples:
+  - description: Preview the activation without sending a request.
+    command: "dci activate-contract <customer-id> <contract-id> --dry-run"
+  - description: Activate a draft contract, confirmed for scripts.
+    command: "dci activate-contract <customer-id> <contract-id> --yes"
+    output: >-
+      `status` is `active`, or `scheduled` when the start date is in the future; a `409`
+      means an active contract of the same type already exists for this tier.
+
+related: [create-contract, get-contract, list-contracts, update-contract, cancel-contract]

@@ -1,0 +1,20 @@
+command: cancel-contract
+
+arguments:
+  customer-id: >-
+    ID of the customer (tenant) that holds the contract — your own tenant or, for partners, a
+    descendant tenant. It is the `customerId` field on every `dci list-contracts` row.
+  contract-id: >-
+    Contract ID (`id`) as shown by `dci list-contracts <customer-id>`. Contracts are not
+    resolved by name.
+
+examples:
+  - description: Preview the cancellation without sending a request.
+    command: "dci cancel-contract <customer-id> <contract-id> --dry-run"
+  - description: Cancel with a reason, confirmed for scripts (active contracts cannot be deleted; cancel is the terminal operation).
+    command: >-
+      dci cancel-contract <customer-id> <contract-id> reason: "Customer moved to a direct agreement" --yes
+  - description: Cancel without a reason and read the resulting status as JSON.
+    command: "dci cancel-contract <customer-id> <contract-id> --yes --output json"
+
+related: [activate-contract, get-contract, list-contracts, update-contract]

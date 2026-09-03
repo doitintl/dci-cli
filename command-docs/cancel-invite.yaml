@@ -1,0 +1,29 @@
+command: cancel-invite
+
+arguments:
+  id: >-
+    ID of the invited user — the `id` of a `dci list-users` row whose status is `invited`,
+    also returned as `user.id` by `dci invite-user`.
+
+examples:
+  - description: Simulate the cancellation server-side; the CLI supplies a throwaway idempotency key for the dry run.
+    command: "dci cancel-invite <invite-id> --dry-run"
+  - description: Cancel the invite; the key is required, and retrying with the same key returns the cached result.
+    command: >-
+      dci cancel-invite <invite-id> --idempotency-key "$(uuidgen)" --yes
+    output: >-
+      The invite is marked `Cancelled` and its email links stop working; the row stays in
+      `dci list-users` until you `dci delete-user <invite-id>`.
+  - description: Same, as JSON for scripts.
+    command: "dci cancel-invite <invite-id> --idempotency-key <request-key> --yes --output json"
+
+notes: |
+  :::info Dry run is server-side
+  `cancel-invite` carries the API's own `dryRun` parameter, so `--dry-run` sends a simulation
+  request and returns the real response shape marked as a dry run, instead of the local preview
+  most destructive commands print. An `--idempotency-key` is required on every real call
+  (UUID v4 or ULID recommended); when you omit it under `--dry-run` the CLI generates a
+  throwaway key for you.
+  :::
+
+related: [resend-invite, invite-user, list-users, delete-user]

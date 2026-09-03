@@ -1,0 +1,18 @@
+command: list-contracts
+
+arguments:
+  customer-id: >-
+    ID of the customer (tenant) whose contracts to list — your own tenant or, for partners, a
+    descendant tenant. It is echoed as `customerId` on every row.
+
+examples:
+  - description: All contracts held by a customer.
+    command: "dci list-contracts <customer-id>"
+  - description: Only rows mentioning `active` anywhere in their text fields (client-side match, e.g. on `status`).
+    command: "dci list-contracts <customer-id> --search active"
+  - description: Name, status, and term only.
+    command: "dci list-contracts <customer-id> -C name,status,startDate,endDate"
+  - description: Everything as JSON, for scripts.
+    command: "dci list-contracts <customer-id> --output json"
+
+related: [get-contract, create-contract, activate-contract, update-contract, cancel-contract]
