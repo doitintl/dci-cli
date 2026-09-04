@@ -51,8 +51,8 @@ The `dpkg`/`rpm` probes run only on Linux, only when the path heuristics miss, a
 For `brew`/`scoop`/`winget`, `dci update`:
 
 1. Fetches the latest tag fresh (reusing `fetchLatestVersion`, update.go:112) and exits 0 with "already up to date" when current.
-2. Prints what it is about to do and **runs the manager's command** (`brew upgrade dci`, etc.) after an interactive confirm — the F3-style default-Cancel prompt behind `tuiActive()`, plain `[y/N]` otherwise. `--yes` skips the prompt.
-3. Streams the manager's output through, propagates its exit code, and re-checks `dci --version`-style that the binary now reports the new version.
+2. Prints what it is about to do and **runs the manager's command** (`brew update && brew upgrade dci`, etc.) after an interactive confirm — the F3-style default-Cancel prompt behind `tuiActive()`, plain `[y/N]` otherwise. `--yes` skips the prompt. Homebrew and Scoop resolve a third-party tap/bucket from a local clone that the upgrade does not reliably fetch (Homebrew's auto-update is time-throttled), so the index refresh (`brew update`, `scoop update`) runs first, as part of the same confirmed plan; WinGet queries its sources live and needs none. A refresh that fails warns and does not abort the upgrade — step 3 is what decides whether anything moved.
+3. Streams the manager's output through, propagates its exit code, and re-checks that the binary now reports the new version. **The exit code alone is not evidence**: every manager exits 0 when it decides the installed version is already current, so a no-op upgrade (stale index, formula not yet published, pinned package) is otherwise indistinguishable from a real one and would be reported as an update that did not happen. The check runs the launch path (`os.Executable()`, deliberately *not* symlink-resolved — a Homebrew upgrade repoints `bin/dci` at the new keg while the old keg is still on disk) with `--version`; a version still behind the target is a `UPDATE_FAILED` error naming the gap, and a probe that cannot answer is treated as success rather than an invented failure.
 
 For `deb`/`rpm` there is no repository to delegate to (packages are downloaded from GitHub Releases — README "Linux"), and replacing a dpkg/rpm-owned file behind the database's back is the one thing this spec refuses to do. Instead, `dci update` treats the download+install pipeline as the delegated command: it shows the exact steps (`curl -fsSLO …/dci_<ver>_linux_<arch>.deb && sudo dpkg -i …` / `sudo rpm -U …`), and after the same default-Cancel confirm executes them through the user's shell — sudo prompts for the password interactively, exactly as if the user had pasted the line themselves. The CLI never caches or handles the password; declining the confirm (or a non-TTY context) falls back to printing the line. The downloaded package is checksum-verified against `checksums.txt` before the install step runs.
 
@@ -79,7 +79,7 @@ Flags: `--check` (report only — today's `dci upgrade` behavior), `--yes`, `--v
 
 `dci update` invoked in agent mode (or with non-TTY stdout) never mutates anything without `--yes`:
 
-- Without `--yes`: behaves as `--check`, emitting a JSON result `{ "current": "2.5.1", "latest": "2.5.2", "updateAvailable": true, "channel": "brew", "instruction": "brew upgrade dci" }` on stdout.
+- Without `--yes`: behaves as `--check`, emitting a JSON result `{ "current": "2.5.1", "latest": "2.5.2", "updateAvailable": true, "channel": "brew", "instruction": "brew update && brew upgrade dci" }` on stdout.
 - With `--yes`: performs the update (self channel) or executes the manager (managed channels), then emits the same shape plus `"updated": true`.
 - Failures follow the structured error contract (error_contract.go): `UPDATE_FAILED` with a hint naming the manual instruction, network failures as `NETWORK_ERROR` exit 41.
 
