@@ -26,6 +26,45 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.7.5 — September 4, 2026
+
+### New
+
+- `dci export-datahub-dataset-records` exports the records of a DataHub
+  dataset, and the CLI prints that export as the file it is — CSV, or
+  newline-delimited JSON with `--format jsonl` — instead of an escaped
+  string. See
+  [export-datahub-dataset-records](https://help.doit.com/docs/cli/generated/command-groups/datahub/export-datahub-dataset-records).
+- `--all` exports a whole dataset in one command. The API returns one page per
+  request and accepts at most 366 days per request; `--all` follows the
+  pages, walks the successive time windows, and merges everything into one
+  export with a single header row (pages can carry different label and metric
+  columns, so the columns are unioned rather than concatenated). Without
+  `--all`, a partial export now says so on stderr and prints the
+  `--page-token` to continue from, and a window wider than 366 days is
+  rejected before the request with a pointer to `--all`.
+- `--output-file` (`-O`) writes any command's output to a file instead of the
+  terminal. Pass a path, or a directory (`--output-file .`) to save under the
+  filename the API suggests.
+- `--for-reimport` rewrites an exported CSV into the format
+  `dci ingest-datahub-events-csv` accepts — dropping the export-only `batch`,
+  `source`, `export_time` and `updated_by` columns and renaming `event_id` to
+  `id` — so records can be copied from one dataset to another. See
+  [ingest-datahub-events-csv](https://help.doit.com/docs/cli/generated/command-groups/datahub/datahub-events-csvfile).
+
+### Improved
+
+- `dci list-datahub-datasets` shows a **display name** column when at least
+  one dataset has one, so the name shown in the console and in report results
+  — set with
+  [update-datahub-dataset](https://help.doit.com/docs/cli/generated/command-groups/datahub/update-datahub-dataset)
+  — is visible in the CLI too. Datasets displayed by their name keep the
+  previous three columns.
+- `--page-token` and `--max-results` now fail with a clear message on commands
+  that return their whole response in one request, instead of accepting the
+  value and ignoring it. `--all` still works everywhere and simply notes when
+  there was nothing more to fetch.
+
 ## v2.7.4 — September 4, 2026
 
 ### New

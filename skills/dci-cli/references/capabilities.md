@@ -46,7 +46,7 @@ dci
 │   ├── Support Requests: id-of-tickets, id-of-tickets-post, id-of-ticket-get, id-of-ticket-comments-list, id-of-ticket-comments-post
 │   ├── Cloud Diagrams: find-cloud-diagrams
 │   └── Commitment Manager: get-commitment, list-commitments
-├── DataHub: create-datahub-dataset, get-datahub-dataset, list-datahub-datasets, update-datahub-dataset, delete-datahub-dataset, delete-datahub-datasets, ingest-datahub-events, ingest-datahub-events-csv (provider: <dataset>, file: @events.csv), delete-datahub-events-by-filter
+├── DataHub: create-datahub-dataset, get-datahub-dataset, list-datahub-datasets, update-datahub-dataset, delete-datahub-dataset, delete-datahub-datasets, ingest-datahub-events, ingest-datahub-events-csv (provider: <dataset>, file: @events.csv), export-datahub-dataset-records (--start-time/--end-time required, at most 366 days; --all walks pages and windows), delete-datahub-events-by-filter
 ├── Ava: ask-ava-sync, ask-ava-streaming, ava-feedback, delete-ava-conversation
 └── Skill: skill {claude,codex,kiro,gemini}
 ```
