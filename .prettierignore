@@ -1,0 +1,6 @@
+# Only command-docs/*.yaml is prettier-formatted: those files are synced
+# verbatim into omni, whose CI runs prettier on them. Everything else in this
+# repo is Go, Markdown and CI config that prettier has no business rewriting.
+*
+!command-docs/
+!command-docs/*.yaml

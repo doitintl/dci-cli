@@ -57,6 +57,13 @@ jobs:
       - name: Report command docs coverage
         run: go run ./tools/commanddocs coverage -spec "$RUNNER_TEMP/openapi.yaml"
 
+      # The command docs are synced verbatim into omni, whose CI runs prettier
+      # over them; unformatted YAML here fails there, one release later and in
+      # someone else's repo. Same prettier version and options as
+      # @doitintl/prettier-config, so both sides agree byte for byte.
+      - name: Check command docs formatting
+        run: npx --yes prettier@3.9.6 --check "command-docs/*.yaml"
+
   changelog-lint:
     runs-on: ubuntu-latest
 
