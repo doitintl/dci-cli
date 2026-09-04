@@ -35,8 +35,8 @@ the CLI guide.
   newline-delimited JSON with `--format jsonl` — instead of an escaped
   string. See
   [export-datahub-dataset-records](https://help.doit.com/docs/cli/generated/command-groups/datahub/export-datahub-dataset-records).
-- `--all` exports a whole dataset in one command — `dci
-  export-datahub-dataset-records <dataset> --all --output-file records.csv`,
+- `--all` exports a whole dataset in one command —
+  `dci export-datahub-dataset-records <dataset> --all --output-file records.csv`,
   no dates needed. The API returns one page per request, accepts at most 366
   days per request, and requires both time bounds; `--all` finds the range the
   dataset actually covers, follows the pages, walks the successive time
