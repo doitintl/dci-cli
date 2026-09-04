@@ -163,12 +163,22 @@ related: [get-anomaly, list-anomalies, anomalies-recent]
 
 Rules:
 
-- **Quote every `command:` value** — double quotes for one-liners, `>-` for
+- **Quote every `command:` value** — quotes for one-liners, `>-` for
   multi-line. Shorthand bodies contain `field: value`, and a YAML plain
   scalar cannot hold a colon-space, so an unquoted command line fails to
   parse ("mapping values are not allowed in this context"). The loader's
   parse error names the file and repeats this rule, and the scaffold tool
-  (D5) always emits the quoted form.
+  (D5) always emits the quoted form. Which quote character is prettier's
+  call, not the author's: single quotes for a value that itself contains a
+  double quote, double quotes otherwise.
+- **The files are prettier-formatted** (`.prettierrc.json`, matching omni's
+  `@doitintl/prettier-config`: no single-quote preference, 120 columns).
+  D7 syncs them into omni verbatim, and omni's CI runs prettier over
+  everything a PR touches — so unformatted YAML here does not fail here, it
+  fails one release later in someone else's repo, on a bot PR nobody owns.
+  CI checks it (`npx prettier@3.9.6 --check "command-docs/*.yaml"`) and the
+  scaffold tool emits the formatted shape; run `npx prettier@3.9.6 --write
+  "command-docs/*.yaml"` after hand-editing.
 - **`<placeholder>` tokens** (`<anomaly-id>`, `<report-id>`) are the
   placeholder convention, matching the cheatsheet and skill files today. The
   validator treats a token matching `^<[a-z][a-z0-9-]*>$` as a positional

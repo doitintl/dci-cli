@@ -260,8 +260,32 @@ func renderStub(operation cli.Operation, groupSiblings []string) string {
 		}
 	}
 	if len(related) > 0 {
-		builder.WriteString("\nrelated: [" + strings.Join(related, ", ") + "]\n")
+		builder.WriteString("\n" + renderRelated(related))
 	}
+	return builder.String()
+}
+
+// prettierPrintWidth mirrors .prettierrc.json, which mirrors
+// @doitintl/prettier-config on the omni side.
+const prettierPrintWidth = 120
+
+// renderRelated writes the flow sequence the way prettier would: on the key's
+// own line while it fits the print width, then wrapped onto the next line, and
+// only then exploded one entry per line.
+func renderRelated(related []string) string {
+	sequence := "[" + strings.Join(related, ", ") + "]"
+	if len("related: "+sequence) <= prettierPrintWidth {
+		return "related: " + sequence + "\n"
+	}
+	if len("  "+sequence) <= prettierPrintWidth {
+		return "related:\n  " + sequence + "\n"
+	}
+	var builder strings.Builder
+	builder.WriteString("related:\n  [\n")
+	for _, name := range related {
+		builder.WriteString("    " + name + ",\n")
+	}
+	builder.WriteString("  ]\n")
 	return builder.String()
 }
 
@@ -275,7 +299,14 @@ func placeholderName(command, parameter string) string {
 	return parameter
 }
 
+// Quote the way prettier writes YAML scalars, since command-docs/*.yaml is
+// prettier-formatted (COMMAND-DOCS-SPEC.md D1) and a scaffold that disagrees
+// fails CI: a string holding a double quote is single-quoted (inner `\'` is
+// doubled), everything else is double-quoted.
 func yamlQuote(text string) string {
+	if strings.Contains(text, `"`) {
+		return `'` + strings.ReplaceAll(text, `'`, `''`) + `'`
+	}
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(text) + `"`
 }
 
