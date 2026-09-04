@@ -67,6 +67,22 @@ the CLI guide.
   that return their whole response in one request, instead of accepting the
   value and ignoring it. `--all` still works everywhere and simply notes when
   there was nothing more to fetch.
+- Leaving the dataset name off a DataHub command now opens the same
+  filter-as-you-type picker the other commands have, instead of a usage
+  error: `dci export-datahub-dataset-records`,
+  [get-datahub-dataset](https://help.doit.com/docs/cli/generated/command-groups/datahub/get-datahub-dataset),
+  [delete-datahub-dataset](https://help.doit.com/docs/cli/generated/command-groups/datahub/delete-datahub-dataset),
+  and
+  [update-datahub-dataset](https://help.doit.com/docs/cli/generated/command-groups/datahub/update-datahub-dataset)
+  (there, write the fields and let the picker supply the name:
+  `dci update-datahub-dataset description: "New description"`). Dataset names
+  also complete on Tab and resolve from a partial name now — previously none
+  of this worked for datasets, because they have no separate ID.
+- The picker and Tab completion reach commands that act on a sub-resource, so
+  `dci get-report-config`, `dci export-cloudflow-flow` and their siblings take
+  a name where they previously took only an ID. Commands whose identifier is
+  a number, such as `dci get-ticket`, no longer offer names they cannot
+  accept.
 
 ## v2.7.4 — September 4, 2026
 
