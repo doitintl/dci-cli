@@ -22,4 +22,11 @@ notes: |
   `dci delete-customer-geographic-access-scope` instead.
   :::
 
-related: [get-customer-geographic-access-scope, delete-customer-geographic-access-scope, update-user-geographic-access-scope, list-geographic-access-countries, list-geographic-access-custom-regions]
+related:
+  [
+    get-customer-geographic-access-scope,
+    delete-customer-geographic-access-scope,
+    update-user-geographic-access-scope,
+    list-geographic-access-countries,
+    list-geographic-access-custom-regions,
+  ]

@@ -8,7 +8,7 @@ examples:
   - description: Show one label.
     command: "dci get-label <label-id>"
   - description: The same, by name.
-    command: "dci get-label \"Team Backyard\""
+    command: 'dci get-label "Team Backyard"'
   - description: The full record as JSON, for scripts.
     command: "dci get-label <label-id> --output json"
 

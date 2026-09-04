@@ -4,7 +4,7 @@ examples:
   - description: Create a top-level folder for reports and allocations.
     command: "dci create-folder name: FinOps"
   - description: Create a folder inside another one (parent IDs come from `dci list-folders`).
-    command: "dci create-folder name: \"AWS reports\", description: \"Owned by the platform team\", parentFolderId: <folder-id>"
+    command: 'dci create-folder name: "AWS reports", description: "Owned by the platform team", parentFolderId: <folder-id>'
   - description: Capture the new folder's ID for a script.
     command: "dci create-folder name: FinOps --output json | jq -r .id"
 

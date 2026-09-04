@@ -25,4 +25,11 @@ notes: |
   `--idempotency-key`.
   :::
 
-related: [list-billing-transfer-end-customers, list-billing-transfer-end-customers-by-reseller, list-billing-transfer-reseller-accounts, list-billing-transfer-reseller-accounts-with-tenants, create-billing-transfer-reseller-handshakes]
+related:
+  [
+    list-billing-transfer-end-customers,
+    list-billing-transfer-end-customers-by-reseller,
+    list-billing-transfer-reseller-accounts,
+    list-billing-transfer-reseller-accounts-with-tenants,
+    create-billing-transfer-reseller-handshakes,
+  ]

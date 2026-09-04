@@ -32,4 +32,5 @@ notes: |
   or `awsConfig` may be set per request.
   :::
 
-related: [get-cloudflow-connection, list-cloudflow-connections, create-cloudflow-connection, delete-cloudflow-connection]
+related:
+  [get-cloudflow-connection, list-cloudflow-connections, create-cloudflow-connection, delete-cloudflow-connection]

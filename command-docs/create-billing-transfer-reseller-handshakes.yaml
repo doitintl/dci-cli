@@ -36,4 +36,10 @@ notes: |
   rejected with `422` before anything is processed. `--idempotency-key` accepts up to 255
   characters; a UUID v4 or ULID is recommended.
 
-related: [list-billing-transfer-program-management-accounts, get-billing-transfer-program-management-accounts-status, create-billing-transfer-end-customer-mappings, list-billing-transfer-end-customers]
+related:
+  [
+    list-billing-transfer-program-management-accounts,
+    get-billing-transfer-program-management-accounts-status,
+    create-billing-transfer-end-customer-mappings,
+    list-billing-transfer-end-customers,
+  ]

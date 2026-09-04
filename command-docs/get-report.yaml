@@ -10,7 +10,7 @@ examples:
   - description: Run a saved report and show its results as a pivot (groups as rows, periods as columns, totals and trend).
     command: "dci get-report <report-id>"
   - description: The same, by report name.
-    command: "dci get-report \"Monthly AWS Spend\""
+    command: 'dci get-report "Monthly AWS Spend"'
   - description: Override the report's time settings with an explicit date range (both dates required, yyyy-mm-dd).
     command: "dci get-report <report-id> --start-date 2026-01-01 --end-date 2026-01-31"
   - description: The last 30 days as JSON rows keyed by column name, for scripts.

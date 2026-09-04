@@ -9,13 +9,13 @@ arguments:
 
 examples:
   - description: Change the description; omitted fields keep their stored values.
-    command: "dci update-datahub-dataset <dataset-name> description: \"Token spend exported nightly from LiteLLM\""
+    command: 'dci update-datahub-dataset <dataset-name> description: "Token spend exported nightly from LiteLLM"'
   - description: Label the dataset for the console and report results without renaming it.
-    command: "dci update-datahub-dataset <dataset-name> displayName: \"Datadog prod\""
+    command: 'dci update-datahub-dataset <dataset-name> displayName: "Datadog prod"'
   - description: Set the preset logo shown in the DoiT console.
     command: "dci update-datahub-dataset <dataset-name> logoName: litellm"
   - description: Clear the description, display name and logo by sending empty strings.
-    command: "dci update-datahub-dataset <dataset-name> description: \"\", displayName: \"\", logoName: \"\""
+    command: 'dci update-datahub-dataset <dataset-name> description: "", displayName: "", logoName: ""'
 
 notes: |
   :::info CLI behavior
@@ -33,4 +33,11 @@ notes: |
     fields are `description`, `displayName`, `logoName` and `name`.
   :::
 
-related: [get-datahub-dataset, list-datahub-datasets, create-datahub-dataset, delete-datahub-dataset, export-datahub-dataset-records]
+related:
+  [
+    get-datahub-dataset,
+    list-datahub-datasets,
+    create-datahub-dataset,
+    delete-datahub-dataset,
+    export-datahub-dataset-records,
+  ]

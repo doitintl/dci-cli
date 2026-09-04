@@ -21,4 +21,10 @@ notes: |
   `delete-*-geographic-access-scope` command.
   :::
 
-related: [list-geographic-access-custom-regions, get-geographic-access-custom-region, update-geographic-access-custom-region, create-geographic-access-custom-region]
+related:
+  [
+    list-geographic-access-custom-regions,
+    get-geographic-access-custom-region,
+    update-geographic-access-custom-region,
+    create-geographic-access-custom-region,
+  ]

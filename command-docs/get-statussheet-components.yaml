@@ -18,4 +18,5 @@ examples:
       # components.json
       {"node": ["<node-id>", "<node-id>"], "element": ["<element-id>"], "link": ["<link-id>"]}
 
-related: [get-cloud-diagram-components, export-cloud-diagram-json, search-cloud-diagrams, list-cloud-diagram-node-activities]
+related:
+  [get-cloud-diagram-components, export-cloud-diagram-json, search-cloud-diagrams, list-cloud-diagram-node-activities]

@@ -13,4 +13,5 @@ examples:
   - description: Only the fields you need.
     command: "dci get-cloudflow-connection <connection-id> --fields connectionId,name,status,enabled --output json"
 
-related: [list-cloudflow-connections, create-cloudflow-connection, update-cloudflow-connection, delete-cloudflow-connection]
+related:
+  [list-cloudflow-connections, create-cloudflow-connection, update-cloudflow-connection, delete-cloudflow-connection]

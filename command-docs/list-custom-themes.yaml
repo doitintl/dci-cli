@@ -8,4 +8,5 @@ examples:
   - description: The full list as JSON, with the dark and light palettes.
     command: "dci list-custom-themes --output json"
 
-related: [create-custom-theme, get-custom-theme, update-custom-theme, delete-custom-theme, get-active-theme, set-active-theme]
+related:
+  [create-custom-theme, get-custom-theme, update-custom-theme, delete-custom-theme, get-active-theme, set-active-theme]

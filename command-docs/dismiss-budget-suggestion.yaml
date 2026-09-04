@@ -8,7 +8,7 @@ arguments:
 examples:
   - description: Dismiss a suggestion that does not apply.
     command: "dci dismiss-budget-suggestion <budget-suggestion-id> reason: not_relevant"
-    output: "`{\"id\": \"<budget-suggestion-id>\", \"status\": \"dismissed\"}`; it no longer appears in the pending list."
+    output: '`{"id": "<budget-suggestion-id>", "status": "dismissed"}`; it no longer appears in the pending list.'
   - description: Dismiss because an existing budget already covers it.
     command: "dci dismiss-budget-suggestion <budget-suggestion-id> reason: covered_elsewhere"
 

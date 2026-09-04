@@ -16,4 +16,11 @@ notes: |
   `list-aws-reserved-instances`, `list-aws-recommendations`, `list-aws-planned-purchases`).
   Fetch the organizations first, then run the per-organization commands.
 
-related: [get-aws-organization, list-aws-member-accounts, list-aws-organizations-settings, list-aws-savings-plans, list-aws-recommendations]
+related:
+  [
+    get-aws-organization,
+    list-aws-member-accounts,
+    list-aws-organizations-settings,
+    list-aws-savings-plans,
+    list-aws-recommendations,
+  ]

@@ -2,7 +2,7 @@ command: async-run-inline
 
 examples:
   - description: Submit a report run from a JSON config and get back an operation to poll (the API requires an idempotency key on every submission).
-    command: "dci async-run-inline --idempotency-key \"$(uuidgen)\" < query.json"
+    command: 'dci async-run-inline --idempotency-key "$(uuidgen)" < query.json'
     output: |
       # query.json
       {"config": {"dataSource": "billing", "timeInterval": "month",
@@ -19,9 +19,9 @@ examples:
       config{metrics: [{type: basic, value: cost}], timeInterval: month,
       timeRange{amount: 3, mode: last, unit: month}}
   - description: Validate the config without creating an operation (status "dry_run", no operationId).
-    command: "dci async-run-inline --dry-run --idempotency-key \"$(uuidgen)\" < query.json"
+    command: 'dci async-run-inline --dry-run --idempotency-key "$(uuidgen)" < query.json'
   - description: Capture the operation ID for a script.
-    command: "dci async-run-inline --idempotency-key \"$(uuidgen)\" --output json < query.json | jq -r .operationId"
+    command: 'dci async-run-inline --idempotency-key "$(uuidgen)" --output json < query.json | jq -r .operationId'
 
 notes: |
   :::tip Async workflow

@@ -7,7 +7,7 @@ arguments:
 
 examples:
   - description: Raise the period amount.
-    command: "dci update-budget \"Team Backyard\" amount: 12000"
+    command: 'dci update-budget "Team Backyard" amount: 12000'
   - description: Set alert thresholds and who is notified.
     command: >-
       dci update-budget <budget-id>

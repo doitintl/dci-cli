@@ -15,4 +15,5 @@ examples:
       Exit code 0 and no output;
       `dci get-customer-geographic-access-scope <target-customer-id>` now reports `type: unassigned`.
 
-related: [get-customer-geographic-access-scope, update-customer-geographic-access-scope, delete-user-geographic-access-scope]
+related:
+  [get-customer-geographic-access-scope, update-customer-geographic-access-scope, delete-user-geographic-access-scope]

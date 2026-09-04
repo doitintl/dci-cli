@@ -4,7 +4,7 @@ examples:
   - description: Your most recently updated reports (one page of 50).
     command: "dci list-reports"
   - description: Reports owned by one user (server-side filter; keys are reportName, owner, type, updateTime, folderId, joined with `|`).
-    command: "dci list-reports --filter \"owner:alice@acme.com\""
+    command: 'dci list-reports --filter "owner:alice@acme.com"'
   - description: Reports whose name contains a word, case-insensitively (combines with `--filter` using AND).
     command: "dci list-reports --name-contains sprint"
   - description: Every report as JSON, for scripts.

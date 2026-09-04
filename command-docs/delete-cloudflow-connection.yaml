@@ -19,4 +19,5 @@ notes: |
   while any flow still references the connection; rebind or delete those flows first.
   :::
 
-related: [list-cloudflow-connections, get-cloudflow-connection, update-cloudflow-connection, create-cloudflow-connection]
+related:
+  [list-cloudflow-connections, get-cloudflow-connection, update-cloudflow-connection, create-cloudflow-connection]

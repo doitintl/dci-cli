@@ -7,9 +7,9 @@ arguments:
 
 examples:
   - description: Turn on anomaly detection for a single allocation.
-    command: "dci update-allocation \"Team Backyard\" anomalyDetection: true"
+    command: 'dci update-allocation "Team Backyard" anomalyDetection: true'
   - description: Rename it and move it to a folder.
-    command: "dci update-allocation <allocation-id> name: \"Team Backyard (prod)\", folderId: <folder-id>"
+    command: 'dci update-allocation <allocation-id> name: "Team Backyard (prod)", folderId: <folder-id>'
   - description: Replace the rule so it matches either of two billing accounts, with the body read from a file.
     command: "dci update-allocation <allocation-id> < allocation.json"
     output: |

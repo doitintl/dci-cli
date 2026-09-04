@@ -12,4 +12,10 @@ examples:
   - description: The scope as JSON, for scripts.
     command: "dci get-user-geographic-access-scope <target-customer-id> <user-id> --output json"
 
-related: [update-user-geographic-access-scope, delete-user-geographic-access-scope, get-customer-geographic-access-scope, list-users]
+related:
+  [
+    update-user-geographic-access-scope,
+    delete-user-geographic-access-scope,
+    get-customer-geographic-access-scope,
+    list-users,
+  ]

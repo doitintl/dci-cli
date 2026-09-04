@@ -14,4 +14,9 @@ notes: |
   `list-billing-transfer-program-management-accounts` for the mapped tenants and
   handshake status per account.
 
-related: [list-billing-transfer-program-management-accounts, create-billing-transfer-reseller-handshakes, list-billing-transfer-end-customers]
+related:
+  [
+    list-billing-transfer-program-management-accounts,
+    create-billing-transfer-reseller-handshakes,
+    list-billing-transfer-end-customers,
+  ]

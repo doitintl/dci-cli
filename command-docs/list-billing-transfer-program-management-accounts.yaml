@@ -10,4 +10,10 @@ examples:
   - description: Browse accounts and their tenants in the full-screen viewer.
     command: "dci list-billing-transfer-program-management-accounts -M interactive"
 
-related: [get-billing-transfer-program-management-accounts-status, create-billing-transfer-reseller-handshakes, list-billing-transfer-end-customers, list-billing-transfer-reseller-accounts]
+related:
+  [
+    get-billing-transfer-program-management-accounts-status,
+    create-billing-transfer-reseller-handshakes,
+    list-billing-transfer-end-customers,
+    list-billing-transfer-reseller-accounts,
+  ]

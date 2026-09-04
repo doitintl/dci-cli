@@ -7,7 +7,7 @@ arguments:
 
 examples:
   - description: Preview what would be deleted, without sending a request.
-    command: "dci delete-allocation \"Team Backyard\" --dry-run"
+    command: 'dci delete-allocation "Team Backyard" --dry-run'
   - description: Delete without a prompt, for scripts and CI (interactive terminals ask first).
     command: "dci delete-allocation <allocation-id> --yes"
     output: Exit code 0 and no output; `dci list-allocations` no longer lists the allocation.

@@ -7,13 +7,13 @@ arguments:
 
 examples:
   - description: Cancel a pending or running report operation (the API requires an idempotency key on every request).
-    command: "dci cancel-async-operation <operation-id> --idempotency-key \"$(uuidgen)\""
+    command: 'dci cancel-async-operation <operation-id> --idempotency-key "$(uuidgen)"'
     output: >-
       The operation record with `status: canceled`. An operation that already
       finished (succeeded, failed, or canceled) is returned unchanged.
   - description: Validate the cancel request without changing any state (status "dry_run").
-    command: "dci cancel-async-operation <operation-id> --dry-run --idempotency-key \"$(uuidgen)\""
+    command: 'dci cancel-async-operation <operation-id> --dry-run --idempotency-key "$(uuidgen)"'
   - description: The full record as JSON, for scripts.
-    command: "dci cancel-async-operation <operation-id> --idempotency-key \"$(uuidgen)\" --output json"
+    command: 'dci cancel-async-operation <operation-id> --idempotency-key "$(uuidgen)" --output json'
 
 related: [get-async-operation, get-async-operation-results, async-run-inline, async-run-report-by-id]

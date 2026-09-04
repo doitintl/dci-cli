@@ -10,6 +10,6 @@ examples:
   - description: As JSON, for scripts.
     command: "dci get-label-assignments <label-id> --output json"
   - description: Only the reports carrying the label.
-    command: "dci get-label-assignments <label-id> --output json | jq '.assignments[] | select(.objectType == \"report\")'"
+    command: 'dci get-label-assignments <label-id> --output json | jq ''.assignments[] | select(.objectType == "report")'''
 
 related: [assign-objects-to-label, get-label, list-labels]

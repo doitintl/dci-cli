@@ -8,4 +8,10 @@ examples:
   - description: The next page of a larger result, as JSON.
     command: "dci search-cloud-diagrams --output json query: payments-db, size: 20, from: 20"
 
-related: [find-cloud-diagrams, get-statussheet-components, get-cloud-diagram-resource-relationships, get-cloud-diagram-components]
+related:
+  [
+    find-cloud-diagrams,
+    get-statussheet-components,
+    get-cloud-diagram-resource-relationships,
+    get-cloud-diagram-components,
+  ]

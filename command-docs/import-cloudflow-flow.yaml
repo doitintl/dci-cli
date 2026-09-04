@@ -8,12 +8,12 @@ examples:
       `resolution` (`bound`, `suggested`, `willCreate`, or `unbound`) with candidate IDs in
       this tenant.
   - description: Import for real; a fresh idempotency key is required on every real import.
-    command: "dci import-cloudflow-flow --idempotency-key \"$(uuidgen)\" < bundle.json"
+    command: 'dci import-cloudflow-flow --idempotency-key "$(uuidgen)" < bundle.json'
     output: >-
       `flows[]` with each created flow's new `id`, `status: draft`, and any `incompleteNodes`
       to finish in the builder before publishing.
   - description: Bind a connection requirement and set import options by sending the full request shape.
-    command: "dci import-cloudflow-flow --idempotency-key \"$(uuidgen)\" < import.json"
+    command: 'dci import-cloudflow-flow --idempotency-key "$(uuidgen)" < import.json'
     output: |
       # import.json — the exported bundle under "bundle", plus bindings and options
       {"bundle": {"kind": "cloudflow.doit.com/FlowBundle", "schemaVersion": 1, "rootFlow": "main",

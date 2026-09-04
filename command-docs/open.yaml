@@ -8,6 +8,6 @@ examples:
   - description: Open the DoiT Console home for the active customer.
     command: "dci open"
   - description: Deep-link to a budget by name.
-    command: "dci open budget \"Team Backyard\""
+    command: 'dci open budget "Team Backyard"'
   - description: Deep-link to a report by ID.
     command: "dci open report <report-id>"
