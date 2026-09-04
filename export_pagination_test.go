@@ -467,8 +467,17 @@ func TestValidateExportWindow(t *testing.T) {
 	if err := validateExportWindow(command, []string{"demo", "--start-time", "nonsense", "--end-time", "2026-02-01T00:00:00Z"}); err != nil {
 		t.Errorf("unparsable bounds: %v, want nil (the API reports those)", err)
 	}
-	if err := validateExportWindow(command, []string{"demo"}); err != nil {
-		t.Errorf("no window flags: %v, want nil", err)
+	// Both bounds are required by the API; without --all to discover them,
+	// the CLI says so instead of letting the server answer with a bare 400.
+	err = validateExportWindow(command, []string{"demo"})
+	if err == nil || !strings.Contains(err.Error(), "requires both") {
+		t.Errorf("no window flags: %v, want a rejection naming both flags", err)
+	}
+	if err := validateExportWindow(command, []string{"demo", "--all"}); err != nil {
+		t.Errorf("no window flags with --all: %v, want nil (the range is discovered)", err)
+	}
+	if err := validateExportWindow(command, []string{"demo", "--start-time", "2026-01-01T00:00:00Z"}); err == nil {
+		t.Error("only --start-time was accepted without --all; the API requires both")
 	}
 	if err := validateExportWindow("list-dimensions", overLong); err != nil {
 		t.Errorf("command without a window cap: %v, want nil", err)
@@ -676,5 +685,185 @@ func TestFileExportRequestCapDoesNotConsumeAnUnfetchedWindow(t *testing.T) {
 	}
 	if response.Header.Get(nextPageTokenHeader) != "" {
 		t.Errorf("%s = %q, want empty at a window boundary", nextPageTokenHeader, response.Header.Get(nextPageTokenHeader))
+	}
+}
+
+// probingExportTransport answers probes (maxResults=1) from a set of windows
+// that hold data, and real page requests with a one-row body.
+type probingExportTransport struct {
+	// dataFrom/dataUntil bound the rows the fake dataset holds.
+	dataFrom  time.Time
+	dataUntil time.Time
+	probes    []*http.Request
+	fetches   []*http.Request
+}
+
+func (p *probingExportTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	query := request.URL.Query()
+	start, _ := parseExportWindowBound(query.Get("startTime"))
+	end, _ := parseExportWindowBound(query.Get("endTime"))
+	// Overlap between the requested window and the dataset's span.
+	rows := 0
+	if start.Before(p.dataUntil) && end.After(p.dataFrom) {
+		rows = 1
+	}
+	if query.Get("maxResults") == "1" {
+		p.probes = append(p.probes, request.Clone(request.Context()))
+	} else {
+		p.fetches = append(p.fetches, request.Clone(request.Context()))
+	}
+	body := "event_id,usage_date\n"
+	if rows > 0 {
+		body += "e1," + formatExportWindowBound(start) + "\n"
+	}
+	header := http.Header{"Content-Type": []string{"text/csv"}, rowCountHeader: []string{strconv.Itoa(rows)}}
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Header:        header,
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+	}, nil
+}
+
+func freezeExportDiscoveryNow(t *testing.T, at time.Time) {
+	t.Helper()
+	previous := exportDiscoveryNow
+	exportDiscoveryNow = func() time.Time { return at }
+	t.Cleanup(func() { exportDiscoveryNow = previous })
+}
+
+func TestPrepareExportWindowDiscoversTheDatasetRange(t *testing.T) {
+	activateAllPages(t, 50000)
+	asExportCommand(t)
+	stderr := capturePaginationStderr(t)
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	freezeExportDiscoveryNow(t, now)
+	// Data from 2025-02-04 (like the real bestow.com dataset) to now.
+	probing := &probingExportTransport{
+		dataFrom:  time.Date(2025, 2, 4, 0, 0, 0, 0, time.UTC),
+		dataUntil: now,
+	}
+	transport := paginatingTransport{next: probing}
+
+	request, walk, err := transport.prepareExportWindow(exportGetRequest(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Probe 1 (now-366d..now) and probe 2 both overlap the data; probes 3 and
+	// 4 are empty and stop the walk, so the export starts at the second
+	// window's start. The request itself carries the first, clamped window;
+	// the walk carries the real end.
+	wantStart := now.Add(-2 * 366 * 24 * time.Hour)
+	query := request.URL.Query()
+	if got := query.Get("startTime"); got != formatExportWindowBound(wantStart) {
+		t.Errorf("startTime = %q, want the oldest window holding data (%s)", got, formatExportWindowBound(wantStart))
+	}
+	if got := query.Get("endTime"); got != formatExportWindowBound(wantStart.Add(366*24*time.Hour)) {
+		t.Errorf("endTime = %q, want the first window clamped to 366 days", got)
+	}
+	if walk == nil {
+		t.Fatal("walk = nil, want a multi-window walk")
+	}
+	if !walk.requestedEnd.Equal(now) {
+		t.Errorf("requestedEnd = %v, want now", walk.requestedEnd)
+	}
+	if len(probing.probes) != 4 {
+		t.Errorf("probes = %d, want 4 (two with data, two empty)", len(probing.probes))
+	}
+	for _, probe := range probing.probes {
+		if probe.URL.Query().Get("maxResults") != "1" {
+			t.Error("a probe asked for more than one row")
+		}
+	}
+	if !strings.Contains(stderr.String(), "found data from") {
+		t.Errorf("stderr = %q, want the discovered range reported", stderr.String())
+	}
+}
+
+func TestPrepareExportWindowFillsOnlyTheMissingEnd(t *testing.T) {
+	activateAllPages(t, 50000)
+	asExportCommand(t)
+	capturePaginationStderr(t)
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	freezeExportDiscoveryNow(t, now)
+	probing := &probingExportTransport{dataFrom: now.Add(-48 * time.Hour), dataUntil: now}
+	transport := paginatingTransport{next: probing}
+
+	request, _, err := transport.prepareExportWindow(exportGetRequest(t, "startTime=2026-09-01T00:00:00Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(probing.probes) != 0 {
+		t.Errorf("probes = %d, want 0 — the user drew the lower bound", len(probing.probes))
+	}
+	query := request.URL.Query()
+	if query.Get("startTime") != "2026-09-01T00:00:00Z" {
+		t.Errorf("startTime = %q, want the user's value", query.Get("startTime"))
+	}
+	if query.Get("endTime") != formatExportWindowBound(now) {
+		t.Errorf("endTime = %q, want now", query.Get("endTime"))
+	}
+}
+
+func TestPrepareExportWindowEmptyDatasetStillAnswers(t *testing.T) {
+	activateAllPages(t, 50000)
+	asExportCommand(t)
+	capturePaginationStderr(t)
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	freezeExportDiscoveryNow(t, now)
+	// A dataset with no rows anywhere: every probe answers empty.
+	probing := &probingExportTransport{dataFrom: now, dataUntil: now}
+	transport := paginatingTransport{next: probing}
+
+	request, walk, err := transport.prepareExportWindow(exportGetRequest(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(probing.probes) != emptyExportWindowsBeforeStop {
+		t.Errorf("probes = %d, want %d before giving up", len(probing.probes), emptyExportWindowsBeforeStop)
+	}
+	if walk != nil {
+		t.Error("walk != nil for a single fallback window")
+	}
+	if got := request.URL.Query().Get("startTime"); got != formatExportWindowBound(now.Add(-366*24*time.Hour)) {
+		t.Errorf("startTime = %q, want the most recent window as a fallback", got)
+	}
+}
+
+func TestPrepareExportWindowLeavesExplicitWindowsAlone(t *testing.T) {
+	activateAllPages(t, 50000)
+	asExportCommand(t)
+	capturePaginationStderr(t)
+	probing := &probingExportTransport{}
+	transport := paginatingTransport{next: probing}
+
+	request, walk, err := transport.prepareExportWindow(exportGetRequest(t, "startTime=2026-01-01T00:00:00Z&endTime=2026-02-01T00:00:00Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(probing.probes) != 0 {
+		t.Errorf("probes = %d, want 0 when both bounds are given", len(probing.probes))
+	}
+	if walk != nil {
+		t.Error("walk != nil for a window inside the cap")
+	}
+	if request.URL.Query().Get("endTime") != "2026-02-01T00:00:00Z" {
+		t.Error("an explicit window was rewritten")
+	}
+}
+
+func TestPrepareExportWindowInertWithoutExplicitAll(t *testing.T) {
+	viper.Set("all-pages", false)
+	asExportCommand(t)
+	viper.Set("all-pages-explicit", false)
+	probing := &probingExportTransport{}
+	transport := paginatingTransport{next: probing}
+
+	request, walk, err := transport.prepareExportWindow(exportGetRequest(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(probing.probes) != 0 || walk != nil || request.URL.Query().Get("startTime") != "" {
+		t.Error("discovery ran without an explicit --all")
 	}
 }
