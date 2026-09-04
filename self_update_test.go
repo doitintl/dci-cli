@@ -40,6 +40,15 @@ func fakeUpdateEnv(t *testing.T, agent bool, confirm bool) *[][]string {
 		return nil
 	}
 	t.Cleanup(func() { runExternalCommand = originalRun })
+
+	// No second binary exists to interrogate under test; an unavailable probe
+	// is the "cannot prove a no-op" path, so the manager flows stay focused on
+	// what they delegate. Tests that care about the check stub it themselves.
+	originalProbe := installedVersionProbe
+	installedVersionProbe = func() (string, error) {
+		return "", fmt.Errorf("no version probe under test")
+	}
+	t.Cleanup(func() { installedVersionProbe = originalProbe })
 	return ran
 }
 
@@ -103,8 +112,8 @@ func TestRunUpdateDelegatesToManagerAfterConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(*ran) != 1 || strings.Join((*ran)[0], " ") != "brew upgrade dci" {
-		t.Fatalf("external commands = %v, want exactly brew upgrade dci", *ran)
+	if len(*ran) != 2 || strings.Join((*ran)[0], " ") != "brew update" || strings.Join((*ran)[1], " ") != "brew upgrade dci" {
+		t.Fatalf("external commands = %v, want brew update then brew upgrade dci", *ran)
 	}
 	if !strings.Contains(out, "dci updated: 2.5.0 → 2.6.0") {
 		t.Fatalf("output = %q, want the success line", out)
@@ -180,8 +189,8 @@ func TestRunUpdateAgentContract(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &result); err != nil || !result.Updated {
 		t.Fatalf("agent --yes result = %q (%v)", out, err)
 	}
-	if len(*ran) != 1 {
-		t.Fatalf("agent --yes must perform the update, ran %v", *ran)
+	if len(*ran) != 2 {
+		t.Fatalf("agent --yes must refresh and perform the update, ran %v", *ran)
 	}
 }
 
@@ -276,6 +285,15 @@ func TestRunUpdateSuppressesPassiveFooter(t *testing.T) {
 }
 
 func TestManagerArgvAndInstruction(t *testing.T) {
+	if got := strings.Join(managerRefreshArgv(channelBrew), " "); got != "brew update" {
+		t.Errorf("brew refresh argv = %q", got)
+	}
+	if got := strings.Join(managerRefreshArgv(channelScoop), " "); got != "scoop update" {
+		t.Errorf("scoop refresh argv = %q", got)
+	}
+	if got := managerRefreshArgv(channelWinget); got != nil {
+		t.Errorf("winget refresh argv = %v, want none", got)
+	}
 	if got := strings.Join(managerArgv(channelBrew), " "); got != "brew upgrade dci" {
 		t.Errorf("brew argv = %q", got)
 	}
@@ -344,5 +362,74 @@ func TestUpdateLinuxPackageVerifiesChecksum(t *testing.T) {
 	err = updateLinuxPackage(channelDeb, "v2.6.0")
 	if err == nil || !strings.Contains(err.Error(), "no entry") {
 		t.Fatalf("missing entry error = %v", err)
+	}
+}
+
+// A manager that exits 0 without moving the binary — a stale index re-resolving
+// the installed version — must be reported as a failure, not as an update.
+func TestVerifyManagerUpgradeCatchesNoOp(t *testing.T) {
+	stubProbe := func(version string, err error) {
+		original := installedVersionProbe
+		installedVersionProbe = func() (string, error) { return version, err }
+		t.Cleanup(func() { installedVersionProbe = original })
+	}
+
+	stubProbe("2.5.0", nil)
+	err := verifyManagerUpgrade(channelBrew, "v2.6.0")
+	if err == nil || !strings.Contains(err.Error(), "still 2.5.0") || !strings.Contains(err.Error(), "not 2.6.0") {
+		t.Fatalf("no-op upgrade error = %v, want the version gap reported", err)
+	}
+
+	// The target landed: nothing to report.
+	stubProbe("2.6.0", nil)
+	if err := verifyManagerUpgrade(channelBrew, "v2.6.0"); err != nil {
+		t.Fatalf("successful upgrade error = %v", err)
+	}
+
+	// A manager that installed something newer still succeeded.
+	stubProbe("2.7.0", nil)
+	if err := verifyManagerUpgrade(channelBrew, "v2.6.0"); err != nil {
+		t.Fatalf("newer-than-target error = %v", err)
+	}
+
+	// An unanswerable probe proves nothing and must not invent a failure.
+	stubProbe("", fmt.Errorf("probe unavailable"))
+	if err := verifyManagerUpgrade(channelBrew, "v2.6.0"); err != nil {
+		t.Fatalf("unavailable probe error = %v", err)
+	}
+}
+
+// The no-op has to surface as a UPDATE_FAILED invocation error with the manual
+// command as its hint, not as the success line.
+func TestRunUpdateReportsManagerNoOp(t *testing.T) {
+	fakeUpdateEnv(t, false, true)
+	serveLatestRelease(t, "v2.6.0")
+	forceChannel(t, channelBrew)
+	installedVersionProbe = func() (string, error) { return "2.5.0", nil }
+
+	out, err := captureStdout(t, func() error { return runUpdate(t.TempDir(), updateOptions{}) })
+	preflight, ok := err.(invocationPreflightError)
+	if !ok || preflight.detail.Code != "UPDATE_FAILED" {
+		t.Fatalf("no-op upgrade error = %#v, want UPDATE_FAILED", err)
+	}
+	if !strings.Contains(preflight.detail.Hint, "brew update && brew upgrade dci") {
+		t.Fatalf("hint = %q, want the manual command", preflight.detail.Hint)
+	}
+	if strings.Contains(out, "dci updated") {
+		t.Fatalf("output = %q, must not claim an update happened", out)
+	}
+}
+
+func TestParseVersionOutput(t *testing.T) {
+	for _, out := range []string{"dci version 2.7.4", "dci version 2.7.4\nextra line\n", "  v2.7.4  "} {
+		got, err := parseVersionOutput(out)
+		if err != nil || strings.TrimPrefix(got, "v") != "2.7.4" {
+			t.Errorf("parseVersionOutput(%q) = %q, %v", out, got, err)
+		}
+	}
+	for _, out := range []string{"", "dci version dev", "dci version 2.7"} {
+		if got, err := parseVersionOutput(out); err == nil {
+			t.Errorf("parseVersionOutput(%q) = %q, want an error", out, got)
+		}
 	}
 }

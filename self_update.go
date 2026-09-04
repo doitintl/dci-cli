@@ -98,9 +98,9 @@ var detectChannelForUpdate = func() installChannel {
 func channelInstruction(channel installChannel, targetVersion string) string {
 	switch channel {
 	case channelBrew:
-		return "brew upgrade dci"
+		return "brew update && brew upgrade dci"
 	case channelScoop:
-		return "scoop update dci"
+		return "scoop update && scoop update dci"
 	case channelWinget:
 		return "winget upgrade DoiT.dci"
 	case channelDeb:
@@ -122,6 +122,23 @@ func linuxPackagePipeline(format, targetVersion string) string {
 		install = "sudo rpm -U " + asset
 	}
 	return fmt.Sprintf("curl -fsSLO %s/%s/%s && %s", releaseDownloadBase, targetVersion, asset, install)
+}
+
+// managerRefreshArgv is the index refresh that has to run before a manager
+// upgrade. Homebrew resolves a third-party tap from a local git clone and
+// Scoop from a local bucket clone, and neither is guaranteed to be fetched by
+// the upgrade itself (Homebrew's auto-update is time-throttled) — against a
+// stale index the manager re-resolves the version already installed, warns
+// "already installed", and exits 0. WinGet queries its sources live and needs
+// no refresh.
+func managerRefreshArgv(channel installChannel) []string {
+	switch channel {
+	case channelBrew:
+		return []string{"brew", "update"}
+	case channelScoop:
+		return []string{"scoop", "update"}
+	}
+	return nil
 }
 
 // managerArgv is the delegated update command for manager-owned installs.
@@ -366,16 +383,76 @@ func updatePlan(channel installChannel, current, latest, instruction string) str
 func performUpdate(channel installChannel, target string) error {
 	switch channel {
 	case channelBrew, channelScoop, channelWinget:
+		if refresh := managerRefreshArgv(channel); refresh != nil {
+			// A refresh failure is not fatal on its own — the index may
+			// already be current — so the upgrade still runs and the version
+			// check below decides whether anything actually moved.
+			if err := runExternalCommand(refresh); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s failed (%v); the package index may be stale\n", strings.Join(refresh, " "), err)
+			}
+		}
 		argv := managerArgv(channel)
 		if err := runExternalCommand(argv); err != nil {
 			return fmt.Errorf("%s failed: %w", strings.Join(argv, " "), err)
 		}
-		return nil
+		return verifyManagerUpgrade(channel, target)
 	case channelDeb, channelRPM:
 		return updateLinuxPackage(channel, target)
 	default:
 		return performSelfUpdate(target)
 	}
+}
+
+// verifyManagerUpgrade re-reads the installed version after a manager
+// upgrade. Every manager exits 0 when it decides the installed version is
+// already current, so a no-op upgrade — a stale index, a formula that has not
+// landed yet, a pinned package — is indistinguishable from a real one by exit
+// code, and reporting it as success tells the user they are on a version they
+// are not. A probe that cannot answer is not evidence of failure: only a
+// version that is provably still behind the target is reported as one.
+func verifyManagerUpgrade(channel installChannel, target string) error {
+	installed, err := installedVersionProbe()
+	if err != nil {
+		return nil
+	}
+	if !isNewerVersion(installed, target) {
+		return nil
+	}
+	return fmt.Errorf("%s exited successfully but dci is still %s, not %s — the package index may be stale or the release may not have reached %s yet",
+		channel, strings.TrimPrefix(installed, "v"), strings.TrimPrefix(target, "v"), channel)
+}
+
+// installedVersionProbe reports the version the launch path resolves to now
+// that the manager has run. The path is deliberately not symlink-resolved the
+// way executablePath does it: a Homebrew upgrade repoints bin/dci at the new
+// Cellar keg while the old keg is still on disk, so the resolved path would
+// keep answering with the version that is currently running. A var so tests
+// need no second binary.
+var installedVersionProbe = func() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	out, err := exec.Command(exe, "--version").Output()
+	if err != nil {
+		return "", err
+	}
+	return parseVersionOutput(string(out))
+}
+
+// parseVersionOutput pulls the version out of `dci --version` ("dci version
+// 2.7.4"), accepting only a value that parses as a release version so a
+// development build or an unexpected line cannot be read as "still behind".
+func parseVersionOutput(out string) (string, error) {
+	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	fields := strings.Fields(line)
+	if len(fields) > 0 {
+		candidate := fields[len(fields)-1]
+		if _, ok := parseVersion(candidate); ok {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("could not read a version from %q", line)
 }
 
 // performSelfUpdate binds the standalone-binary replacement; a var so tests
