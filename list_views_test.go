@@ -611,3 +611,49 @@ func TestAnomalyCuratedViewStaysUTCUnderZone(t *testing.T) {
 		t.Errorf("acknowledgedAt cell = %q, want localized instant", got)
 	}
 }
+
+func TestListViewDatahubDatasetsShowsDisplayNameWhenSet(t *testing.T) {
+	resetListViewTest(t, "list-datahub-datasets")
+	body := map[string]interface{}{"datasets": []interface{}{
+		map[string]interface{}{
+			"name": "datadog-demo", "displayName": "Datadog (prod)",
+			"lastUpdated": "2026-07-30T08:23:00Z", "updatedBy": "someone@example.com",
+		},
+		map[string]interface{}{
+			"name": "plain", "lastUpdated": "2026-07-29T08:23:00Z", "updatedBy": "someone@example.com",
+		},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	rows := root["datasets"].([]interface{})
+	if got := rows[0].(map[string]interface{})["display name"]; got != "Datadog (prod)" {
+		t.Errorf("display name = %#v, want the API's displayName", got)
+	}
+	want := "name,display name,updated (UTC),updated by"
+	if got := viper.GetString("table-columns"); got != want {
+		t.Errorf("table-columns = %q, want %q", got, want)
+	}
+}
+
+func TestListViewDropsHideWhenEmptyColumns(t *testing.T) {
+	resetListViewTest(t, "list-datahub-datasets")
+	body := map[string]interface{}{"datasets": []interface{}{
+		// An empty string is as absent as a missing key: the console falls
+		// back to name for both.
+		map[string]interface{}{
+			"name": "plain", "displayName": "",
+			"lastUpdated": "2026-07-29T08:23:00Z", "updatedBy": "someone@example.com",
+		},
+	}}
+	root := transformSuccessBody(body).(map[string]interface{})
+	row := root["datasets"].([]interface{})[0].(map[string]interface{})
+	if _, present := row["display name"]; present {
+		t.Error("the derived display-name key survived an all-empty column")
+	}
+	if _, present := row["displayName"]; !present {
+		t.Error("the response's own displayName field was removed; only the derived key may go")
+	}
+	want := "name,updated (UTC),updated by"
+	if got := viper.GetString("table-columns"); got != want {
+		t.Errorf("table-columns = %q, want %q", got, want)
+	}
+}
