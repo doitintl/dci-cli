@@ -34,8 +34,18 @@ func resolutionTestOperations() []cli.Operation {
 			PathParams: []*cli.Param{{Name: "resourceType", Type: "string"}, {Name: "resourceId", Type: "string"}}},
 		{Name: "get-orphan", Method: "GET", URITemplate: "https://api.doit.com/analytics/v1/orphans/{id}",
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
+		{Name: "list-tickets", Method: "GET", URITemplate: "https://api.doit.com/support/v1/tickets"},
 		{Name: "get-ticket-tag", Method: "GET", URITemplate: "https://api.doit.com/support/v1/tickets/{id}/tags",
 			PathParams: []*cli.Param{{Name: "id", Type: "integer"}}},
+		{Name: "list-datasets", Method: "GET", URITemplate: "https://api.doit.com/datahub/v1/datasets"},
+		{Name: "get-dataset", Method: "GET", URITemplate: "https://api.doit.com/datahub/v1/datasets/{name}",
+			PathParams: []*cli.Param{{Name: "name", Type: "string"}}},
+		{Name: "export-dataset-records", Method: "GET", URITemplate: "https://api.doit.com/datahub/v1/datasets/{name}/records",
+			PathParams: []*cli.Param{{Name: "name", Type: "string"}}},
+		{Name: "run-report", Method: "POST", URITemplate: "https://api.doit.com/analytics/v1/reports/{id}/actions/run",
+			PathParams: []*cli.Param{{Name: "id", Type: "string"}}, BodyMediaType: "application/json"},
+		{Name: "get-operation-results", Method: "GET", URITemplate: "https://api.doit.com/analytics/v1/reports/operations/{operationId}/results",
+			PathParams: []*cli.Param{{Name: "operationId", Type: "string"}}},
 		{Name: "list-anomalies", Method: "GET", URITemplate: "https://api.doit.com/anomalies/v1"},
 		{Name: "get-anomaly", Method: "GET", URITemplate: "https://api.doit.com/anomalies/v1/{id}",
 			PathParams: []*cli.Param{{Name: "id", Type: "string"}}},
@@ -51,18 +61,24 @@ func TestBuildResolutionIndex(t *testing.T) {
 		"update-report": {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports", hasBody: true},
 		"get-budget":    {listPath: "/analytics/v1/budgets", resource: "budgets", listOperation: "list-budgets"},
 		"get-asset":     {listPath: "/billing/v1/assets", resource: "assets", listOperation: "list-assets"},
+		// Sub-resource operations name their target out of the same parent
+		// collection, so they resolve and pick like the bare /{id} form.
+		"get-dataset":            {listPath: "/datahub/v1/datasets", resource: "datasets", listOperation: "list-datasets"},
+		"export-dataset-records": {listPath: "/datahub/v1/datasets", resource: "datasets", listOperation: "list-datasets"},
+		"run-report":             {listPath: "/analytics/v1/reports", resource: "reports", listOperation: "list-reports", hasBody: true},
 	} {
 		if got := index[operationName]; got != expected {
 			t.Errorf("index[%q] = %+v, want %+v", operationName, got, expected)
 		}
 	}
 	for _, excluded := range []string{
-		"get-attribution",      // legacy collection override table
-		"get-label-assignment", // multiple path params
-		"get-orphan",           // no parent list operation
-		"get-ticket-tag",       // template does not end in the path param
-		"list-reports",         // zero path params
-		"get-anomaly",          // version segment is not a collection noun
+		"get-attribution",       // legacy collection override table
+		"get-label-assignment",  // multiple path params
+		"get-orphan",            // no parent list operation
+		"get-ticket-tag",        // integer path slot takes an id, never a name
+		"get-operation-results", // sub-resource whose parent has no list operation
+		"list-reports",          // zero path params
+		"get-anomaly",           // version segment is not a collection noun
 	} {
 		if _, ok := index[excluded]; ok {
 			t.Errorf("index unexpectedly contains %q", excluded)
@@ -461,12 +477,22 @@ func TestRelaxResolvableArgsValidation(t *testing.T) {
 	}
 	t.Setenv("DCI_NO_RESOLVE", "")
 
-	// Body and unresolvable commands keep their validators untouched.
-	if updateReport.Annotations[joinableArgsAnnotation] != "" {
-		t.Fatal("body operation was wrapped")
+	// A bodied operation gets the picker's argument injection but keeps
+	// cobra's generated arity validator: its surplus positionals are body
+	// shorthand, never the words of a name.
+	if updateReport.Args(updateReport, []string{}) == nil {
+		t.Fatal("body operation lost its arity error on zero arguments")
 	}
+	if err := updateReport.Args(updateReport, []string{"Tom", "name: x"}); err != nil {
+		t.Fatalf("body operation rejected its own body shorthand: %v", err)
+	}
+
+	// Unresolvable commands are never touched at all.
 	if listReports.Annotations[joinableArgsAnnotation] != "" {
 		t.Fatal("unresolvable operation was wrapped")
+	}
+	if err := listReports.Args(listReports, []string{"surplus"}); err == nil {
+		t.Fatal("unresolvable operation lost its NoArgs validator")
 	}
 }
 
@@ -900,7 +926,9 @@ func TestParseResourceNamePageDiscoversNameFieldByPriority(t *testing.T) {
 	if nextToken != "abc" {
 		t.Fatalf("pageToken = %q", nextToken)
 	}
-	want := map[string]string{"b-1": "Budget One", "b-2": "Named", "b-3": "Annotation text"}
+	// "No ID" has no id field: name-keyed collections (DataHub datasets) key
+	// their entries by name, so the name doubles as the id.
+	want := map[string]string{"b-1": "Budget One", "b-2": "Named", "b-3": "Annotation text", "No ID": "No ID"}
 	if len(entries) != len(want) {
 		t.Fatalf("entries = %+v", entries)
 	}

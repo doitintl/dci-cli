@@ -222,11 +222,11 @@ func seedCachedSpec(t *testing.T, cacheDir string) {
 			// A bodied operation with an array field, shaped exactly as
 			// restish renders a request schema into Long — the ghost's
 			// array-syntax labels and the body-shape validation replay
-			// (Slack dogfood, 2026-08-29) both need one. The trailing /tags
-			// segment keeps it out of the name resolver's index, so its
-			// dispatch never reaches for the network.
+			// (Slack dogfood, 2026-08-29) both need one. Its collection has
+			// no list operation, which keeps it out of the name resolver's
+			// index, so its dispatch never reaches for the network.
 			{Name: "add-widget-tags", Short: "Tag a widget", Method: "POST",
-				URITemplate:   "https://api.doit.com/analytics/v1/widgets/{widgetId}/tags",
+				URITemplate:   "https://api.doit.com/analytics/v1/gadgets/{widgetId}/tags",
 				PathParams:    []*cli.Param{{Name: "widgetId", Type: "string"}},
 				BodyMediaType: "application/json",
 				Long:          "Tag a widget.\n\n## Request Schema (application/json)\n\n```schema\n{\n  tags*: [\n    (string)\n  ]\n}\n```\n"},
