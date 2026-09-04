@@ -13,4 +13,11 @@ examples:
   - description: Only onboarding status and savings totals per commitment type.
     command: "dci get-aws-organization <management-account-id> --fields displayName,onboardingStatus,savingsTotals --output json"
 
-related: [list-aws-organizations, list-aws-member-accounts, list-aws-recommendations, list-aws-planned-purchases, list-aws-organizations-settings]
+related:
+  [
+    list-aws-organizations,
+    list-aws-member-accounts,
+    list-aws-recommendations,
+    list-aws-planned-purchases,
+    list-aws-organizations-settings,
+  ]

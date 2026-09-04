@@ -12,4 +12,10 @@ notes: |
   `region`, `iamStatus` and `lastRefreshTime` on each item are inherited from the parent
   distributor PMA root; the reseller node itself carries no IAM or region metadata.
 
-related: [list-billing-transfer-reseller-accounts, list-billing-transfer-end-customers-by-reseller, list-billing-transfer-end-customers, create-billing-transfer-end-customer-mappings]
+related:
+  [
+    list-billing-transfer-reseller-accounts,
+    list-billing-transfer-end-customers-by-reseller,
+    list-billing-transfer-end-customers,
+    create-billing-transfer-end-customer-mappings,
+  ]

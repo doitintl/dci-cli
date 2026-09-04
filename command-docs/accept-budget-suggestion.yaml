@@ -8,7 +8,7 @@ arguments:
 examples:
   - description: Link a suggestion to the budget you created from it.
     command: "dci accept-budget-suggestion <budget-suggestion-id> budgetId: <budget-id>"
-    output: "`{\"budgetId\": \"<budget-id>\"}`; the suggestion leaves the pending list."
+    output: '`{"budgetId": "<budget-id>"}`; the suggestion leaves the pending list.'
   - description: Record that you changed the suggested values before accepting.
     command: "dci accept-budget-suggestion <budget-suggestion-id> editedBeforeAccept: true, budgetId: <budget-id>"
 

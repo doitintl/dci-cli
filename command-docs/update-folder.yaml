@@ -6,13 +6,13 @@ arguments:
 
 examples:
   - description: Rename a folder.
-    command: "dci update-folder <folder-id> name: \"Shared reports\""
+    command: 'dci update-folder <folder-id> name: "Shared reports"'
   - description: Move a folder under another folder (a same-named sibling gets the folder auto-renamed).
     command: "dci update-folder <folder-id> parentFolderId: <parent-folder-id>"
   - description: Move a folder back to the top level.
     command: "dci update-folder <folder-id> parentFolderId: root"
   - description: Set a description.
-    command: "dci update-folder <folder-id> description: \"Monthly reviews for the platform team\""
+    command: 'dci update-folder <folder-id> description: "Monthly reviews for the platform team"'
 
 notes: |
   :::tip Moving contents, not folders

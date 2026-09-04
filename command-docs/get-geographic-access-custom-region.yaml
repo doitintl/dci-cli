@@ -13,4 +13,10 @@ examples:
   - description: Only the country codes.
     command: "dci get-geographic-access-custom-region <custom-region-id> --fields countryCodes --output json"
 
-related: [list-geographic-access-custom-regions, create-geographic-access-custom-region, update-geographic-access-custom-region, delete-geographic-access-custom-region]
+related:
+  [
+    list-geographic-access-custom-regions,
+    create-geographic-access-custom-region,
+    update-geographic-access-custom-region,
+    delete-geographic-access-custom-region,
+  ]

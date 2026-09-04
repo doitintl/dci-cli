@@ -10,4 +10,5 @@ examples:
   - description: Print the created dataset as JSON, for scripts.
     command: "dci create-datahub-dataset name: warehouse-costs --output json"
 
-related: [ingest-datahub-events, get-datahub-dataset, list-datahub-datasets, update-datahub-dataset, delete-datahub-dataset]
+related:
+  [ingest-datahub-events, get-datahub-dataset, list-datahub-datasets, update-datahub-dataset, delete-datahub-dataset]

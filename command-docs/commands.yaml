@@ -6,4 +6,4 @@ examples:
   - description: Include beta commands (invoked as dci beta <command>).
     command: "dci commands --json --beta"
   - description: Which commands are destructive.
-    command: "dci commands --json | jq -r '.commands[] | select(.destructive) | .path | join(\" \")'"
+    command: 'dci commands --json | jq -r ''.commands[] | select(.destructive) | .path | join(" ")'''

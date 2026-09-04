@@ -13,4 +13,5 @@ examples:
   - description: Only the node and link collections.
     command: "dci export-cloud-diagram-json <layer-id> --fields nodes,links --output json"
 
-related: [get-cloud-diagram-components, get-statussheet-components, list-cloud-diagram-layer-snapshots, search-cloud-diagrams]
+related:
+  [get-cloud-diagram-components, get-statussheet-components, list-cloud-diagram-layer-snapshots, search-cloud-diagrams]

@@ -17,4 +17,11 @@ notes: |
   The API does not filter or sort this listing server-side, so use `--search` to narrow it.
   :::
 
-related: [get-cloudflow-connection, create-cloudflow-connection, update-cloudflow-connection, delete-cloudflow-connection, import-cloudflow-flow]
+related:
+  [
+    get-cloudflow-connection,
+    create-cloudflow-connection,
+    update-cloudflow-connection,
+    delete-cloudflow-connection,
+    import-cloudflow-flow,
+  ]

@@ -5,9 +5,9 @@ arguments:
 
 examples:
   - description: Rename a theme.
-    command: "dci update-custom-theme <custom-theme-id> name: \"Team Backyard v2\""
+    command: 'dci update-custom-theme <custom-theme-id> name: "Team Backyard v2"'
   - description: Change only the primary color (quoted so the shell does not read `#` as a comment).
-    command: "dci update-custom-theme <custom-theme-id> primaryColor: \"#188038\""
+    command: 'dci update-custom-theme <custom-theme-id> primaryColor: "#188038"'
   - description: Replace both palettes; `dark` and `light` must be sent together.
     command: >-
       dci update-custom-theme <custom-theme-id>

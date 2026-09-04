@@ -18,4 +18,10 @@ notes: |
   alone (no `--dpma-id` needed). Callable by the reseller who owns the PMA or the
   distributor who owns its DPMA.
 
-related: [list-billing-transfer-end-customers, list-billing-transfer-reseller-accounts, list-billing-transfer-reseller-accounts-with-tenants, create-billing-transfer-end-customer-mappings]
+related:
+  [
+    list-billing-transfer-end-customers,
+    list-billing-transfer-reseller-accounts,
+    list-billing-transfer-reseller-accounts-with-tenants,
+    create-billing-transfer-end-customer-mappings,
+  ]

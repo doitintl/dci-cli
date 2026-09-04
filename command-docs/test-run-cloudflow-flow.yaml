@@ -13,12 +13,12 @@ examples:
       `valid: true`, or a 422 whose `details[]` names every invalid node (`nodeId` and message)
       so they can all be fixed in one pass.
   - description: Start one test run; the idempotency key guarantees a retry can never start a second run.
-    command: "dci test-run-cloudflow-flow <flow-id> --idempotency-key \"$(uuidgen)\""
+    command: 'dci test-run-cloudflow-flow <flow-id> --idempotency-key "$(uuidgen)"'
     output: >-
       A 202 snapshot of the run taken at dispatch: `id`, `status: pending`, `isTest: true`.
       Follow it with `dci get-cloudflow-flow-run <flow-id> <run-id>`.
   - description: Capture the run ID for a polling loop.
-    command: "dci test-run-cloudflow-flow <flow-id> --idempotency-key \"$(uuidgen)\" --output json | jq -r .id"
+    command: 'dci test-run-cloudflow-flow <flow-id> --idempotency-key "$(uuidgen)" --output json | jq -r .id'
 
 notes: |
   :::info CLI behavior
@@ -35,4 +35,11 @@ notes: |
   they hold the flow's concurrency lock (409 while the flow is already running).
   :::
 
-related: [get-cloudflow-flow-run, list-cloudflow-flow-runs, import-cloudflow-flow, export-cloudflow-flow, trigger-cloudflow-webhook]
+related:
+  [
+    get-cloudflow-flow-run,
+    list-cloudflow-flow-runs,
+    import-cloudflow-flow,
+    export-cloudflow-flow,
+    trigger-cloudflow-webhook,
+  ]

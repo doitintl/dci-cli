@@ -10,4 +10,11 @@ examples:
   - description: The full list as JSON, for scripts.
     command: "dci list-geographic-access-custom-regions --output json"
 
-related: [create-geographic-access-custom-region, get-geographic-access-custom-region, update-geographic-access-custom-region, delete-geographic-access-custom-region, list-geographic-access-countries]
+related:
+  [
+    create-geographic-access-custom-region,
+    get-geographic-access-custom-region,
+    update-geographic-access-custom-region,
+    delete-geographic-access-custom-region,
+    list-geographic-access-countries,
+  ]

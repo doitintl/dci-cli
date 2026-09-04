@@ -6,17 +6,17 @@ arguments:
 
 examples:
   - description: Run a saved report in the background (the API requires an idempotency key on every submission).
-    command: "dci async-run-report-by-id <report-id> --idempotency-key \"$(uuidgen)\""
+    command: 'dci async-run-report-by-id <report-id> --idempotency-key "$(uuidgen)"'
     output: >-
       `operationId`, `createTime`, and `status` ("pending" or "running"). Poll with
       `dci get-async-operation <operation-id>`, then read the rows with
       `dci get-async-operation-results <operation-id>` once it is "succeeded".
   - description: Override the report's time settings with a relative window (ISO 8601 duration, days back from today).
-    command: "dci async-run-report-by-id <report-id> --time-range P30D --idempotency-key \"$(uuidgen)\""
+    command: 'dci async-run-report-by-id <report-id> --time-range P30D --idempotency-key "$(uuidgen)"'
   - description: Override with an explicit date range (both dates required, yyyy-mm-dd).
-    command: "dci async-run-report-by-id <report-id> --start-date 2026-01-01 --end-date 2026-01-31 --idempotency-key \"$(uuidgen)\""
+    command: 'dci async-run-report-by-id <report-id> --start-date 2026-01-01 --end-date 2026-01-31 --idempotency-key "$(uuidgen)"'
   - description: Validate the request without creating an operation (status "dry_run", no operationId).
-    command: "dci async-run-report-by-id <report-id> --dry-run --idempotency-key \"$(uuidgen)\""
+    command: 'dci async-run-report-by-id <report-id> --dry-run --idempotency-key "$(uuidgen)"'
 
 notes: |
   :::tip Sync or async?

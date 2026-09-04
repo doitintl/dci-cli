@@ -6,7 +6,7 @@ examples:
   - description: Alerts owned by one person, most recently fired first.
     command: "dci list-alerts --filter owner:alice@acme.com --sort-by lastAlerted --sort-order desc"
   - description: Alerts whose name contains a word (ANDs with --filter).
-    command: "dci list-alerts --name-contains \"S3\""
+    command: 'dci list-alerts --name-contains "S3"'
   - description: Every page as JSON, for scripts.
     command: "dci list-alerts --all --output json"
 

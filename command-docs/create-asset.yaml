@@ -2,8 +2,8 @@ command: create-asset
 
 examples:
   - description: Register a new AWS account asset with its display name and root email.
-    command: "dci create-asset --type amazon-web-services --account-name \"Team Backyard\" --root-email aws-root@acme.com"
+    command: 'dci create-asset --type amazon-web-services --account-name "Team Backyard" --root-email aws-root@acme.com'
   - description: The same request, printing the API response as JSON for scripts.
-    command: "dci create-asset --type amazon-web-services --account-name \"Team Backyard\" --root-email aws-root@acme.com --output json"
+    command: 'dci create-asset --type amazon-web-services --account-name "Team Backyard" --root-email aws-root@acme.com --output json'
 
 related: [get-asset, list-assets, update-asset]

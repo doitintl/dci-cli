@@ -4,7 +4,7 @@ examples:
   - description: Your most recent support requests, newest first.
     command: "dci list-tickets"
   - description: Urgent and high-severity tickets only (same key twice is OR; different keys are AND).
-    command: "dci list-tickets --filter \"severity:urgent|severity:high\""
+    command: 'dci list-tickets --filter "severity:urgent|severity:high"'
   - description: Tickets created on or after 1 August 2026 00:00 UTC (epoch milliseconds), twenty per page.
     command: "dci list-tickets --min-creation-time 1785542400000 --max-results 20"
   - description: Every page as JSON, for scripts.

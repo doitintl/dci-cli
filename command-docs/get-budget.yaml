@@ -7,7 +7,7 @@ arguments:
 
 examples:
   - description: Current utilization and configuration of one budget, by name.
-    command: "dci get-budget \"Team Backyard\""
+    command: 'dci get-budget "Team Backyard"'
   - description: The full record as JSON, for scripts or as the starting point of an update-budget body.
     command: "dci get-budget <budget-id> --output json"
   - description: Just the numbers.

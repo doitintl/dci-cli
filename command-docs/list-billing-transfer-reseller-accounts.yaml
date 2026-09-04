@@ -13,4 +13,9 @@ notes: |
   per reseller PMA, without the end-customer tenants. Use
   `list-billing-transfer-reseller-accounts-with-tenants` to include them.
 
-related: [list-billing-transfer-reseller-accounts-with-tenants, list-billing-transfer-end-customers-by-reseller, create-billing-transfer-end-customer-mappings]
+related:
+  [
+    list-billing-transfer-reseller-accounts-with-tenants,
+    list-billing-transfer-end-customers-by-reseller,
+    create-billing-transfer-end-customer-mappings,
+  ]

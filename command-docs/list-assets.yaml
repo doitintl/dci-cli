@@ -6,7 +6,7 @@ examples:
   - description: Only Google Workspace subscriptions.
     command: "dci list-assets --filter type:g-suite"
   - description: Google Cloud and AWS assets (the same key twice means OR).
-    command: "dci list-assets --filter \"type:google-cloud|type:amazon-web-services\""
+    command: 'dci list-assets --filter "type:google-cloud|type:amazon-web-services"'
   - description: Every page with IDs, for scripts.
     command: "dci list-assets --all --output json"
 

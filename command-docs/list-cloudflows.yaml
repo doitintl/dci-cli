@@ -24,4 +24,12 @@ notes: |
   name resolution for flows. The API does not filter or sort this listing server-side, so use
   `--search` to narrow it.
 
-related: [export-cloudflow-flow, build-cloud-flow, refine-cloud-flow, test-run-cloudflow-flow, list-cloudflow-flow-runs, trigger-cloudflow-webhook]
+related:
+  [
+    export-cloudflow-flow,
+    build-cloud-flow,
+    refine-cloud-flow,
+    test-run-cloudflow-flow,
+    list-cloudflow-flow-runs,
+    trigger-cloudflow-webhook,
+  ]
