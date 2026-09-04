@@ -250,8 +250,12 @@ type paginatingTransport struct {
 func (t paginatingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	request = t.boostPageSize(request)
 	// A file-shaped export caps its time window server-side; --all covers a
-	// wider range by walking the windows, starting from a clamped first one.
-	request, exportWindow := clampExportWindow(request)
+	// wider range by walking the windows, starting from a clamped first one —
+	// and fills in a window the user omitted entirely.
+	request, exportWindow, windowErr := t.prepareExportWindow(request)
+	if windowErr != nil {
+		return nil, windowErr
+	}
 	response, err := t.next.RoundTrip(request)
 	if err != nil {
 		return response, err

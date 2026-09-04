@@ -6,6 +6,8 @@ arguments:
     identifier and its ingest `provider` value, never a display name.
 
 examples:
+  - description: The entire dataset to a file — the CLI finds the data's time range itself.
+    command: "dci export-datahub-dataset-records <dataset-name> --all --output-file records.csv"
   - description: One month of records as CSV, printed to the terminal.
     command: "dci export-datahub-dataset-records <dataset-name> --start-time 2026-08-01T00:00:00Z --end-time 2026-09-01T00:00:00Z"
   - description: The whole dataset to a file, however many pages and 366-day windows that takes.
@@ -32,6 +34,14 @@ notes: |
     the tokens **and** walks the successive time windows, then merges the
     pages into one export: pass the full range you want and the CLI covers
     it. It reports on stderr how many pages and windows it merged.
+  - **`--all` on its own exports the whole dataset.** The API requires both
+    time bounds, so with neither given `--all` finds the range: it looks
+    backwards from now one 366-day window at a time, asking each for a single
+    row, and starts the export at the oldest window that has any (stopping
+    after two consecutive empty windows). The range it settled on is printed
+    on stderr. Two years of data costs four extra one-row requests. Pass
+    `--start-time`/`--end-time` when you want an exact window — or when a
+    dataset has more than two years with no rows at all before older ones.
   - **Merged CSV pages share one header.** The API computes the business
     columns from the rows of each page, so consecutive pages can carry
     different `label.*` and `metric.*` columns; `--all` re-emits every row
@@ -42,7 +52,9 @@ notes: |
     nothing in a CSV or JSONL stream itself would reveal that the file is
     partial.
   - **A window wider than 366 days is rejected before the request**, with a
-    pointer to `--all`, instead of returning the API's bare 400.
+    pointer to `--all`, instead of returning the API's bare 400. So is a
+    missing bound without `--all`: the API needs both, and `--all` is how you
+    say "all of it".
   - **`--output-file`** takes a path, or a directory (`--output-file .`) to
     use the filename from the API's `Content-Disposition` header. A write that
     fails partway removes the partial file rather than leaving it behind.

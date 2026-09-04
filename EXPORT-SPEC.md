@@ -24,6 +24,7 @@ new chapter.
 | E4 | CSV header union | Merged CSV pages are re-emitted against the union of their headers, because the API computes business columns per page |
 | E5 | `--output-file` | Any command's output can be written to a file; a directory target uses the API's `Content-Disposition` filename |
 | E6 | `--for-reimport` | Rewrites an exported CSV into the ingest vocabulary the operation's own description documents |
+| E8 | Windowless `--all` | `--all` with no `--start-time`/`--end-time` discovers the dataset's data range (the API requires both bounds and publishes no range) and exports all of it |
 | E7 | Paging-flag guard | `--page-token`/`--max-results` are rejected on an operation that declares no such parameter; `--all` is noted, not rejected |
 
 ## 2. E1 — a file-shaped body is not a document
@@ -128,6 +129,35 @@ the API.
 NDJSON pages are concatenated with newline normalization (a page that does not
 end in a newline must not glue its last record to the next page's first).
 
+## 4b. E8 — `--all` with no window
+
+The API marks `startTime` and `endTime` **required** and answers a missing one
+with a bare 400 (`"startTime is required (RFC3339)"`), while nothing on the
+dataset resource says when its data begins — so "export this dataset" was not
+expressible at all.
+
+**Rule.** Under an explicit `--all` with neither bound given,
+`prepareExportWindow` discovers the range before the first real request: it
+walks backwards from now one `maxWindow` at a time, asking each window for a
+**single row** (`maxResults=1`) and reading `X-Row-Count`, and starts the
+export at the oldest window that answered with any. Two consecutive empty
+windows end the probe (`emptyExportWindowsBeforeStop`), and 40 windows bound
+it absolutely (`maxExportDiscoveryWindows`). The range it settled on is
+printed on stderr, so the export's coverage is always stated rather than
+implied. Giving only `--start-time` fills the end with now and probes nothing;
+giving only `--end-time` probes backwards from there.
+
+Cost: one extra one-row request per probed window — four for a two-year
+dataset. Verified live: `--all` alone on a 612-day dataset produced the same
+92,325 rows as the explicit two-window run.
+
+**The honest limit.** A dataset with more than `emptyExportWindowsBeforeStop`
+windows (732 days) of *no rows at all* followed by older rows stops early.
+That is why the covered range is reported, and why the curated doc points at
+explicit bounds for exactness. `firstEventTime`/`lastEventTime` on the dataset
+resource (§9) would replace the whole probe with one exact call — the probe is
+a stopgap, not the design.
+
 ## 5. E5 — `--output-file`
 
 `-O`/`--output-file PATH` writes the response to a file. For a file-shaped
@@ -194,9 +224,10 @@ client-side and works on any list response, paged or not.
 
 - **`firstEventTime`/`lastEventTime` on the dataset resource.**
   `get-datahub-dataset` reports `records` and `lastUpdated` but no event-time
-  range, so "export this dataset" cannot be expressed without the user
-  supplying bounds. With that pair, `--all` and no window would mean exactly
-  the dataset's own range.
+  range, so windowless `--all` has to discover the range by probing (§4b).
+  With that pair the probe collapses into one exact call, and the
+  two-empty-window stop condition — the only place this chapter can be
+  incomplete — disappears.
 - **`x-cli-name` on `updateDatahubDataset`.** Every other DCI operation
   declares one; without it restish derives the command name from the
   operationId and also generates an `updatedatahubdataset` alias that shows

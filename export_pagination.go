@@ -103,6 +103,158 @@ func formatExportWindowBound(value time.Time) string {
 	return value.UTC().Format(time.RFC3339)
 }
 
+// maxExportDiscoveryWindows bounds the backwards probe for a dataset's data
+// range: 40 windows of 366 days is 40 years, far older than any cloud cost
+// record, and it guarantees the probe terminates.
+const maxExportDiscoveryWindows = 40
+
+// emptyExportWindowsBeforeStop is how many consecutive empty windows end the
+// backwards probe. Two (732 days with no rows) tolerates an ordinary
+// ingestion gap while keeping the probe short; the covered range is always
+// reported on stderr, so a dataset with an even longer gap is visibly
+// bounded rather than silently truncated.
+const emptyExportWindowsBeforeStop = 2
+
+// exportDiscoveryNow is time.Now, indirected for tests.
+var exportDiscoveryNow = time.Now
+
+// prepareExportWindow fills in a window the user did not give, then clamps
+// what remains. Only under an explicit --all: without a loop to merge pages
+// there is nothing to fill in with, and validateExportWindow says so.
+//
+// The API requires both bounds and exposes no event-time range on the
+// dataset (get-datahub-dataset returns records and lastUpdated only), so
+// "export everything" has to be discovered: the probe walks backwards from
+// now one window at a time asking for a single row, and the oldest window
+// that answers with any becomes the export's start. Each probe costs one
+// row, so a dataset with two years of data pays four of them.
+func (t paginatingTransport) prepareExportWindow(request *http.Request) (*http.Request, *exportWindowWalk, error) {
+	spec, known := fileExportOperations[invokedCommandName]
+	if !known || spec.maxWindow == 0 || request.Method != http.MethodGet || !allPagesExplicit() {
+		return request, nil, nil
+	}
+	query := request.URL.Query()
+	rawStart := strings.TrimSpace(query.Get(spec.startParam))
+	rawEnd := strings.TrimSpace(query.Get(spec.endParam))
+	if rawStart != "" && rawEnd != "" {
+		filled, walk := clampExportWindow(request)
+		return filled, walk, nil
+	}
+
+	end := exportDiscoveryNow().UTC().Truncate(time.Second)
+	if rawEnd != "" {
+		parsed, err := parseExportWindowBound(rawEnd)
+		if err != nil {
+			// Malformed: let the API report it in its own words.
+			return request, nil, nil
+		}
+		end = parsed
+	}
+
+	start := end.Add(-spec.maxWindow)
+	if rawStart != "" {
+		// Only the end was missing: nothing to discover, the user drew the
+		// lower bound themselves.
+		parsed, err := parseExportWindowBound(rawStart)
+		if err != nil {
+			return request, nil, nil
+		}
+		start = parsed
+	} else {
+		discovered, err := t.discoverExportStart(request, spec, end)
+		if err != nil {
+			return nil, nil, err
+		}
+		start = discovered
+	}
+
+	if !end.After(start) {
+		return request, nil, nil
+	}
+	noteExportWindowDiscovered(start, end, rawStart == "")
+	filled := cloneRequestWithQuery(request, map[string]string{
+		spec.startParam: formatExportWindowBound(start),
+		spec.endParam:   formatExportWindowBound(end),
+	}, nil)
+	return clampExportWindowFrom(filled, spec, start, end)
+}
+
+// discoverExportStart probes backwards from end for the oldest window that
+// holds any rows, and returns that window's start.
+func (t paginatingTransport) discoverExportStart(request *http.Request, spec fileExportSpec, end time.Time) (time.Time, error) {
+	oldest := end
+	empties := 0
+	windowEnd := end
+	for probe := 0; probe < maxExportDiscoveryWindows && empties < emptyExportWindowsBeforeStop; probe++ {
+		windowStart := windowEnd.Add(-spec.maxWindow)
+		rows, err := t.probeExportWindow(request, spec, windowStart, windowEnd)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if rows > 0 {
+			oldest = windowStart
+			empties = 0
+		} else {
+			empties++
+		}
+		windowEnd = windowStart
+	}
+	if oldest.Equal(end) {
+		// Nothing anywhere in the probed span: export the most recent window
+		// so the command still answers (with headers and no rows).
+		return end.Add(-spec.maxWindow), nil
+	}
+	return oldest, nil
+}
+
+// probeExportWindow reports how many rows a window holds, asking for one row
+// and reading X-Row-Count. The body is drained and discarded.
+func (t paginatingTransport) probeExportWindow(request *http.Request, spec fileExportSpec, start, end time.Time) (int, error) {
+	probe := cloneRequestWithQuery(request, map[string]string{
+		spec.startParam: formatExportWindowBound(start),
+		spec.endParam:   formatExportWindowBound(end),
+		"maxResults":    "1",
+	}, []string{"pageToken"})
+	response, err := t.next.RoundTrip(probe)
+	if err != nil {
+		return 0, fmt.Errorf("--all: probing %s for data failed: %w", formatExportWindowBound(start), err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("--all: probing %s for data failed with HTTP status %d", formatExportWindowBound(start), response.StatusCode)
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	rows, convErr := strconv.Atoi(strings.TrimSpace(response.Header.Get(rowCountHeader)))
+	if convErr != nil {
+		// No row count to read: treat a non-empty body as data rather than
+		// concluding the window is empty.
+		return 0, nil
+	}
+	return rows, nil
+}
+
+func noteExportWindowDiscovered(start, end time.Time, discovered bool) {
+	if cli.Stderr == nil {
+		return
+	}
+	if !discovered {
+		_, _ = fmt.Fprintf(cli.Stderr, "note: --all exporting %s to now\n", formatExportWindowBound(start))
+		return
+	}
+	_, _ = fmt.Fprintf(cli.Stderr, "note: --all found data from %s; exporting %s to %s\n",
+		formatExportWindowBound(start), formatExportWindowBound(start), formatExportWindowBound(end))
+}
+
+// clampExportWindowFrom is clampExportWindow for bounds already parsed.
+func clampExportWindowFrom(request *http.Request, spec fileExportSpec, start, end time.Time) (*http.Request, *exportWindowWalk, error) {
+	if end.Sub(start) <= spec.maxWindow {
+		return request, nil, nil
+	}
+	clampedEnd := start.Add(spec.maxWindow)
+	clamped := cloneRequestWithQuery(request, map[string]string{spec.endParam: formatExportWindowBound(clampedEnd)}, nil)
+	return clamped, &exportWindowWalk{spec: spec, requestedEnd: end, currentEnd: clampedEnd, windows: 1}, nil
+}
+
 // clampExportWindow shortens an over-long export window to the server's cap
 // and returns the walk state the --all loop continues from. Only under --all:
 // without it there is no loop to continue with, and silently exporting a
@@ -406,7 +558,18 @@ func validateExportWindow(commandName string, args []string) error {
 	rawStart, hasStart := flagValueFromArgs(args, spec.startFlag)
 	rawEnd, hasEnd := flagValueFromArgs(args, spec.endFlag)
 	if !hasStart || !hasEnd {
-		return nil
+		// The API requires both bounds and answers a missing one with a bare
+		// 400. --all can discover them (prepareExportWindow), so say that
+		// rather than letting the server refuse the request.
+		return invocationPreflightError{
+			detail: structuredError{
+				Code:      "USAGE_ERROR",
+				Message:   fmt.Sprintf("%s requires both %s and %s", commandName, spec.startFlag, spec.endFlag),
+				Hint:      fmt.Sprintf("Pass %s and %s, or pass --all on its own to export the dataset's full range", spec.startFlag, spec.endFlag),
+				Retryable: false,
+			},
+			exitCode: exitUsage,
+		}
 	}
 	start, startErr := parseExportWindowBound(rawStart)
 	end, endErr := parseExportWindowBound(rawEnd)
