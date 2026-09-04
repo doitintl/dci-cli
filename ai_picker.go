@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -91,11 +92,30 @@ func aiPickerIntentFor(argv []string) *aiPickerIntent {
 		return &aiPickerIntent{argv: argv, resource: resource, target: target}
 	}
 
+	if target.hasBody {
+		words := make([]string, 0, len(positionals))
+		for _, index := range positionals {
+			words = append(words, argv[index])
+		}
+		if command := aiOperationCommand(name); command != nil && bodyOnlyPositionals(command, words) {
+			// The body is there and the name is missing (the CLI's own
+			// pathArgumentPickerApplies rule): pick from everything, and let
+			// the child place the selection in front of the body.
+			return &aiPickerIntent{argv: argv, resource: resource, target: target}
+		}
+	}
+
 	// Several positionals are a shell-split multi-word name only when the
 	// operation takes a single path parameter (resolvePathArguments' joinable
 	// rule); with more path parameters, stay out of the way.
 	if len(positionals) > 1 && len(operationPathParameters[name]) > 1 {
 		return nil
+	}
+	if target.hasBody && len(positionals) > 1 {
+		// Surplus positionals on a bodied operation are body shorthand, not
+		// the words of an unquoted name (joinableNameArguments' rule): only
+		// the first one fills the path slot.
+		positionals = positionals[:1]
 	}
 	words := make([]string, len(positionals))
 	for i, index := range positionals {
@@ -185,6 +205,17 @@ func (s *aiNameSelection) filtered(filter string) []nameCacheEntry {
 // a "beta <name>" subcommand, or a custom root command — so the positional
 // scan knows which flags consume values.
 func aiOperationFlagSet(name string) *pflag.FlagSet {
+	command := aiOperationCommand(name)
+	if command == nil {
+		return nil
+	}
+	return command.Flags()
+}
+
+// aiOperationCommand resolves a session-spelled command name to the cobra
+// command behind it: a GA operation, a "beta <name>" subcommand, or a custom
+// root command.
+func aiOperationCommand(name string) *cobra.Command {
 	if cli.Root == nil {
 		return nil
 	}
@@ -196,7 +227,7 @@ func aiOperationFlagSet(name string) *pflag.FlagSet {
 				}
 				for _, operation := range betaCommand.Commands() {
 					if operation.Name() == sub || operation.HasAlias(sub) {
-						return operation.Flags()
+						return operation
 					}
 				}
 			}
@@ -204,13 +235,13 @@ func aiOperationFlagSet(name string) *pflag.FlagSet {
 		}
 		for _, operation := range apiCommand.Commands() {
 			if operation.Name() == name || operation.HasAlias(name) {
-				return operation.Flags()
+				return operation
 			}
 		}
 	}
 	for _, command := range cli.Root.Commands() {
 		if command.Name() == name || command.HasAlias(name) {
-			return command.Flags()
+			return command
 		}
 	}
 	return nil

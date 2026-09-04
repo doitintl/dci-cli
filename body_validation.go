@@ -51,6 +51,31 @@ var schemaBodyFieldSketchPattern = regexp.MustCompile(`^  ([A-Za-z_][A-Za-z0-9_-
 var currencyBodyFieldPattern = regexp.MustCompile(`(?:^|[,\s])config\.currency:\s*"?([A-Za-z]{3})"?`)
 var bufferedRequestBody []byte
 
+// bodyOnlyPositionals reports whether every positional argument is request
+// body shorthand, so the operation's path argument was never typed. Used by
+// the picker: on a bodied operation, surplus positionals are body fields
+// rather than the words of a name, so a missing name is only detectable by
+// recognizing the body.
+func bodyOnlyPositionals(command *cobra.Command, args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	first := strings.TrimSpace(args[0])
+	if first == "" {
+		return false
+	}
+	// A whole-body token (file, stdin, literal JSON) is never a name.
+	if strings.HasPrefix(first, "@") || strings.HasPrefix(first, "<") || strings.HasPrefix(first, "{") {
+		return true
+	}
+	validFields := requestSchemaTopLevelFields(command.Long)
+	if len(validFields) == 0 {
+		return false
+	}
+	match := shorthandBodyFieldPattern.FindStringSubmatch(first)
+	return match != nil && validFields[match[1]]
+}
+
 func validateRequestBody(command *cobra.Command, args []string) error {
 	validFields := requestSchemaTopLevelFields(command.Long)
 	if len(validFields) == 0 {

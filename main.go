@@ -2421,6 +2421,11 @@ func addOutputFlag() {
 		if err := resolvePathArguments(cmd, args); err != nil {
 			return err
 		}
+		// A picker selection cannot be written into the slice cobra passed
+		// (an empty one cannot grow, and body shorthand must not be
+		// overwritten), so the checks below run against the completed
+		// arguments — the same slice the run wrapper injects downstream.
+		args = withPickedPathArgument(args)
 		// Path parameters first: a bad identifier is rejected before stdin is
 		// buffered for body validation, and before the destructive check below,
 		// so --dry-run validates too and no request is ever built.
