@@ -1,0 +1,57 @@
+command: export-datahub-dataset-records
+
+arguments:
+  name: >-
+    Dataset name as shown by `dci list-datahub-datasets` — the dataset's
+    identifier and its ingest `provider` value, never a display name.
+
+examples:
+  - description: One month of records as CSV, printed to the terminal.
+    command: "dci export-datahub-dataset-records <dataset-name> --start-time 2026-08-01T00:00:00Z --end-time 2026-09-01T00:00:00Z"
+  - description: The whole dataset to a file, however many pages and 366-day windows that takes.
+    command: "dci export-datahub-dataset-records <dataset-name> --start-time 2025-01-01T00:00:00Z --end-time 2026-09-05T00:00:00Z --all --output-file records.csv"
+  - description: Save under the filename the API suggests, into the current directory.
+    command: "dci export-datahub-dataset-records <dataset-name> --start-time 2026-08-01T00:00:00Z --end-time 2026-09-01T00:00:00Z --output-file ."
+  - description: The event-shaped JSON export (one JSON object per line), for a script or another tool.
+    command: "dci export-datahub-dataset-records <dataset-name> --start-time 2026-08-01T00:00:00Z --end-time 2026-09-01T00:00:00Z --format jsonl --all --output-file records.jsonl"
+  - description: Export ready to load into another dataset — provenance columns dropped, event_id renamed to id — then upload it with ingest-datahub-events-csv.
+    command: "dci export-datahub-dataset-records <dataset-name> --start-time 2026-08-01T00:00:00Z --end-time 2026-09-01T00:00:00Z --all --for-reimport --output-file records.csv"
+  - description: One page at a time, following the page token by hand.
+    command: "dci export-datahub-dataset-records <dataset-name> --start-time 2026-08-01T00:00:00Z --end-time 2026-09-01T00:00:00Z --max-results 5000"
+
+notes: |
+  :::info CLI behavior
+  The response body of this command is a file, not a table, so the CLI prints
+  it exactly as the API sent it — CSV by default, newline-delimited JSON with
+  `--format jsonl`. `--output` is ignored for this command; use
+  `--output-file` to save the bytes.
+
+  - **`--all` fetches everything.** The continuation token for this endpoint
+    arrives in the `X-Next-Page-Token` response header rather than in the
+    body, and the API exports at most 366 days per request. `--all` follows
+    the tokens **and** walks the successive time windows, then merges the
+    pages into one export: pass the full range you want and the CLI covers
+    it. It reports on stderr how many pages and windows it merged.
+  - **Merged CSV pages share one header.** The API computes the business
+    columns from the rows of each page, so consecutive pages can carry
+    different `label.*` and `metric.*` columns; `--all` re-emits every row
+    against the union of the headers, so a value never lands under the wrong
+    column. A single-page export is passed through byte for byte.
+  - **Without `--all`, a truncated export says so.** When more rows remain,
+    the CLI prints the row count and the `--page-token` value to stderr —
+    nothing in a CSV or JSONL stream itself would reveal that the file is
+    partial.
+  - **A window wider than 366 days is rejected before the request**, with a
+    pointer to `--all`, instead of returning the API's bare 400.
+  - **`--output-file`** takes a path, or a directory (`--output-file .`) to
+    use the filename from the API's `Content-Disposition` header.
+  - **`--for-reimport`** rewrites the CSV into the ingest vocabulary: it drops
+    the export-only `batch`, `source`, `export_time` and `updated_by` columns
+    and renames `event_id` to `id`, which is exactly what
+    `dci ingest-datahub-events-csv` expects. It applies to CSV only.
+  - Only live rows are exported; rows deleted in the console or through the
+    delete endpoints are excluded. Datasets created from the FOCUS schema
+    template export FOCUS column names and CSV only.
+  :::
+
+related: [list-datahub-datasets, get-datahub-dataset, update-datahub-dataset, ingest-datahub-events-csv]

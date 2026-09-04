@@ -3,15 +3,34 @@ command: update-datahub-dataset
 arguments:
   name: >-
     Dataset name as shown by `dci list-datahub-datasets`. The name is the
-    dataset's identifier and cannot be changed; to rename, delete the dataset
-    and create a new one.
+    dataset's identifier and the ingest `provider` value, and cannot be
+    changed; set `displayName` to change how the dataset is labelled in the
+    console and in report results.
 
 examples:
   - description: Change the description; omitted fields keep their stored values.
     command: "dci update-datahub-dataset <dataset-name> description: \"Token spend exported nightly from LiteLLM\""
+  - description: Label the dataset for the console and report results without renaming it.
+    command: "dci update-datahub-dataset <dataset-name> displayName: \"Datadog prod\""
   - description: Set the preset logo shown in the DoiT console.
     command: "dci update-datahub-dataset <dataset-name> logoName: litellm"
-  - description: Clear the description and the logo by sending empty strings.
-    command: "dci update-datahub-dataset <dataset-name> description: \"\", logoName: \"\""
+  - description: Clear the description, display name and logo by sending empty strings.
+    command: "dci update-datahub-dataset <dataset-name> description: \"\", displayName: \"\", logoName: \"\""
 
-related: [get-datahub-dataset, list-datahub-datasets, create-datahub-dataset, delete-datahub-dataset]
+notes: |
+  :::info CLI behavior
+  Only the fields present in the request body change: an omitted field keeps
+  its stored value, and an empty string clears it. Include `name` only to
+  make the request fail loudly if it does not match the dataset in the path —
+  it can never rename the dataset.
+
+  - `displayName` is what the console and report results show **instead of**
+    `name`. Saved reports, budgets, alerts and filters keep working across a
+    display rename because they all reference `name`.
+  - `dci list-datahub-datasets` shows a **display name** column whenever at
+    least one dataset has one, so a display rename is visible in the CLI too.
+  - Unknown body fields are rejected before the request is sent; the accepted
+    fields are `description`, `displayName`, `logoName` and `name`.
+  :::
+
+related: [get-datahub-dataset, list-datahub-datasets, create-datahub-dataset, delete-datahub-dataset, export-datahub-dataset-records]
