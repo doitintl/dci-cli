@@ -1,18 +1,32 @@
 command: ingest-datahub-events-csv
 
 examples:
-  - description: The request shape (CSV file plus the dataset name as `provider`). Not functional from the CLI yet, which cannot encode multipart uploads; use `dci ingest-datahub-events` or upload the CSV in the DoiT console.
+  - description: Upload a CSV into the dataset `litellm-usage`; the `@` attaches the file and keeps its name.
     command: "dci ingest-datahub-events-csv provider: litellm-usage, file: @events.csv"
+    output: |
+      batch                             batchId                           generatedEvents  ingestedRows  provider
+      csv_events.csv_1756987200000      csv_events.csv_1756987200000                   15            15  litellm-usage
+  - description: Upload a compressed export. Files over 30 MB must be gzipped or zipped first (one CSV per archive).
+    command: "dci ingest-datahub-events-csv provider: litellm-usage, file: @events.csv.gz"
+  - description: Script-friendly result, scoped to another customer's tenant.
+    command: "dci ingest-datahub-events-csv provider: litellm-usage, file: @events.csv --output json -D acme.com"
+    output: '{"batch": "csv_events.csv_1756987200000", "ingestedRows": 15, "generatedEvents": 15, "sourceRecords": 15, "provider": "litellm-usage", "schemaTemplate": "default@1"}'
 
 notes: |
-  :::warning Not available from the CLI yet
-  This operation takes a `multipart/form-data` body (the CSV file plus a
-  `provider` field). The CLI only encodes JSON request bodies, so the
-  shorthand body above fails with `not sure how to marshal multipart/form-data`
-  before any request is sent. Until that changes, ingest data with
-  `dci ingest-datahub-events` (JSON events, one command per batch) or upload
-  the CSV in the DoiT console — see
+  :::info Before you upload
+  `provider` is the dataset name (`dci list-datahub-datasets`); create it
+  first with `dci create-datahub-dataset name: <dataset>` if it does not
+  exist. The CSV must follow the dataset's schema template. For the Default
+  template the header row is `usage_date[,id],<dimension>...,<metric>...`
+  with RFC 3339 UTC timestamps; see
   [CSV ingestion](/docs/integrations/datahub/import-data/upload-csv).
+  Requires the DataHub Admin permission. Rows appear in Cloud Analytics
+  within about 15 minutes.
+  :::
+  :::tip Undo a bad upload
+  There is no delete-by-batch API. Remove the rows with
+  `dci delete-datahub-events-by-filter` using the time range the file
+  covered, then upload the corrected file.
   :::
 
-related: [ingest-datahub-events, create-datahub-dataset, list-datahub-datasets]
+related: [ingest-datahub-events, create-datahub-dataset, list-datahub-datasets, delete-datahub-events-by-filter]
