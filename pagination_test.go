@@ -59,7 +59,13 @@ func TestValidateMaxResults(t *testing.T) {
 }
 
 func TestPreflightAPIInvocationRejectsOverCapMaxResults(t *testing.T) {
-	api := cli.API{Operations: []cli.Operation{{Name: "list-dimensions"}}}
+	// The query params are load-bearing, not decoration: validatePagingFlagsSupported
+	// rejects --max-results on an operation that declares no maxResults, and
+	// the real list-dimensions declares both of these.
+	api := cli.API{Operations: []cli.Operation{{
+		Name:        "list-dimensions",
+		QueryParams: []*cli.Param{{Name: "maxResults"}, {Name: "pageToken"}},
+	}}}
 	configureInvocationPreflightTest(t, api, true, false, false)
 
 	err := preflightAPIInvocation([]string{"dci", "dci", "list-dimensions", "--max-results", "501"})

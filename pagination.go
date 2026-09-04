@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,9 @@ var pagingCaps = map[string]pagingCap{
 	"list-cloudflows":                  {500, "spec"},
 	"list-service-quotas":              {200, "spec"},
 	"list-tickets":                     {100, "spec"},
+	// A file-shaped export rather than a JSON collection, but the cap works
+	// the same way and --all reads it to size its pages (boostPageSize).
+	"export-datahub-dataset-records": {50000, "spec"},
 	// Not declared in the spec; probed live (2026-08-19): values above the
 	// cap are silently reset to the default page size of 50.
 	"list-dimensions": {500, "verified"},
@@ -150,6 +154,72 @@ func validateSearchFlags(args []string) error {
 	return nil
 }
 
+// pagingValueFlag is a paging flag that carries a value, and the query
+// parameter the operation must declare for that value to reach the API.
+// Ordered, not a map, so an invocation passing both gets a stable error.
+var pagingValueFlags = []struct {
+	flag  string
+	param string
+}{
+	{"--page-token", "pageToken"},
+	{"--max-results", "maxResults"},
+}
+
+// validatePagingFlagsSupported rejects a paging flag whose value the CLI
+// would silently drop. 187 of the 218 operations declare no pageToken and 23
+// of the list commands return their whole collection in one response; on
+// those, `--max-results 10` looked accepted and changed nothing, which reads
+// as "this collection has 200 items" rather than "your page size was
+// ignored". --all is only noted, never rejected: it asks for the complete
+// collection, and a command that does not page has already answered that.
+func validatePagingFlagsSupported(operation *cli.Operation, args []string) error {
+	if operation == nil {
+		return nil
+	}
+	for _, entry := range pagingValueFlags {
+		if !invocationHasFlag(args, entry.flag) || operationHasQueryParam(operation, entry.param) {
+			continue
+		}
+		return invocationPreflightError{
+			detail: structuredError{
+				Code:      "USAGE_ERROR",
+				Message:   fmt.Sprintf("%s does not page: it takes no %s parameter, so %s would be ignored", operation.Name, entry.param, entry.flag),
+				Hint:      fmt.Sprintf("Drop %s — this command returns the whole response in one request", entry.flag),
+				Retryable: false,
+			},
+			exitCode: exitUsage,
+		}
+	}
+	noteAllPagesIneffective(operation, args)
+	return nil
+}
+
+// noteAllPagesIneffective says on stderr that --all had nothing to follow.
+// Worth saying: passing it is a reasonable defensive habit, and silence
+// leaves the user unsure whether the result was complete.
+func noteAllPagesIneffective(operation *cli.Operation, args []string) {
+	if !invocationHasFlag(args, "--all") || operationHasQueryParam(operation, "pageToken") {
+		return
+	}
+	writer := cli.Stderr
+	if writer == nil {
+		writer = os.Stderr
+	}
+	_, _ = fmt.Fprintf(writer, "note: --all has no effect on %s; the API returns the whole response in one request\n", operation.Name)
+}
+
+func operationHasQueryParam(operation *cli.Operation, name string) bool {
+	if operation == nil {
+		return false
+	}
+	for _, parameter := range operation.QueryParams {
+		if parameter != nil && parameter.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // allPagesMaxPages bounds the --all fetch loop. At the default page size this
 // is ~2,000 rows and at the common 500 cap ~20,000 — far beyond any known
 // collection, while still guaranteeing termination against a server that
@@ -179,8 +249,19 @@ type paginatingTransport struct {
 
 func (t paginatingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	request = t.boostPageSize(request)
+	// A file-shaped export caps its time window server-side; --all covers a
+	// wider range by walking the windows, starting from a clamped first one.
+	request, exportWindow := clampExportWindow(request)
 	response, err := t.next.RoundTrip(request)
-	if err != nil || !t.applies(request, response) {
+	if err != nil {
+		return response, err
+	}
+	if t.appliesToFileExport(request, response) {
+		// CSV/NDJSON pages: the token is a header and the body is a file, so
+		// the JSON merge below cannot see either (export_pagination.go).
+		return t.mergeFileExportPages(request, response, exportWindow)
+	}
+	if !t.applies(request, response) {
 		return response, err
 	}
 
@@ -274,6 +355,14 @@ func (t paginatingTransport) applies(request *http.Request, response *http.Respo
 	if !strings.Contains(response.Header.Get("Content-Type"), "json") {
 		return false
 	}
+	return sameHostAsAPIBase(request)
+}
+
+// sameHostAsAPIBase reports whether a request is aimed at the configured DCI
+// API. The transport wraps http.DefaultTransport process-wide, so every
+// merge path has to check this before touching a response — the update check
+// and the OAuth exchange travel through it too.
+func sameHostAsAPIBase(request *http.Request) bool {
 	base, err := apiBase()
 	if err != nil {
 		return false

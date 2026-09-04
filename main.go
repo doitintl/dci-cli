@@ -752,6 +752,9 @@ func run() (exitCode int) {
 	installRenderedLineCounter()
 	installResponseGuard()
 	installDestructiveActionSummaryGuard()
+	// Outermost formatter: a file-shaped body (CSV, NDJSON) bypasses every
+	// renderer below, and --output-file redirects what they do write.
+	installRawBodyOutputGuard()
 	registerAgentFlags()
 	printFirstRunOnboarding(configured)
 	maybeHintAgentMode()
@@ -2190,6 +2193,8 @@ func addOutputFlag() {
 	dciCmd.PersistentFlags().Bool("name", false, "Force name resolution even when an argument matches the resource ID format")
 	dciCmd.PersistentFlags().Bool("all", false, "Fetch every page of a paged list response before rendering (follows the server's page tokens; GET list commands only). Cannot be combined with --page-token or --max-results")
 	dciCmd.PersistentFlags().String("search", "", "Client-side case-insensitive substring filter over list items, matched against every text field (list commands only; e.g. list-dimensions --search genai). Implies --all so the whole collection is searched. Cannot be combined with --page-token or --max-results")
+	dciCmd.PersistentFlags().StringP("output-file", "O", "", "Write the response to this file instead of stdout. A path naming an existing directory (or ending in a separator) uses the filename the API suggests")
+	dciCmd.PersistentFlags().Bool("for-reimport", false, "Rewrite an exported CSV into the ingest vocabulary — drop the export-only batch, source, export_time and updated_by columns and rename event_id to id — so it can be fed straight to ingest-datahub-events-csv")
 	registerStaticFlagCompletions(dciCmd)
 
 	// Bind table flags into viper so the renderer can pick them up.
@@ -2266,6 +2271,22 @@ func addOutputFlag() {
 		}
 		viper.Set("all-pages", allPages)
 		viper.Set("all-pages-boost", pagingCaps[cmd.Name()].limit)
+
+		// Download state: always reset, like every other key here (viper
+		// persists across in-process runs).
+		outputFile := ""
+		if flag := cmd.Flags().Lookup("output-file"); flag != nil && flag.Changed {
+			outputFile = strings.TrimSpace(flag.Value.String())
+			if outputFile == "" {
+				return fmt.Errorf("--output-file requires a file path")
+			}
+		}
+		viper.Set("output-file", outputFile)
+		forReimport := false
+		if flag := cmd.Flags().Lookup("for-reimport"); flag != nil && flag.Changed {
+			forReimport = flag.Value.String() == "true"
+		}
+		viper.Set("export-for-reimport", forReimport)
 
 		dropUnlabeled := false
 		if flag := cmd.Flags().Lookup("drop-unlabeled-rows"); flag != nil && flag.Changed {

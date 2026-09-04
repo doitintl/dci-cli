@@ -46,6 +46,11 @@ type viewColumn struct {
 	// derive computes the cell from the whole row; when nil the source field
 	// is mirrored under the title as-is.
 	derive func(row map[string]interface{}, ctx *viewContext) interface{}
+	// hideWhenEmpty drops the column when no row has a value for it, for
+	// fields the API only sometimes populates: a column of nulls costs
+	// terminal width that the columns carrying data need, and reads as
+	// "this data is missing" rather than "this field is optional".
+	hideWhenEmpty bool
 }
 
 type listView struct {
@@ -192,6 +197,12 @@ var listViews = map[string]listView{
 		itemsKey: "datasets",
 		columns: []viewColumn{
 			{title: "name"},
+			// The console and report results show displayName in place of
+			// name when it is set (update-datahub-dataset writes it), so
+			// without this column a dataset renamed for display looks
+			// untouched here — and the name the user sees in reports appears
+			// nowhere in the CLI. Absent for datasets displayed by name.
+			{title: "display name", source: "displayName", hideWhenEmpty: true},
 			{title: "updated (UTC)", source: "lastUpdated"},
 			{title: "updated by", source: "updatedBy"},
 		},
@@ -311,12 +322,51 @@ func applyListView(body interface{}) interface{} {
 			}
 		}
 	}
+	titles = keepPopulatedViewColumns(view, titles, rows)
 	linkColumn := ""
 	if view.linkURLKey != "" {
 		linkColumn = titles[0]
 	}
 	setListViewConfig(titles, titles[0], linkColumn, view.linkURLKey, "", "")
 	return body
+}
+
+// keepPopulatedViewColumns drops hideWhenEmpty columns that no row filled
+// in, and with them the derived key they would have rendered from. The lead
+// column is never dropped: it carries the row's identity, and the width
+// priority and hyperlink both anchor to it.
+func keepPopulatedViewColumns(view listView, titles []string, rows []map[string]interface{}) []string {
+	kept := make([]string, 0, len(titles))
+	for index, column := range view.columns {
+		title := titles[index]
+		if index > 0 && column.hideWhenEmpty && !anyRowHasValue(rows, title) {
+			if column.derive != nil || (column.source != "" && column.source != title) {
+				// A derived or renamed key exists only for the view; the
+				// underlying response field stays untouched.
+				for _, row := range rows {
+					delete(row, title)
+				}
+			}
+			continue
+		}
+		kept = append(kept, title)
+	}
+	return kept
+}
+
+func anyRowHasValue(rows []map[string]interface{}, key string) bool {
+	for _, row := range rows {
+		switch value := row[key].(type) {
+		case nil:
+		case string:
+			if strings.TrimSpace(value) != "" {
+				return true
+			}
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // setListViewConfig pins a curated view for the table/TOON renderers: the

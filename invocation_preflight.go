@@ -97,6 +97,15 @@ func preflightAPIInvocation(args []string) error {
 	if err := validateSearchFlags(args[2:]); err != nil {
 		return err
 	}
+	if err := validatePagingFlagsSupported(operation, args[2:]); err != nil {
+		return err
+	}
+	if err := validateExportWindow(operation.Name, args[2:]); err != nil {
+		return err
+	}
+	if err := validateReimportFlag(operation.Name, args[2:]); err != nil {
+		return err
+	}
 	if authenticated || interactive || invocationHasFlag(args, "--dry-run") {
 		return nil
 	}
@@ -136,6 +145,9 @@ func preflightLocalDCICommand(commandName string, args []string) error {
 		return err
 	}
 	if err := validateSearchFlags(args[2:]); err != nil {
+		return err
+	}
+	if err := validateReimportFlag(commandName, args[2:]); err != nil {
 		return err
 	}
 	if invocationCredentialsAvailable() || invocationInteractive() || invocationHasFlag(args, "--dry-run") {
