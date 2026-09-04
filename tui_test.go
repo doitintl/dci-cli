@@ -98,7 +98,7 @@ func TestPickPathArgumentSelection(t *testing.T) {
 	}
 	t.Cleanup(func() { pickerSelectEntry = originalSelect })
 
-	if err := pickPathArgument(cmd, target); err != nil {
+	if err := pickPathArgument(cmd, target, nil); err != nil {
 		t.Fatal(err)
 	}
 	if pickedPathArgument != "abcdefghij0987654321" {
@@ -107,6 +107,91 @@ func TestPickPathArgumentSelection(t *testing.T) {
 	resolved := commandResolvedTarget("get-report")
 	if resolved == nil || resolved.name != "Monthly GCP Spend" {
 		t.Fatalf("resolvedTargets not recorded for the destructive gate: %+v", resolved)
+	}
+}
+
+// A sub-resource operation (/datasets/{name}/records) picks from the same
+// parent collection as the bare /{name} form, and a name-keyed collection has
+// no separate id: the selected name is what reaches the path slot.
+func TestPickPathArgumentSubResourceNameKeyed(t *testing.T) {
+	resetNameResolutionState()
+	t.Cleanup(resetNameResolutionState)
+	resetDCIConfigDirCache()
+	t.Cleanup(resetDCIConfigDirCache)
+	target := resolutionListTarget{listPath: "/datahub/v1/datasets", resource: "datasets", listOperation: "list-datahub-datasets"}
+	resolutionIndex = map[string]resolutionListTarget{"export-datahub-dataset-records": target}
+	cmd := &cobra.Command{Use: "export-datahub-dataset-records"}
+
+	forceTUI(t, true)
+	originalFetch := resolverListFetch
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		if listPath != "/datahub/v1/datasets" {
+			t.Fatalf("listPath = %q, want the parent collection", listPath)
+		}
+		entries, _ := parseResourceNamePage([]byte(`{"datasets":[{"name":"Team Plan"},{"name":"LiteLLM"}]}`))
+		return resolverListResult{entries: entries}, nil
+	}
+	t.Cleanup(func() { resolverListFetch = originalFetch })
+
+	originalSelect := pickerSelectEntry
+	pickerSelectEntry = func(title string, entries []nameCacheEntry) (nameCacheEntry, error) {
+		return entries[1], nil
+	}
+	t.Cleanup(func() { pickerSelectEntry = originalSelect })
+
+	if err := pickPathArgument(cmd, target, nil); err != nil {
+		t.Fatal(err)
+	}
+	if pickedPathArgument != "LiteLLM" {
+		t.Fatalf("pickedPathArgument = %q, want the selected dataset name", pickedPathArgument)
+	}
+}
+
+// A bodied operation keeps its usage error on zero arguments, but opens the
+// picker when the positionals are all request-body shorthand: the body is
+// there and the name is the one thing missing. The selection goes in front
+// of the body, never over it.
+func TestPickPathArgumentBodyOnlyPositionals(t *testing.T) {
+	resetNameResolutionState()
+	t.Cleanup(resetNameResolutionState)
+	resetDCIConfigDirCache()
+	t.Cleanup(resetDCIConfigDirCache)
+	target := resolutionListTarget{listPath: "/datahub/v1/datasets", resource: "datasets", listOperation: "list-datahub-datasets", hasBody: true}
+	resolutionIndex = map[string]resolutionListTarget{"update-datahub-dataset": target}
+	cmd := &cobra.Command{
+		Use:  "update-datahub-dataset name",
+		Long: "Update a dataset.\n\n## Request Schema (application/json)\n\n```schema\n{\n  description: (string)\n}\n```\n",
+	}
+
+	forceTUI(t, true)
+	originalFetch := resolverListFetch
+	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
+		return resolverListResult{entries: []nameCacheEntry{{ID: "LiteLLM", Name: "LiteLLM"}}}, nil
+	}
+	t.Cleanup(func() { resolverListFetch = originalFetch })
+	originalSelect := pickerSelectEntry
+	pickerSelectEntry = func(title string, entries []nameCacheEntry) (nameCacheEntry, error) {
+		return entries[0], nil
+	}
+	t.Cleanup(func() { pickerSelectEntry = originalSelect })
+
+	if zeroArgPickerApplies(cmd) {
+		t.Fatal("zero args on a bodied operation must keep the usage error")
+	}
+	body := []string{"description:", "hello"}
+	if !pathArgumentPickerApplies(cmd, body) {
+		t.Fatal("body-only positionals must open the picker")
+	}
+	if pathArgumentPickerApplies(cmd, []string{"LiteLLM", "description:", "hello"}) {
+		t.Fatal("a typed name must not open the picker")
+	}
+
+	if err := pickPathArgument(cmd, target, body); err != nil {
+		t.Fatal(err)
+	}
+	got := withPickedPathArgument(body)
+	if len(got) != 3 || got[0] != "LiteLLM" || got[1] != "description:" || got[2] != "hello" {
+		t.Fatalf("args = %q, want the selection in front of the body shorthand", got)
 	}
 }
 
@@ -134,7 +219,7 @@ func TestPickPathArgumentCancel(t *testing.T) {
 	}
 	t.Cleanup(func() { pickerSelectEntry = originalSelect })
 
-	err := pickPathArgument(cmd, target)
+	err := pickPathArgument(cmd, target, nil)
 	if err == nil {
 		t.Fatal("cancel must abort the command")
 	}
