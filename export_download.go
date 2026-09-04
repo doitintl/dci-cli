@@ -149,10 +149,15 @@ func (guard rawBodyOutputGuard) Format(resp cli.Response) error {
 	}
 	written, formatErr := guard.writeTo(file, resp, body, isRaw)
 	closeErr := file.Close()
-	if formatErr != nil {
-		return formatErr
-	}
-	if closeErr != nil {
+	if formatErr != nil || closeErr != nil {
+		// A half-written file at the path the user named is the very failure
+		// this chapter exists to prevent: it looks like a complete export and
+		// nothing on disk says otherwise. Best-effort removal — if it cannot
+		// go, the error below still says the write failed.
+		_ = os.Remove(target)
+		if formatErr != nil {
+			return reportOutputFileError(formatErr)
+		}
 		return reportOutputFileError(closeErr)
 	}
 	noteOutputFileWritten(target, written)

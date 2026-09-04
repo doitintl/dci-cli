@@ -106,6 +106,9 @@ func preflightAPIInvocation(args []string) error {
 	if err := validateReimportFlag(operation.Name, args[2:]); err != nil {
 		return err
 	}
+	if err := validateSearchOnFileExport(operation.Name, args[2:]); err != nil {
+		return err
+	}
 	if authenticated || interactive || invocationHasFlag(args, "--dry-run") {
 		return nil
 	}

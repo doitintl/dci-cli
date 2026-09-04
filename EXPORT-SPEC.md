@@ -76,6 +76,23 @@ file-shaped response to `mergeFileExportPages`, which:
 - stops at `maxFileExportRequests` (200) and keeps the resume token in the
   header, with a note naming the command that continues from there.
 
+The loop checks the request cap **before** consuming a window from the walk:
+`walk.next()` advances `currentEnd` permanently, so consuming a window for a
+request the cap then refuses would drop that window's rows and point the
+resume note past them. Truncation therefore always resumes from data actually
+fetched — mid-window with `--page-token` (the token encodes its own window),
+at a boundary with `--start-time`/`--end-time` for the range still missing,
+and never with an empty `--page-token`.
+
+The walk gates on the user having **typed** `--all` (`allPagesExplicit`), not
+on the `all-pages` key: `--search` also sets that key (searching one page
+would miss the collection), and `--search` can neither filter nor even reach
+a file-shaped body — `rawBodyOutputGuard` returns the bytes before
+`applyListSearch` runs. Gating on the overloaded key would have let a bare
+`--search` launch a 200-request page-and-window walk that changed nothing.
+`--search` on a file export is now a preflight usage error
+(`validateSearchOnFileExport`) rather than a silent no-op.
+
 The first request is clamped to the cap by `clampExportWindow` **only** under
 `--all`. Without `--all` there is no loop to continue, and quietly exporting a
 narrower range than the one requested is the worst available answer — so
@@ -125,6 +142,11 @@ A path naming an existing directory (or written with a trailing separator, or
 used — a header carrying `../../.ssh/authorized_keys` cannot escape the
 directory — and a derived name never overwrites an existing file (an explicit
 path does, like a shell redirect).
+
+A write that fails partway (disk full, permissions revoked, a renderer
+erroring mid-render) removes the file it created, best-effort, before
+reporting: a half-written file at the path the user named looks exactly like a
+complete export.
 
 `-O` deliberately takes a value rather than using pflag's `NoOptDefVal`:
 with a default value set, `-O out.csv` would silently treat `out.csv` as a

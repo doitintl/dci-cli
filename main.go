@@ -2259,6 +2259,10 @@ func addOutputFlag() {
 		if flag := cmd.Flags().Lookup("all"); flag != nil && flag.Changed {
 			allPages = flag.Value.String() == "true"
 		}
+		// Recorded before --search widens it below: a file-shaped export
+		// walks page tokens AND time windows, which is far too much work to
+		// trigger from a flag the user did not type (export_pagination.go).
+		viper.Set("all-pages-explicit", allPages)
 		searchTerm := ""
 		if flag := cmd.Flags().Lookup("search"); flag != nil && flag.Changed {
 			searchTerm = strings.TrimSpace(flag.Value.String())

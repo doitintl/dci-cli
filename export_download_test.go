@@ -468,3 +468,38 @@ func TestRawBodyOutputGuardLeavesFileAloneOnEmptyBody(t *testing.T) {
 		t.Error("an empty response created a zero-byte file; want no file at all")
 	}
 }
+
+func TestRawBodyOutputGuardRemovesPartialFileOnWriteFailure(t *testing.T) {
+	// A half-written file at the user's path is the "truncated export looks
+	// complete" failure this chapter exists to prevent.
+	resetExportDownloadState(t)
+	captureExportStdout(t)
+	capturePaginationStderr(t)
+	resetErrorContractState()
+	t.Cleanup(resetErrorContractState)
+	path := filepath.Join(t.TempDir(), "records.csv")
+	viper.Set("output-file", path)
+
+	if err := (rawBodyOutputGuard{next: &failingFormatter{}}).Format(cli.Response{
+		Status:  200,
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Body:    map[string]interface{}{"name": "x"},
+	}); err != nil {
+		t.Fatalf("Format returned %v; want the failure reported through the error contract", err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Error("a partial file was left behind after a failed write")
+	}
+	if responseExitCode != exitUsage {
+		t.Errorf("responseExitCode = %d, want %d", responseExitCode, exitUsage)
+	}
+}
+
+// failingFormatter writes some output and then fails, like a renderer that
+// dies partway or a disk that fills up mid-write.
+type failingFormatter struct{}
+
+func (failingFormatter) Format(resp cli.Response) error {
+	_, _ = cli.Stdout.Write([]byte("half a table"))
+	return fmt.Errorf("rendering blew up")
+}

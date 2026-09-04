@@ -44,7 +44,11 @@ notes: |
   - **A window wider than 366 days is rejected before the request**, with a
     pointer to `--all`, instead of returning the API's bare 400.
   - **`--output-file`** takes a path, or a directory (`--output-file .`) to
-    use the filename from the API's `Content-Disposition` header.
+    use the filename from the API's `Content-Disposition` header. A write that
+    fails partway removes the partial file rather than leaving it behind.
+  - **`--search` does not apply** and is rejected: it filters the items of a
+    list response, and this command returns a file. Filter the export itself
+    with `grep`, `jq`, or a spreadsheet.
   - **`--for-reimport`** rewrites the CSV into the ingest vocabulary: it drops
     the export-only `batch`, `source`, `export_time` and `updated_by` columns
     and renames `event_id` to `id`, which is exactly what

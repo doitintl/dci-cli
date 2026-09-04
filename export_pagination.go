@@ -75,6 +75,12 @@ type exportWindowWalk struct {
 // requested range is fully covered. Windows are half-open and abut exactly —
 // the export's startTime is inclusive and endTime exclusive — so no row is
 // fetched twice and none is skipped.
+// more reports whether any of the requested range is left, without
+// consuming a window.
+func (walk *exportWindowWalk) more() bool {
+	return walk != nil && walk.currentEnd.Before(walk.requestedEnd)
+}
+
 func (walk *exportWindowWalk) next() (time.Time, time.Time, bool) {
 	if walk == nil || !walk.currentEnd.Before(walk.requestedEnd) {
 		return time.Time{}, time.Time{}, false
@@ -104,7 +110,7 @@ func formatExportWindowBound(value time.Time) string {
 // validateExportWindow rejects that combination up front instead.
 func clampExportWindow(request *http.Request) (*http.Request, *exportWindowWalk) {
 	spec, known := fileExportOperations[invokedCommandName]
-	if !known || spec.maxWindow == 0 || request.Method != http.MethodGet || !allPagesActive() {
+	if !known || spec.maxWindow == 0 || request.Method != http.MethodGet || !allPagesExplicit() {
 		return request, nil
 	}
 	query := request.URL.Query()
@@ -142,7 +148,9 @@ func cloneRequestWithQuery(request *http.Request, set map[string]string, remove 
 // engage: --all passed, a successful GET against the DoiT API, and a
 // file-shaped body. The JSON collections are handled by applies() instead.
 func (t paginatingTransport) appliesToFileExport(request *http.Request, response *http.Response) bool {
-	if !allPagesActive() || request.Method != http.MethodGet || response == nil {
+	// allPagesExplicit, not allPagesActive: --search sets all-pages too, and
+	// it can neither filter nor even reach a file-shaped body.
+	if !allPagesExplicit() || request.Method != http.MethodGet || response == nil {
 		return false
 	}
 	if response.StatusCode != http.StatusOK || !sameHostAsAPIBase(request) {
@@ -169,29 +177,30 @@ func (t paginatingTransport) mergeFileExportPages(request *http.Request, respons
 	requests := 1
 	truncated := false
 	for {
+		if token == "" && (walk == nil || !walk.more()) {
+			return t.finishFileExport(response, contentType, pages, requests, walk, "", false)
+		}
+		// Before walk.next(): it advances the window permanently, so
+		// consuming one for a request the cap then refuses would drop that
+		// window's rows and leave the resume note pointing past them.
+		if requests >= maxFileExportRequests {
+			truncated = true
+			break
+		}
+
 		var pageRequest *http.Request
-		switch {
-		case token != "":
+		if token != "" {
 			pageRequest = cloneRequestWithQuery(base, map[string]string{"pageToken": token}, nil)
-		case walk != nil:
-			start, end, more := walk.next()
-			if !more {
-				return t.finishFileExport(response, contentType, pages, requests, walk, "", false)
-			}
+		} else {
+			start, end, _ := walk.next()
 			pageRequest = cloneRequestWithQuery(base, map[string]string{
 				walk.spec.startParam: formatExportWindowBound(start),
 				walk.spec.endParam:   formatExportWindowBound(end),
 			}, []string{"pageToken"})
 			// Later token pages belong to this window, not the first one.
 			base = pageRequest
-		default:
-			return t.finishFileExport(response, contentType, pages, requests, walk, "", false)
 		}
 
-		if requests >= maxFileExportRequests {
-			truncated = true
-			break
-		}
 		pageResponse, pageErr := t.next.RoundTrip(pageRequest)
 		if pageErr != nil {
 			return nil, fmt.Errorf("--all: fetching page %d failed: %w", requests+1, pageErr)
@@ -237,11 +246,19 @@ func noteFileExportMerged(requests, rows int, walk *exportWindowWalk, token stri
 		return
 	}
 	if truncated {
+		// Two shapes of resume, and an empty --page-token in either would be
+		// a dangling flag: mid-window the token identifies where to continue
+		// (it encodes the window itself), while at a window boundary there is
+		// no token and the remaining range starts at the last window's end.
 		resume := fmt.Sprintf("--page-token %s", token)
-		if walk != nil {
-			resume = fmt.Sprintf("%s %s %s", walk.spec.startFlag, formatExportWindowBound(walk.currentEnd), resume)
+		if token == "" && walk != nil {
+			resume = fmt.Sprintf("%s %s %s %s --all", walk.spec.startFlag, formatExportWindowBound(walk.currentEnd),
+				walk.spec.endFlag, formatExportWindowBound(walk.requestedEnd))
 		}
-		_, _ = fmt.Fprintf(cli.Stderr, "note: --all stopped after %d requests; resume with %s\n", requests, resume)
+		_, _ = fmt.Fprintf(cli.Stderr, "note: --all stopped after %d requests; the export is incomplete — resume with %s\n", requests, resume)
+		if token != "" && walk.more() {
+			_, _ = fmt.Fprintf(cli.Stderr, "note: time windows after %s were not reached either\n", formatExportWindowBound(walk.currentEnd))
+		}
 		return
 	}
 	if requests <= 1 {
@@ -412,6 +429,29 @@ func validateExportWindow(commandName string, args []string) error {
 				commandName, formatExportWindowBound(start), formatExportWindowBound(end),
 				int(end.Sub(start).Hours()/24), commandName, days, evidence),
 			Hint:      fmt.Sprintf("Pass --all to export the whole range (the CLI walks the %d-day windows and merges the pages), or narrow the window", days),
+			Retryable: false,
+		},
+		exitCode: exitUsage,
+	}
+}
+
+// validateSearchOnFileExport rejects --search on an operation whose body is a
+// file. The filter runs over parsed list items (response_transform.go), which
+// a CSV or NDJSON stream never becomes, so it silently matched nothing — and
+// because --search implies --all, it also used to launch the whole
+// page-and-window walk the user never asked for.
+func validateSearchOnFileExport(commandName string, args []string) error {
+	if !invocationHasFlag(args, "--search") {
+		return nil
+	}
+	if _, known := fileExportOperations[commandName]; !known {
+		return nil
+	}
+	return invocationPreflightError{
+		detail: structuredError{
+			Code:      "USAGE_ERROR",
+			Message:   fmt.Sprintf("--search filters the items of a list response; %s returns a file (CSV or newline-delimited JSON), which it cannot match", commandName),
+			Hint:      "Drop --search and filter the exported file with grep, jq, or your spreadsheet — pass --all --output-file <path> to save it first",
 			Retryable: false,
 		},
 		exitCode: exitUsage,

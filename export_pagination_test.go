@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,13 @@ func asExportCommand(t *testing.T) {
 	t.Helper()
 	previous := invokedCommandName
 	invokedCommandName = "export-datahub-dataset-records"
-	t.Cleanup(func() { invokedCommandName = previous })
+	// The file-export paths gate on the user having typed --all, not on the
+	// all-pages key --search also sets.
+	viper.Set("all-pages-explicit", true)
+	t.Cleanup(func() {
+		invokedCommandName = previous
+		viper.Set("all-pages-explicit", false)
+	})
 }
 
 func readBody(t *testing.T, response *http.Response) string {
@@ -574,5 +581,100 @@ func TestPreflightRejectsOverLongExportWindow(t *testing.T) {
 	}
 	if err := preflightAPIInvocation(append(args, "--all")); err != nil {
 		t.Fatalf("--all invocation rejected: %v", err)
+	}
+}
+
+func TestFileExportIgnoresSearchImpliedAllPages(t *testing.T) {
+	// --search sets all-pages (pagination.go) but can neither filter nor even
+	// reach a file body: the walk must not fire, or a bare --search would
+	// silently issue up to 200 requests.
+	activateAllPages(t, 50000)
+	asExportCommand(t)
+	viper.Set("all-pages-explicit", false)
+	viper.Set("list-search", "foo")
+	t.Cleanup(func() { viper.Set("list-search", "") })
+	capturePaginationStderr(t)
+	scripted := &scriptedExportTransport{pages: []exportPage{
+		{body: "event_id\ne1\n", token: "t2"},
+		{body: "event_id\ne2\n"},
+	}}
+	transport := paginatingTransport{next: scripted}
+
+	response, err := transport.RoundTrip(exportGetRequest(t, "startTime=2025-01-01T00:00:00Z&endTime=2026-09-05T00:00:00Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scripted.requests) != 1 {
+		t.Errorf("made %d requests for a --search-implied --all, want 1", len(scripted.requests))
+	}
+	if got := scripted.requests[0].URL.Query().Get("endTime"); got != "2026-09-05T00:00:00Z" {
+		t.Errorf("endTime = %q, want the window untouched (no clamp without an explicit --all)", got)
+	}
+	if response.Header.Get(nextPageTokenHeader) != "t2" {
+		t.Error("the continuation token was stripped; the stderr note needs it")
+	}
+}
+
+func TestValidateSearchOnFileExport(t *testing.T) {
+	err := validateSearchOnFileExport("export-datahub-dataset-records", []string{"demo", "--search", "foo"})
+	if err == nil {
+		t.Fatal("--search on a file export was accepted; it matches nothing there")
+	}
+	if preflight, ok := err.(invocationPreflightError); !ok || preflight.exitCode != exitUsage {
+		t.Errorf("err = %v, want a usage preflight error", err)
+	}
+	if err := validateSearchOnFileExport("export-datahub-dataset-records", []string{"demo"}); err != nil {
+		t.Errorf("without --search: %v, want nil", err)
+	}
+	if err := validateSearchOnFileExport("list-dimensions", []string{"--search", "genai"}); err != nil {
+		t.Errorf("--search on a list command: %v, want nil", err)
+	}
+}
+
+func TestFileExportRequestCapDoesNotConsumeAnUnfetchedWindow(t *testing.T) {
+	// The cap trips exactly at a window rollover: the last in-window page
+	// returns no token, so the loop would advance the window next. The
+	// unfetched window must stay unconsumed (its rows would be lost) and the
+	// resume note must name it instead of a dangling empty --page-token.
+	activateAllPages(t, 50000)
+	asExportCommand(t)
+	stderr := capturePaginationStderr(t)
+
+	pages := make([]exportPage, maxFileExportRequests)
+	for index := range pages {
+		pages[index] = exportPage{body: "event_id\ne" + strconv.Itoa(index) + "\n"}
+		if index < maxFileExportRequests-1 {
+			pages[index].token = "t" + strconv.Itoa(index+1)
+		}
+	}
+	scripted := &scriptedExportTransport{pages: pages}
+	transport := paginatingTransport{next: scripted}
+
+	// 2025-01-01 to 2027-06-01 is 882 days: three windows, and every request
+	// is spent paging inside the first one.
+	response, err := transport.RoundTrip(exportGetRequest(t, "startTime=2025-01-01T00:00:00Z&endTime=2027-06-01T00:00:00Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scripted.requests) != maxFileExportRequests {
+		t.Fatalf("made %d requests, want the cap of %d", len(scripted.requests), maxFileExportRequests)
+	}
+	// The second window's bounds must not have been consumed by a request
+	// that was never sent.
+	if got := scripted.requests[len(scripted.requests)-1].URL.Query().Get("endTime"); got != "2026-01-02T00:00:00Z" {
+		t.Errorf("last request endTime = %q, want the first window still", got)
+	}
+	note := stderr.String()
+	if strings.Contains(note, "--page-token") {
+		t.Errorf("note = %q, want no --page-token at a window boundary (there is none)", note)
+	}
+	if !strings.Contains(note, "--start-time 2026-01-02T00:00:00Z") || !strings.Contains(note, "--end-time 2027-06-01T00:00:00Z") {
+		t.Errorf("note = %q, want the unfetched range as the resume window", note)
+	}
+	if !strings.Contains(note, "incomplete") {
+		t.Errorf("note = %q, want it to say the export is incomplete", note)
+	}
+	if response.Header.Get(nextPageTokenHeader) != "" {
+		t.Errorf("%s = %q, want empty at a window boundary", nextPageTokenHeader, response.Header.Get(nextPageTokenHeader))
 	}
 }
