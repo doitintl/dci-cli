@@ -36,7 +36,7 @@ the CLI guide.
   The `@` attaches the file by name; a file over the API's 30 MB limit, a
   missing file, or a forgotten `@` is reported with a fix before anything is
   sent. Previously the command failed with an internal marshaling error. See
-  [ingest-datahub-events-csv](https://help.doit.com/docs/cli/generated/command-groups/datahub/ingest-datahub-events-csv).
+  [ingest-datahub-events-csv](https://help.doit.com/docs/cli/generated/command-groups/datahub/datahub-events-csvfile).
 
 ## v2.7.3 — September 4, 2026
 
