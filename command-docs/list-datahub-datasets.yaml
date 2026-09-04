@@ -12,7 +12,8 @@ notes: |
   :::info CLI default view
   `dci list-datahub-datasets` presents a curated table by default:
 
-  - **Columns:** `name`, `updated (UTC)` (from `lastUpdated`), and `updated by` (from `updatedBy`).
+  - **Columns:** `name`, `display name` (from `displayName`), `updated (UTC)` (from `lastUpdated`), and `updated by` (from `updatedBy`).
+  - The `display name` column appears only when at least one dataset has one — it is what the DoiT console and report results show instead of `name`, and is set with `dci update-datahub-dataset <dataset-name> displayName: "..."`.
   - In interactive tables, `updated (UTC)` renders in your **local timezone** and is titled `updated (local)`; machine formats, agent mode, and `--utc` keep UTC — see [Timestamps and timezones](/docs/cli#timestamps).
   - `--output json` and explicit `-C`/`--fields` selections return the raw fields documented below.
   :::
