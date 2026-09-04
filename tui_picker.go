@@ -22,10 +22,25 @@ import (
 // slice to every hook, so a zero-length slice cannot be grown in place.
 var pickedPathArgument string
 
+// pickedArgumentPrepends records that the selection fills a path slot in
+// front of existing positionals (body shorthand) rather than an empty slice.
+var pickedArgumentPrepends bool
+
 // zeroArgPickerApplies reports whether a zero-argument invocation of cmd may
 // open the picker. Shared by the relaxed Args validator (which must accept
 // zero args before the pre-run hook can act) and the picker itself.
 func zeroArgPickerApplies(cmd *cobra.Command) bool {
+	return pathArgumentPickerApplies(cmd, nil)
+}
+
+// pathArgumentPickerApplies reports whether this invocation is missing its
+// path argument in a way the picker can fill. Without a request body that is
+// simply the zero-argument form. With one, surplus positionals are body
+// shorthand rather than the words of a name, so zero positionals cannot be
+// told from a missing body and keep their usage error — but positionals that
+// are *all* body shorthand say precisely that the body is there and the name
+// is the one thing missing (`dci update-datahub-dataset description: x`).
+func pathArgumentPickerApplies(cmd *cobra.Command, args []string) bool {
 	if !tuiActive() {
 		return false
 	}
@@ -33,7 +48,13 @@ func zeroArgPickerApplies(cmd *cobra.Command) bool {
 		return false
 	}
 	target, ok := resolutionIndex[cmd.Name()]
-	return ok && !target.hasBody
+	if !ok {
+		return false
+	}
+	if !target.hasBody {
+		return len(args) == 0
+	}
+	return bodyOnlyPositionals(cmd, args)
 }
 
 // pickPathArgument runs the picker for a zero-argument resolvable command,
@@ -41,9 +62,10 @@ func zeroArgPickerApplies(cmd *cobra.Command) bool {
 // confirmation display. A var-called selector so tests can fake the terminal.
 var pickerSelectEntry = tuiSelectEntry
 
-func pickPathArgument(cmd *cobra.Command, target resolutionListTarget) error {
+func pickPathArgument(cmd *cobra.Command, target resolutionListTarget, args []string) error {
 	pickedPathArgument = ""
-	if !zeroArgPickerApplies(cmd) {
+	pickedArgumentPrepends = false
+	if !pathArgumentPickerApplies(cmd, args) {
 		// Non-TUI zero-arg invocations were already rejected by the Args
 		// validator; reaching here without the gate means nothing to do.
 		return nil
@@ -74,6 +96,9 @@ func pickPathArgument(cmd *cobra.Command, target resolutionListTarget) error {
 		return nameSelectionCancelledError(resource)
 	}
 	pickedPathArgument = entry.ID
+	// Body shorthand already occupies the positional slots: the picked name
+	// goes in front of it, not over it.
+	pickedArgumentPrepends = len(args) > 0
 	resolved := resolvedFromEntry(entry.Name, resource, entry)
 	resolvedTargets[cmd.Name()] = resolved
 	announceResolution(resolved)
@@ -109,10 +134,7 @@ func pickerEntries(target resolutionListTarget, context string) ([]nameCacheEntr
 // for symmetry with custom commands.
 func installPickerArgInjection(command *cobra.Command) {
 	injected := func(args []string) []string {
-		if len(args) == 0 && pickedPathArgument != "" {
-			return []string{pickedPathArgument}
-		}
-		return args
+		return withPickedPathArgument(args)
 	}
 	if originalRun := command.Run; originalRun != nil {
 		command.Run = func(cmd *cobra.Command, args []string) {
@@ -124,6 +146,23 @@ func installPickerArgInjection(command *cobra.Command) {
 			return originalRunE(cmd, injected(args))
 		}
 	}
+}
+
+// withPickedPathArgument places a picker selection into the argument slice:
+// into an empty one for a zero-argument invocation, in front of the body
+// shorthand otherwise. Cobra hands the same backing slice to every hook, so
+// an empty one cannot be grown in place — every caller takes the result.
+func withPickedPathArgument(args []string) []string {
+	if pickedPathArgument == "" {
+		return args
+	}
+	if len(args) == 0 {
+		return []string{pickedPathArgument}
+	}
+	if !pickedArgumentPrepends {
+		return args
+	}
+	return append([]string{pickedPathArgument}, args...)
 }
 
 // pickOpenResourceID is open's one-argument picker trigger (TUI-SPEC F1):

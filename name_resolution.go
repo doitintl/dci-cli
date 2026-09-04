@@ -102,20 +102,25 @@ func buildResolutionIndex(operations []cli.Operation) map[string]resolutionListT
 		if len(operation.PathParams) != 1 {
 			continue
 		}
+		if declared := operation.PathParams[0].Type; declared != "" && declared != "string" {
+			// A numeric slot takes an id, never a name (support request
+			// ids): resolution, completion and the picker would all feed it
+			// something the API cannot accept.
+			continue
+		}
 		path := uriTemplatePath(operation.URITemplate)
 		segments := strings.Split(strings.Trim(path, "/"), "/")
-		if len(segments) < 2 {
+		slot := pathParameterSegment(segments)
+		// The slot must name an entry of a parent collection: something has
+		// to precede it. Segments after it are literal sub-resource nouns
+		// (/datasets/{name}/records, /reports/{id}/config) — the operation
+		// still identifies its target by a name from the same parent list,
+		// so it resolves and pickers exactly like the bare /{id} form.
+		if slot < 1 {
 			continue
 		}
-		last := segments[len(segments)-1]
-		if !strings.HasPrefix(last, "{") || !strings.HasSuffix(last, "}") {
-			continue
-		}
-		parent := "/" + strings.Join(segments[:len(segments)-1], "/")
-		if strings.Contains(parent, "{") {
-			continue
-		}
-		resource := segments[len(segments)-2]
+		parent := "/" + strings.Join(segments[:slot], "/")
+		resource := segments[slot-1]
 		if resolutionExcludedResources[resource] || versionSegmentPattern.MatchString(resource) {
 			continue
 		}
@@ -141,6 +146,24 @@ func uriTemplatePath(template string) string {
 	return parsed.Path
 }
 
+// pathParameterSegment returns the index of the single {param} segment in a
+// split path, or -1 when the path has none or more than one. Operations with
+// more than one path parameter never resolve, so an ambiguous answer is the
+// same as no answer.
+func pathParameterSegment(segments []string) int {
+	slot := -1
+	for i, segment := range segments {
+		if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") {
+			continue
+		}
+		if slot >= 0 {
+			return -1
+		}
+		slot = i
+	}
+	return slot
+}
+
 // resourceIDPattern is the Firestore auto-ID shape. Deliberately stricter than
 // looksLikeCustomerID: a false "looks like an ID" here silently skips resolution.
 var resourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{20}$`)
@@ -153,11 +176,11 @@ func resolvePathArguments(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return nil
 	}
-	if len(args) == 0 {
-		// Zero-argument interactive invocation: open the picker (TUI-SPEC
-		// F1). Runs before the destructive gate below in the same pre-run,
-		// so the confirmation can display the picked target.
-		return pickPathArgument(cmd, target)
+	if len(args) == 0 || pathArgumentPickerApplies(cmd, args) {
+		// The path argument is missing: open the picker (TUI-SPEC F1). Runs
+		// before the destructive gate below in the same pre-run, so the
+		// confirmation can display the picked target.
+		return pickPathArgument(cmd, target, args)
 	}
 	if on, valid := parseBoolish(os.Getenv("DCI_NO_RESOLVE")); valid && on {
 		return nil
@@ -194,7 +217,12 @@ func resolvePathArguments(cmd *cobra.Command, args []string) error {
 	}
 	args[0] = resolved.id
 	resolvedTargets[cmd.Name()] = resolved
-	announceResolution(resolved)
+	if input != resolved.id {
+		// Nothing was rewritten when the typed argument already was the id —
+		// on name-keyed collections that is the common case, and announcing
+		// it would just echo the input back.
+		announceResolution(resolved)
+	}
 	return nil
 }
 
@@ -291,13 +319,21 @@ func relaxResolvableArgsValidation() {
 	}
 	for _, command := range dciCommand.Commands() {
 		target, ok := resolutionIndex[command.Name()]
-		if !ok || target.hasBody || command.Annotations[joinableArgsAnnotation] == "true" {
+		if !ok || command.Annotations[joinableArgsAnnotation] == "true" {
 			continue
 		}
 		if command.Annotations == nil {
 			command.Annotations = map[string]string{}
 		}
 		command.Annotations[joinableArgsAnnotation] = "true"
+		installPickerArgInjection(command)
+		if target.hasBody {
+			// Body shorthand fills the surplus positionals, so the generated
+			// arity validator stays exactly as cobra wrote it — a bodied
+			// operation the picker steps into already has enough arguments
+			// to satisfy it.
+			continue
+		}
 		original := command.Args
 		command.Args = func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && zeroArgPickerApplies(cmd) {
@@ -312,7 +348,6 @@ func relaxResolvableArgsValidation() {
 			}
 			return original(cmd, args)
 		}
-		installPickerArgInjection(command)
 	}
 }
 
@@ -338,6 +373,11 @@ func commandResolvedTarget(name string) *resolvedTarget {
 
 func announceResolution(resolved resolvedTarget) {
 	if agentMode {
+		return
+	}
+	if resolved.id == resolved.name {
+		// Name-keyed resource: the parenthetical id would repeat the name.
+		fmt.Fprintf(os.Stderr, "resolved %q → %s %q\n", resolved.input, resolved.resource, resolved.name)
 		return
 	}
 	fmt.Fprintf(os.Stderr, "resolved %q → %s %q (%s)\n", resolved.input, resolved.resource, resolved.name, resolved.id)
@@ -687,13 +727,16 @@ func parseResourceNamePage(body []byte) ([]nameCacheEntry, string) {
 		if !ok {
 			continue
 		}
-		id, _ := object["id"].(string)
-		if id == "" {
-			continue
-		}
 		name := discoverItemName(object)
 		if name == "" {
 			continue
+		}
+		id, _ := object["id"].(string)
+		if id == "" {
+			// Name-keyed collections (DataHub datasets) have no separate id:
+			// the name is the path identifier. Dropping these items left the
+			// cache empty, which disabled completion and the picker for them.
+			id = name
 		}
 		owner, _ := object["owner"].(string)
 		description, _ := object["description"].(string)

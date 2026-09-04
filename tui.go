@@ -105,7 +105,7 @@ func tuiSelectEntry(title string, entries []nameCacheEntry) (nameCacheEntry, err
 	options := make([]huh.Option[int], len(entries))
 	for i, entry := range entries {
 		label := entry.Name
-		if entry.ID != "" {
+		if entry.ID != "" && entry.ID != entry.Name {
 			label = fmt.Sprintf("%s  %s", entry.Name, tuiDimStyle.Render("("+entry.ID+")"))
 		}
 		options[i] = huh.NewOption(label, i)
