@@ -378,6 +378,15 @@ func allPagesActive() bool {
 	return viper.GetBool("all-pages")
 }
 
+// allPagesExplicit reports whether the user actually typed --all, as opposed
+// to --search having implied it. The file-export walk (export_pagination.go)
+// gates on this rather than allPagesActive(): --search cannot filter a CSV or
+// NDJSON body at all, so implying a 200-request page-and-window walk from it
+// would be pure cost with no effect.
+func allPagesExplicit() bool {
+	return allPagesActive() && viper.GetBool("all-pages-explicit")
+}
+
 // decodeJSONBody fully reads a response body (undoing any content encoding
 // via restish's registered decoders) and parses it as a JSON object. Returns
 // the raw decoded bytes so callers can restore the body untouched when the
