@@ -66,6 +66,19 @@ func TestValidateRequestBodyAcceptsKnownFields(t *testing.T) {
 	}
 }
 
+func TestValidateRequestBodyReadsShellSplitValuesAsValues(t *testing.T) {
+	command := &cobra.Command{Long: queryRequestHelp}
+	// The shell splits `config.currency: usd.legacy, config.timeInterval: day`
+	// into four arguments; "usd.legacy," is a value, not a field named "usd".
+	if err := validateRequestBody(command, []string{"config.currency:", "usd.legacy,", "config.timeInterval:", "day"}); err != nil {
+		t.Fatalf("value with a dot rejected as a field: %v", err)
+	}
+	err := validateRequestBody(command, []string{"config.timeInterval:", "day,", "body.query:", "x.y"})
+	if err == nil || !strings.Contains(err.Error(), "body") {
+		t.Fatalf("unknown field after a comma not reported: %v", err)
+	}
+}
+
 func TestValidateRequestBodySkipsPathParameters(t *testing.T) {
 	command := &cobra.Command{Use: "update-resource resource-id", Long: queryRequestHelp}
 	for _, pathParameter := range []string{"project.dataset", "urn:resource"} {

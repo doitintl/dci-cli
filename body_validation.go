@@ -73,21 +73,27 @@ func validateRequestBody(command *cobra.Command, args []string) error {
 		return nil
 	}
 	unknownFields := make([]string, 0)
-	for _, argument := range bodyArguments {
-		if strings.HasPrefix(argument, "@") || strings.HasPrefix(argument, "<") {
-			continue
-		}
-		if strings.HasPrefix(strings.TrimSpace(argument), "{") {
-			for _, field := range jsonTopLevelFields([]byte(argument)) {
-				if !validFields[field] {
-					unknownFields = append(unknownFields, field)
-				}
+	// Restish joins the body arguments with spaces before parsing, so the
+	// shell's split is not the field boundary: `file: events.csv` arrives as
+	// "file:" and "events.csv", and scanning per argument would read the
+	// value as a field named "events". Top-level commas are the boundary.
+	joinedBody := strings.TrimSpace(strings.Join(bodyArguments, " "))
+	switch {
+	case joinedBody == "", strings.HasPrefix(joinedBody, "@"), strings.HasPrefix(joinedBody, "<"):
+		// Whole-body file or stdin token: nothing to scan here.
+	case strings.HasPrefix(joinedBody, "{"):
+		for _, field := range jsonTopLevelFields([]byte(joinedBody)) {
+			if !validFields[field] {
+				unknownFields = append(unknownFields, field)
 			}
-			continue
 		}
-		match := shorthandBodyFieldPattern.FindStringSubmatch(argument)
-		if match != nil && !validFields[match[1]] {
-			unknownFields = append(unknownFields, match[1])
+	default:
+		for _, segment := range splitTopLevelShorthandSegments(joinedBody) {
+			segment = strings.TrimSpace(segment)
+			match := shorthandBodyFieldPattern.FindStringSubmatch(segment)
+			if match != nil && !validFields[match[1]] {
+				unknownFields = append(unknownFields, match[1])
+			}
 		}
 	}
 
@@ -109,6 +115,13 @@ func validateRequestBody(command *cobra.Command, args []string) error {
 	if stdinBuffered {
 		// Restish merges piped input with argument edits; shape-checking the
 		// arguments alone would guess at that merge.
+		return nil
+	}
+	if isMultipartCommand(command) {
+		// The shape check parses with file input enabled, so it would read
+		// `file: @events.csv` itself and report a missing file in shorthand's
+		// words. The multipart encoder (multipart_upload.go) owns those
+		// errors and runs right after this.
 		return nil
 	}
 	return validateBodyValueShapes(requestSchemaTopLevelFieldSketches(command.Long), bodyArguments)

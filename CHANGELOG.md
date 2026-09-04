@@ -26,6 +26,18 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.7.4 — September 4, 2026
+
+### New
+
+- `dci ingest-datahub-events-csv` now uploads a CSV file (or a GZ/ZIP archive
+  of one) to a DataHub dataset from the command line:
+  `dci ingest-datahub-events-csv provider: <dataset>, file: @events.csv`.
+  The `@` attaches the file by name; a file over the API's 30 MB limit, a
+  missing file, or a forgotten `@` is reported with a fix before anything is
+  sent. Previously the command failed with an internal marshaling error. See
+  [ingest-datahub-events-csv](https://help.doit.com/docs/cli/generated/command-groups/datahub/ingest-datahub-events-csv).
+
 ## v2.7.3 — September 4, 2026
 
 ### New

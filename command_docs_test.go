@@ -747,3 +747,26 @@ func TestCommandDocsCoverage(t *testing.T) {
 		t.Logf("missing: %s", strings.Join(missing, ", "))
 	}
 }
+
+func TestCommandDocBodyExampleKeepsFileFieldValues(t *testing.T) {
+	doc := commandDoc{
+		Command: "ingest-datahub-events-csv",
+		Examples: []commandDocExample{
+			{Command: "dci ingest-datahub-events-csv provider: litellm-usage, file: @events.csv"},
+		},
+	}
+	body, found := commandDocBodyExample(doc, 0)
+	if !found {
+		t.Fatal("a body with a file-valued field is an inline body; only a leading @file is whole-body input")
+	}
+	fields, ok := body.(map[string]any)
+	if !ok || fields["provider"] != "litellm-usage" || fields["file"] != "@events.csv" {
+		t.Fatalf("body = %#v", body)
+	}
+	if _, found := commandDocBodyExample(commandDoc{
+		Command:  "create-budget",
+		Examples: []commandDocExample{{Command: "dci create-budget @budget.json"}},
+	}, 0); found {
+		t.Fatal("a leading @file is not an inline body")
+	}
+}

@@ -344,10 +344,11 @@ func exampleBody(parts exampleParts) (any, bool, error) {
 	if len(parts.Body) == 0 || parts.Stdin != "" {
 		return nil, false, nil
 	}
-	for _, token := range parts.Body {
-		if strings.HasPrefix(token, "@") {
-			return nil, false, nil
-		}
+	if strings.HasPrefix(parts.Body[0], "@") {
+		// A leading @file is the whole body read from a file. After a field
+		// (`file: @events.csv`) it is that field's value — a file attached to
+		// a multipart upload — and parses as a plain string below.
+		return nil, false, nil
 	}
 	options := bodyShorthandParseOptions
 	options.EnableFileInput = false // never read a file while validating docs

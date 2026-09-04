@@ -2438,6 +2438,14 @@ func addOutputFlag() {
 			customerContextFlagValue = val
 		}
 
+		// Multipart operations (multipart_upload.go) encode their body here,
+		// so preflight errors surface before any request, and swap restish's
+		// Run for the encoder's. Before the destructive gate, so a dry-run
+		// still wins.
+		if err := installMultipartRunner(cmd, args); err != nil {
+			return err
+		}
+
 		return enforceDestructiveConfirmation(cmd, args)
 	}
 }
