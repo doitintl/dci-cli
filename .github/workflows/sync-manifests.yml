@@ -76,7 +76,7 @@ jobs:
             packaging/winget/dci.locale.en-US.yaml.tmpl dist/render/winget/DoiT.dci.locale.en-US.yaml
 
       - name: Upload rendered manifests
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-manifests-${{ steps.release.outputs.tag }}
           path: dist/render
