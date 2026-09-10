@@ -479,9 +479,10 @@ func moneyNamedColumn(name string) bool {
 // shouldPivotReportRows decides whether report rows render as a pivot.
 // Explicit flags always win (--pivot forces it anywhere, --flat disables).
 // Otherwise the pivot is the default *human* report view: table output in
-// human mode with no explicit column selection (a -C selection addresses the
-// flat columns, so it keeps the flat layout). Machine formats (json, yaml,
-// csv, toon) and agent mode stay flat.
+// human mode. A -C selection does not change the layout — it names pivot
+// columns (group, periods, total, trend) and picks which of them render;
+// pivotReportBody resolves it and rejects names the pivot lacks. Machine
+// formats (json, yaml, csv, toon) and agent mode stay flat.
 func shouldPivotReportRows() bool {
 	if viper.GetBool("pivot-rows") {
 		return true
@@ -496,10 +497,7 @@ func shouldPivotReportRows() bool {
 	// pipeline is running outside a normal command (tests, internal calls)
 	// where surprising a consumer with a pivot is worse than staying flat.
 	output := strings.TrimSpace(viper.GetString("rsh-output-format"))
-	if output != "table" && output != "auto" {
-		return false
-	}
-	return strings.TrimSpace(viper.GetString("table-columns")) == ""
+	return output == "table" || output == "auto"
 }
 
 // effectiveMaxRows resolves the report-row cap: an explicit --max-rows wins

@@ -2163,7 +2163,7 @@ func addOutputFlag() {
 
 	dciCmd.PersistentFlags().String("output", "", "Output format: table, json, yaml, csv, auto, toon (default: table, or toon in agent mode). toon is compact and token-efficient — good for LLM agents.")
 	dciCmd.PersistentFlags().StringP("table-mode", "M", "fit", "Table rendering: fit (truncate), wrap (multi-line), or interactive (full-screen scrollable viewer; falls back to fit outside a terminal)")
-	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include in table/toon output (default: all)")
+	dciCmd.PersistentFlags().StringP("table-columns", "C", "", "Comma-separated list of columns to include in table/toon output (default: all). On report results the pivot view stays: name the group column, period columns (e.g. 2026-04), total, and trend; total and trend always cover every period")
 	dciCmd.PersistentFlags().IntP("table-width", "W", 0, "Table width in columns (default: auto-detect terminal width)")
 	dciCmd.PersistentFlags().IntP("table-max-col-width", "X", 0, "Maximum width per column when fitting or wrapping (0 = auto)")
 	dciCmd.PersistentFlags().StringP("customer-context", "D", "", "Override the active customer context for this command: a customer domain, ID, or URL display name (e.g. acme.com)")
@@ -2329,6 +2329,7 @@ func addOutputFlag() {
 		viper.Set("table-color", heatmapEnabled(true, agentMode, stdoutIsTTY() || sessionRenderActive(), os.Getenv("NO_COLOR") != ""))
 		viper.Set("pivot-active", false)
 		viper.Set("pivot-total-rows", 0)
+		pendingPivotColumnError = nil
 		viper.Set("utc-label-columns", "")
 
 		// Resolve the row-ordering choice once per invocation (flag > env >
@@ -2591,6 +2592,12 @@ func (g dciResponseGuard) Format(resp cli.Response) error {
 		return nil
 	}
 	resp.Body = transformSuccessBody(resp.Body)
+	// A -C selection the pivot could not honor: a usage error, not a table
+	// of empty cells (the transform itself cannot fail, so it parks the
+	// rejection for this hook).
+	if err := takePendingPivotColumnError(); err != nil {
+		return err
+	}
 	if err := g.next.Format(resp); err != nil {
 		return err
 	}

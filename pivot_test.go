@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -290,9 +291,9 @@ func TestShouldPivotReportRowsDefaults(t *testing.T) {
 	if shouldPivotReportRows() {
 		t.Error("--flat must disable the default pivot")
 	}
-	reset(false, "table", "cost,month", false, false)
-	if shouldPivotReportRows() {
-		t.Error("-C column selection must keep the flat layout")
+	reset(false, "table", "service_description,2026-06,total", false, false)
+	if !shouldPivotReportRows() {
+		t.Error("-C column selection must keep the pivot (it names pivot columns; pivotReportBody validates them)")
 	}
 	reset(false, "json", "", false, false)
 	if shouldPivotReportRows() {
@@ -400,5 +401,199 @@ func TestPivotKeepsAllZeroRowsOnFlagOrWhenAllZero(t *testing.T) {
 	}
 	if got := len(result.([]interface{})); got != 3 {
 		t.Fatalf("row count when every group is zero = %d, want 3 (nothing dropped)", got)
+	}
+}
+
+// pivotSelectionRows spans three months so a -C selection can hide one and
+// the total/trend columns have hidden periods to cover.
+func pivotSelectionRows() []interface{} {
+	return []interface{}{
+		[]interface{}{"svc-a", "2026", "06", 10.0, float64(1780272000)},
+		[]interface{}{"svc-a", "2026", "07", 20.0, float64(1782864000)},
+		[]interface{}{"svc-a", "2026", "08", 30.0, float64(1785542400)},
+		[]interface{}{"svc-b", "2026", "06", 1.0, float64(1780272000)},
+		[]interface{}{"svc-b", "2026", "07", 2.0, float64(1782864000)},
+		[]interface{}{"svc-b", "2026", "08", 3.0, float64(1785542400)},
+	}
+}
+
+func resetPivotSelectionConfig(t *testing.T) {
+	t.Helper()
+	viper.Set("rsh-output-format", "table")
+	viper.Set("output-order", outputOrderClassic)
+	t.Cleanup(func() {
+		for _, key := range []string{"table-columns", "table-columns-auto", "rsh-output-format", "output-order", "chart-requested", "chart-mode", "pivot-active"} {
+			viper.Set(key, nil)
+		}
+		pendingPivotColumnError = nil
+		resetChartState()
+	})
+}
+
+// -C on a report keeps the pivot without --pivot: the selection names pivot
+// columns and only decides which of them render. Names resolve
+// case-insensitively (TOTAL, as the column reads on screen, is the total
+// column), come back canonically spelled in the requested order, and the
+// selection is explicit — not fit-eligible — so nothing is auto-hidden.
+func TestPivotKeepsColumnSelectionWithoutPivotFlag(t *testing.T) {
+	resetPivotSelectionConfig(t)
+	viper.Set("table-columns", "service_description,2026-07,2026-08,TOTAL")
+	viper.Set("table-columns-auto", false)
+
+	if !shouldPivotReportRows() {
+		t.Fatal("-C must not switch a human table view to flat rows")
+	}
+	result, ok := pivotReportBody(pivotSelectionRows(), pivotSchema())
+	if !ok {
+		t.Fatalf("pivot refused under -C: %v", pendingPivotColumnError)
+	}
+	if got := viper.GetString("table-columns"); got != "service_description,2026-07,2026-08,total" {
+		t.Errorf("table-columns = %q, want the selection resolved to pivot keys", got)
+	}
+	if viper.GetBool("table-columns-auto") {
+		t.Error("an explicit -C selection must not be fit-eligible (no auto-hide)")
+	}
+	rows := result.([]interface{})
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want two groups + TOTAL", len(rows))
+	}
+	first := rows[0].(map[string]interface{})
+	if first["service_description"] != "svc-a" || first["2026-06"] != 10.0 {
+		t.Errorf("pivot row shape changed under -C: %v", first)
+	}
+}
+
+// TOTAL under -C is the row total over every period, shown or hidden — the
+// same choice the width fit makes when it hides trailing period columns —
+// and the trend still spans first→last period. The TOTAL row carries its
+// total too.
+func TestPivotTotalPopulatedUnderColumnSelection(t *testing.T) {
+	resetPivotSelectionConfig(t)
+	viper.Set("table-columns", "service_description,2026-08,TOTAL,Trend")
+
+	result, ok := pivotReportBody(pivotSelectionRows(), pivotSchema())
+	if !ok {
+		t.Fatalf("pivot refused under -C: %v", pendingPivotColumnError)
+	}
+	if got := viper.GetString("table-columns"); got != "service_description,2026-08,total,trend" {
+		t.Errorf("table-columns = %q", got)
+	}
+	rows := result.([]interface{})
+	first := rows[0].(map[string]interface{})
+	if first["total"] != 60.0 {
+		t.Errorf("svc-a total = %v, want 60 (all periods, not just the shown 2026-08)", first["total"])
+	}
+	if first["trend"] != "+200%" {
+		t.Errorf("svc-a trend = %v, want +200%% (first→last period)", first["trend"])
+	}
+	totals := rows[len(rows)-1].(map[string]interface{})
+	if totals["service_description"] != "TOTAL" || totals["total"] != 66.0 {
+		t.Errorf("TOTAL row = %v, want total 66", totals)
+	}
+	if _, present := first["TOTAL"]; present {
+		t.Error("rows must keep the canonical total key; the selection is what gets resolved")
+	}
+}
+
+// The chart draws the whole result: -C hides columns from the table, not
+// periods from the series.
+func TestPivotChartUnaffectedByColumnSelection(t *testing.T) {
+	resetPivotSelectionConfig(t)
+	forceTUI(t, true)
+	resetChartState()
+	viper.Set("chart-requested", true)
+	viper.Set("chart-mode", "treemap")
+	viper.Set("table-columns", "service_description,2026-08,total")
+
+	if _, ok := pivotReportBody(pivotSelectionRows(), pivotSchema()); !ok {
+		t.Fatalf("pivot refused under -C: %v", pendingPivotColumnError)
+	}
+	if chartSeries == nil {
+		t.Fatal("no chart series under -C")
+	}
+	if len(chartSeries.periods) != 3 {
+		t.Errorf("chart periods = %v, want all three (unaffected by -C)", chartSeries.periods)
+	}
+	if len(chartSeries.groups) != 2 || chartSeries.groups[0].name != "svc-a" {
+		t.Errorf("chart groups = %+v, want svc-a, svc-b", chartSeries.groups)
+	}
+	if chartSeries.values[0] != 11.0 || chartSeries.values[2] != 33.0 {
+		t.Errorf("chart period totals = %v", chartSeries.values)
+	}
+}
+
+// A -C name the pivot does not have (a misspelled month, or a flat column
+// such as cost) is a usage error listing the pivot's columns — never an empty
+// table. The pivot leaves no side effects behind (pivot-active stays off, no
+// chart series) and the formatter hook returns the parked error.
+func TestPivotColumnSelectionUnknownColumnIsUsageError(t *testing.T) {
+	resetPivotSelectionConfig(t)
+	forceTUI(t, true)
+	resetChartState()
+	viper.Set("chart-requested", true)
+	viper.Set("chart-mode", "treemap")
+	viper.Set("pivot-active", false)
+	viper.Set("table-columns", "service_description,2026-13,cost")
+
+	if _, ok := pivotReportBody(pivotSelectionRows(), pivotSchema()); ok {
+		t.Fatal("pivot accepted a selection with unknown columns")
+	}
+	if viper.GetBool("pivot-active") || chartSeries != nil {
+		t.Error("a rejected selection must leave no pivot side effects")
+	}
+	err := pendingPivotColumnError
+	if err == nil {
+		t.Fatal("no pending column error")
+	}
+	var selectionError pivotColumnSelectionError
+	if !errors.As(err, &selectionError) || selectionError.ExitCode() != exitUsage {
+		t.Fatalf("error = %T %v, want pivotColumnSelectionError with usage exit code", err, err)
+	}
+	message := err.Error()
+	for _, want := range []string{"2026-13", "cost", "available columns: service_description, 2026-06, 2026-07, 2026-08, total, trend", "cost are flat row columns; pass --flat"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("error %q lacks %q", message, want)
+		}
+	}
+	if strings.Contains(message, "2026-13 are flat") {
+		t.Errorf("a misspelled period is not a flat column: %q", message)
+	}
+	if selectionError.AgentErrorCode() != "USAGE_ERROR" || selectionError.AgentErrorRetryable() {
+		t.Error("agent contract: USAGE_ERROR, not retryable")
+	}
+
+	// The formatter hook surfaces it and renders nothing.
+	next := &recordingFormatter{}
+	guard := dciResponseGuard{next: next}
+	got := guard.Format(cli.Response{Status: 200, Body: map[string]interface{}{"ok": true}})
+	if got == nil || got.Error() != err.Error() {
+		t.Fatalf("Format returned %v, want the pending selection error", got)
+	}
+	if next.called {
+		t.Error("formatter rendered a table after a rejected -C selection")
+	}
+	if pendingPivotColumnError != nil {
+		t.Error("pending error must be consumed by the hook")
+	}
+}
+
+// A multi-dimension group column is addressable by any one of its schema
+// names as well as the combined header.
+func TestPivotColumnSelectionResolvesGroupDimensionNames(t *testing.T) {
+	schema := []reportColumn{
+		{Name: "service_description", Type: "string"},
+		{Name: "sku_description", Type: "string"},
+		{Name: "year", Type: "string"},
+		{Name: "month", Type: "string"},
+		{Name: "cost", Type: "float"},
+	}
+	groupHeader := "service_description / sku_description"
+	available := pivotColumnOrder(groupHeader, false, []string{"2026-06", "2026-07"})
+	resolved, err := resolvePivotColumnSelection([]string{"sku_description", "2026-07", "TOTAL", groupHeader}, available, groupHeader, []int{0, 1}, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(resolved, ",") != groupHeader+",2026-07,total" {
+		t.Errorf("resolved = %v", resolved)
 	}
 }

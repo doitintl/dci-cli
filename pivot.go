@@ -17,6 +17,15 @@ import (
 // terminal-width fit keeps the group, the leading periods, and the
 // fit-priority total/trend columns, reporting the rest through the
 // hidden-columns hint.
+//
+// An explicit -C selection keeps the pivot too: it names pivot columns (the
+// group, periods such as 2026-04, total, trend) and decides which of them
+// render, in the order given. The total and trend columns always cover every
+// period of the result, shown or not — the same choice the width fit makes
+// when it hides trailing periods ("+N hidden"), so -C and the auto-hide
+// never disagree about a row's total. A selection naming columns the pivot
+// does not have is rejected (pendingPivotColumnError) rather than rendered
+// as an empty table.
 func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bool) {
 	if len(schema) == 0 || len(rows) == 0 {
 		return nil, false
@@ -87,6 +96,21 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 	}
 	sort.Strings(periods)
 
+	// Resolve a -C selection before any side effect (pivot-active, the chart
+	// series): a rejected selection leaves the pipeline as if the pivot never
+	// ran, and the formatter hook surfaces the error instead of a table.
+	groupHeader := pivotGroupHeader(groupIdx, schema)
+	columns := pivotColumnOrder(groupHeader, multiMetric, periods)
+	selection := commaSeparatedValues(viper.GetString("table-columns"))
+	if len(selection) > 0 {
+		resolved, err := resolvePivotColumnSelection(selection, columns, groupHeader, groupIdx, schema)
+		if err != nil {
+			pendingPivotColumnError = err
+			return nil, false
+		}
+		columns = resolved
+	}
+
 	viper.Set("pivot-active", true)
 	viper.Set("pivot-total-rows", len(metricIdx))
 
@@ -131,7 +155,6 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 		}
 	}
 
-	groupHeader := pivotGroupHeader(groupIdx, schema)
 	out := make([]interface{}, 0, len(groupOrder)+len(metricIdx))
 	for _, key := range emitOrder {
 		row := map[string]interface{}{groupHeader: key.group}
@@ -183,20 +206,14 @@ func pivotReportBody(rows []interface{}, schema []reportColumn) (interface{}, bo
 
 	// Give the renderer an explicit column order (group, periods, total) —
 	// alphabetical ordering would sort the group column after the periods.
-	// Marked as auto-set so the width fit still applies (unlike a user's -C,
-	// this is not an explicit selection): a pivot over many periods keeps
-	// the group, the leading periods, and the total, with the rest reported
-	// through the hidden-columns hint.
-	if strings.TrimSpace(viper.GetString("table-columns")) == "" {
-		order := []string{groupHeader}
-		if multiMetric {
-			order = append(order, "metric")
-		}
-		order = append(order, periods...)
-		order = append(order, "total", "trend")
-		viper.Set("table-columns", strings.Join(order, ","))
-		viper.Set("table-columns-auto", true)
-	}
+	// The default order is marked auto-set so the width fit still applies: a
+	// pivot over many periods keeps the group, the leading periods, and the
+	// total, with the rest reported through the hidden-columns hint. A -C
+	// selection is the user's explicit choice (already resolved to canonical
+	// column keys above), so every requested column renders and the fit
+	// stays out of it.
+	viper.Set("table-columns", strings.Join(columns, ","))
+	viper.Set("table-columns-auto", len(selection) == 0)
 
 	// When the pivoted metric is monetary and the currency is known, the
 	// period and total cells are money for the renderer. report-currency is
@@ -219,6 +236,105 @@ func allPeriodCellsZero(cells map[string]float64, periods []string) bool {
 		}
 	}
 	return true
+}
+
+// pivotColumnOrder is the pivot's full column set in render order: the group
+// column, the metric column on multi-metric results, every period, then the
+// total and trend columns.
+func pivotColumnOrder(groupHeader string, multiMetric bool, periods []string) []string {
+	order := []string{groupHeader}
+	if multiMetric {
+		order = append(order, "metric")
+	}
+	order = append(order, periods...)
+	return append(order, "total", "trend")
+}
+
+// pendingPivotColumnError carries a rejected -C selection from the response
+// transform, which cannot fail, to the formatter hook (dciResponseGuard),
+// which returns it so the command exits with a usage error instead of
+// rendering a table whose cells are all empty. Reset per run in PreRun.
+var pendingPivotColumnError error
+
+// takePendingPivotColumnError returns and clears the pending -C rejection.
+func takePendingPivotColumnError() error {
+	err := pendingPivotColumnError
+	pendingPivotColumnError = nil
+	return err
+}
+
+// pivotColumnSelectionError is a -C selection naming columns the pivot view
+// does not have — a misspelled period, or flat row columns (month, cost)
+// that only exist under --flat.
+type pivotColumnSelectionError struct {
+	unknown   []string
+	available []string
+	flat      []string
+}
+
+func (selectionError pivotColumnSelectionError) Error() string {
+	message := fmt.Sprintf("unknown report column(s) for the pivot view: %s; available columns: %s",
+		strings.Join(selectionError.unknown, ", "), strings.Join(selectionError.available, ", "))
+	if len(selectionError.flat) > 0 {
+		message += fmt.Sprintf(" (%s are flat row columns; pass --flat to select them)", strings.Join(selectionError.flat, ", "))
+	}
+	return message
+}
+
+func (selectionError pivotColumnSelectionError) ExitCode() int { return exitUsage }
+
+func (selectionError pivotColumnSelectionError) AgentErrorCode() string { return "USAGE_ERROR" }
+
+func (selectionError pivotColumnSelectionError) AgentErrorHint() string {
+	return fmt.Sprintf("Choose -C columns from the pivot view: %s (or pass --flat for the row columns)", strings.Join(selectionError.available, ", "))
+}
+
+func (selectionError pivotColumnSelectionError) AgentErrorRetryable() bool { return false }
+
+// resolvePivotColumnSelection maps a -C selection onto the pivot's columns,
+// keeping the requested order. Names match case-insensitively, so TOTAL —
+// the totals row's label, which is how the column reads on screen — selects
+// the total column, and a single group dimension's schema name selects the
+// (possibly combined "a / b") group column. Anything else is rejected with
+// the full column list; requested names that are flat row columns are
+// called out, since --flat is the way to select those.
+func resolvePivotColumnSelection(requested, available []string, groupHeader string, groupIdx []int, schema []reportColumn) ([]string, error) {
+	canonical := map[string]string{}
+	for _, column := range available {
+		canonical[strings.ToLower(column)] = column
+	}
+	for _, i := range groupIdx {
+		name := strings.ToLower(schema[i].Name)
+		if _, taken := canonical[name]; !taken {
+			canonical[name] = groupHeader
+		}
+	}
+	resolved := make([]string, 0, len(requested))
+	seen := map[string]bool{}
+	unknown := []string{}
+	flat := []string{}
+	for _, name := range requested {
+		column, ok := canonical[strings.ToLower(name)]
+		if !ok {
+			unknown = append(unknown, name)
+			for _, col := range schema {
+				if strings.EqualFold(col.Name, name) {
+					flat = append(flat, name)
+					break
+				}
+			}
+			continue
+		}
+		if seen[column] {
+			continue
+		}
+		seen[column] = true
+		resolved = append(resolved, column)
+	}
+	if len(unknown) > 0 {
+		return nil, pivotColumnSelectionError{unknown: unknown, available: available, flat: flat}
+	}
+	return resolved, nil
 }
 
 // trendLabel summarizes first→last period movement per row — the textual

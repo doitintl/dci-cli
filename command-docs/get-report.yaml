@@ -21,12 +21,17 @@ notes: |
   In an interactive terminal the result renders as a **pivot** by default:
   groups as rows, time periods as columns, a totals row, a first-to-last
   `trend` column, and heatmap shading by magnitude. Machine formats (`json`,
-  `yaml`, `csv`, `toon`), agent mode, and explicit `-C` column selections keep
-  the flat row layout; pass `--flat` to get flat rows in a terminal or
-  `--pivot` to force the matrix anywhere. Period columns are always UTC, since
-  they label billing buckets. `--chart` draws a chart under the table (human
-  mode only), `--raw-numbers` prints exact unformatted values, and
-  `--rows keyed` returns `result.rows` as objects keyed by schema name. See
+  `yaml`, `csv`, `toon`) and agent mode keep the flat row layout; pass
+  `--flat` to get flat rows in a terminal or `--pivot` to force the matrix
+  anywhere. `-C` on a pivot picks which of its columns show — the group column,
+  period columns such as `2026-04`, `total`, and `trend` — while `total` and
+  `trend` still cover every period of the result, shown or not (the same as
+  when a narrow terminal hides trailing periods); a name the pivot does not
+  have is rejected with the list of available columns. Period columns are
+  always UTC, since they label billing buckets. `--chart` draws a chart under
+  the table (human mode only) and is not affected by `-C`, `--raw-numbers`
+  prints exact unformatted values, and `--rows keyed` returns `result.rows` as
+  objects keyed by schema name. See
   [Report results](/docs/cli#report-results).
   :::
 
