@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"strconv"
@@ -227,14 +228,46 @@ func TestRecentWindowStart(t *testing.T) {
 		t.Fatalf("recentWindowStart(24h) = %d, want between %d and %d", got, before, after)
 	}
 
-	if _, err := recentWindowStart("not-a-duration"); err == nil {
+	if _, err := recentWindowStart("7x"); err == nil {
 		t.Fatal("invalid window accepted")
 	}
-	if _, err := recentWindowStart("0h"); err == nil {
-		t.Fatal("non-positive window accepted")
+}
+
+func TestParseWindow(t *testing.T) {
+	day := 24 * time.Hour
+	valid := map[string]time.Duration{
+		"24h":   24 * time.Hour,
+		"168h":  168 * time.Hour,
+		"90m":   90 * time.Minute,
+		"1h30m": 90 * time.Minute,
+		"7d":    7 * day,
+		"1d":    day,
+		"1.5d":  36 * time.Hour,
+		"2w":    14 * day,
+		"0.5w":  84 * time.Hour,
 	}
-	if _, err := recentWindowStart("-1h"); err == nil {
-		t.Fatal("negative window accepted")
+	for window, want := range valid {
+		got, err := parseWindow(window)
+		if err != nil {
+			t.Errorf("parseWindow(%q): %v", window, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("parseWindow(%q) = %v, want %v", window, got, want)
+		}
+	}
+
+	invalid := []string{"", "0h", "0d", "0w", "-1h", "-7d", "-2w", "7x", "7D", "1W", "d", "w", "1d12h", "1w1d", "seven days", "not-a-duration", "1.5.2d", "NaNd", "Infw"}
+	for _, window := range invalid {
+		got, err := parseWindow(window)
+		if err == nil {
+			t.Errorf("parseWindow(%q) = %v, want error", window, got)
+			continue
+		}
+		want := fmt.Sprintf("invalid --window %q: use hours (24h, 168h), days (7d) or weeks (2w)", window)
+		if err.Error() != want {
+			t.Errorf("parseWindow(%q) error = %q, want %q", window, err, want)
+		}
 	}
 }
 

@@ -11,6 +11,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -90,7 +91,7 @@ func newAnomaliesRecentCommand() *cobra.Command {
 			return issueQuestionRequest(*operation, query)
 		},
 	}
-	command.Flags().String("window", "24h", "How far back to look, as a Go duration (e.g. 24h, 168h for 7d)")
+	command.Flags().String("window", "24h", "How far back to look: hours (24h), days (7d) or weeks (2w)")
 	command.Flags().String("severity", "", "Filter to one severity level: information, warning, or critical")
 	command.Flags().Int64("max-results", 0, "Maximum number of results to return in a single page")
 	command.Flags().String("page-token", "", "Page token, returned by a previous call, to request the next page of results")
@@ -151,18 +152,49 @@ func findGAOperation(name string) (*cli.Operation, error) {
 	return operation, nil
 }
 
-// recentWindowStart parses a Go duration string into a minCreationTime epoch
+// recentWindowStart parses a --window value into a minCreationTime epoch
 // millisecond bound. list-anomalies documents minCreationTime as an inclusive
 // lower bound on the anomaly's usage start time.
 func recentWindowStart(window string) (int64, error) {
-	duration, err := time.ParseDuration(window)
+	duration, err := parseWindow(window)
 	if err != nil {
-		return 0, fmt.Errorf("invalid --window %q: %w", window, err)
-	}
-	if duration <= 0 {
-		return 0, fmt.Errorf("invalid --window %q: must be positive", window)
+		return 0, err
 	}
 	return time.Now().Add(-duration).UnixMilli(), nil
+}
+
+// parseWindow parses a --window value: anything time.ParseDuration accepts
+// (24h, 90m, 1h30m) plus a single-unit day (7d, 1.5d) or week (2w) count —
+// Go durations have no day unit, and "the last week" is the natural ask.
+// Mixed day/hour forms such as 1d12h are rejected. Zero and negative windows
+// are errors; every error lists the accepted forms.
+func parseWindow(window string) (time.Duration, error) {
+	invalid := func() (time.Duration, error) {
+		return 0, fmt.Errorf("invalid --window %q: use hours (24h, 168h), days (7d) or weeks (2w)", window)
+	}
+	var duration time.Duration
+	switch {
+	case strings.HasSuffix(window, "d"), strings.HasSuffix(window, "w"):
+		unit := 24 * time.Hour
+		if strings.HasSuffix(window, "w") {
+			unit = 7 * 24 * time.Hour
+		}
+		count, err := strconv.ParseFloat(strings.TrimSuffix(window, window[len(window)-1:]), 64)
+		if err != nil || math.IsNaN(count) || math.IsInf(count, 0) {
+			return invalid()
+		}
+		duration = time.Duration(count * float64(unit))
+	default:
+		parsed, err := time.ParseDuration(window)
+		if err != nil {
+			return invalid()
+		}
+		duration = parsed
+	}
+	if duration <= 0 {
+		return invalid()
+	}
+	return duration, nil
 }
 
 // questionRequestURI appends the given fixed query parameters to operation's
