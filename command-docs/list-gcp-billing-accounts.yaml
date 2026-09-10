@@ -1,0 +1,28 @@
+command: list-gcp-billing-accounts
+
+examples:
+  - description: The GCP billing accounts visible to the active customer, with onboarding status, CUD export health and 30-day savings; the entry point for every other `*-gcp-*` command.
+    command: "dci list-gcp-billing-accounts"
+  - description: Just the IDs and names, to pick a `<billing-account-id>`.
+    command: "dci list-gcp-billing-accounts --fields billingAccountId,displayName --output json"
+  - description: Every page as JSON, for scripts (sum `savingsTotals` across items for customer-level totals).
+    command: "dci list-gcp-billing-accounts --all --output json"
+  - description: Browse in the full-screen viewer.
+    command: "dci list-gcp-billing-accounts -M interactive"
+
+notes: |
+  The `billingAccountId` of each item (format `XXXXXX-XXXXXX-XXXXXX`) is the positional
+  argument every billing-account-scoped command takes (`list-gcp-spend-cuds`,
+  `list-gcp-resource-cuds`, `list-gcp-recommendations`, `get-gcp-recommendation`,
+  `list-gcp-planned-purchases`). Fetch the billing accounts first, then run the per-account
+  commands. `cudExportHealthy` tells you whether the BigQuery CUD export behind the numbers
+  is current.
+
+related:
+  [
+    get-gcp-billing-account,
+    list-gcp-billing-accounts-settings,
+    list-gcp-spend-cuds,
+    list-gcp-resource-cuds,
+    list-gcp-recommendations,
+  ]

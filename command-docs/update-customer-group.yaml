@@ -1,0 +1,23 @@
+command: update-customer-group
+
+arguments:
+  customer-group-id: >-
+    Customer group ID as shown by `dci list-customer-groups` (the `id` field).
+
+examples:
+  - description: Rename a group.
+    command: 'dci update-customer-group <customer-group-id> name: "EMEA and UK sales"'
+  - description: Replace the membership (the list you send is the whole new membership, not an addition).
+    command: "dci update-customer-group <customer-group-id> memberCustomerIds: [<customer-id>, <customer-id>, <customer-id>]"
+  - description: Both at once, from a JSON file.
+    command: "dci update-customer-group <customer-group-id> < group.json"
+    output: |
+      # group.json
+      {"name": "EMEA and UK sales", "memberCustomerIds": ["<customer-id>", "<customer-id>"]}
+
+notes: |
+  Send `name`, `memberCustomerIds`, or both; a field you leave out keeps its value. The
+  membership list replaces the previous one and must keep at least one customer. Requires the
+  users-manager permission.
+
+related: [get-customer-group, list-customer-groups, create-customer-group, delete-customer-group]

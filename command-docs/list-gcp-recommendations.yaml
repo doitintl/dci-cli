@@ -1,0 +1,26 @@
+command: list-gcp-recommendations
+
+arguments:
+  billing-account-id: >-
+    GCP billing account ID (format `XXXXXX-XXXXXX-XXXXXX`), as shown by
+    `dci list-gcp-billing-accounts` (`billingAccountId`).
+
+examples:
+  - description: Current and recommended hourly commitment for compute, with the estimated additional monthly savings and coverage.
+    command: "dci list-gcp-recommendations <billing-account-id> --gcp-service compute"
+  - description: The compute recommendation for one region scope (today only `global`).
+    command: "dci list-gcp-recommendations <billing-account-id> --gcp-service compute --region global"
+  - description: The recommendations as JSON, for scripts.
+    command: "dci list-gcp-recommendations <billing-account-id> --gcp-service compute --output json"
+
+notes: |
+  Pass `--gcp-service`: it selects which product line's settings determine the commitment term
+  the recommendation is computed for, and without it the list is empty. `--region` requires
+  `--gcp-service`. Today the only supported values are `--gcp-service compute` and
+  `--region global`. A billing account with no stored recommendation returns an empty list,
+  not an error; `404` only means the billing account does not exist or you cannot access it.
+  For the eligible-spend time series behind the recommendation, use
+  `get-gcp-recommendation <billing-account-id> compute`.
+
+related:
+  [get-gcp-recommendation, list-gcp-planned-purchases, list-gcp-billing-accounts, list-gcp-billing-accounts-settings]

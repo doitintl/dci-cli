@@ -1,0 +1,17 @@
+command: list-customer-groups
+
+examples:
+  - description: The customer groups your organization owns, with their member customers.
+    command: "dci list-customer-groups"
+  - description: Just the IDs and names, to pick a `<customer-group-id>`.
+    command: "dci list-customer-groups --fields id,name --output json"
+  - description: Everything as JSON, for scripts.
+    command: "dci list-customer-groups --output json"
+
+notes: |
+  Customer groups are named sets of downstream customers in your hierarchy; assigning a user to
+  a group scopes what that user sees to the group's members. Requires the users-manager
+  permission. The whole list comes back in one response, so there is no paging.
+
+related:
+  [get-customer-group, create-customer-group, update-customer-group, delete-customer-group, assign-customer-group-user]
