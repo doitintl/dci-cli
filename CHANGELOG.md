@@ -26,6 +26,36 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.7.6 — September 10, 2026
+
+### Improved
+
+- `dci ai "question"` renders its answer as formatted text when you run it
+  at a terminal — tables with borders, bold, and inline code — instead of
+  the raw markdown it used to print. Narration the assistant emits before
+  looking something up shows as its own paragraph while the lookup runs,
+  rather than running into the answer on one line. Nothing changes when the
+  output is piped, read by an agent, printed with `NO_COLOR`, or requested
+  with an explicit `--output` format: those still get the raw stream. With
+  `--quiet`, a brief "thinking…" status on stderr shows the command is
+  working until the answer prints.
+- `dci anomalies-recent --window` accepts days and weeks — `7d`, `1.5d`,
+  `2w` — alongside hours (`168h`). Mixed forms such as `1d12h`, zero,
+  negative, and oversized windows are rejected with a message listing the
+  accepted forms. The default stays 24 hours.
+
+### Fixed
+
+- Selecting columns with `-C` on report output keeps the pivot layout.
+  `dci get-report <id> -C service_description,2026-04,TOTAL` used to fall
+  back to a flat layout with every numeric cell empty; now it shows just the
+  requested pivot columns, in the order given, and `TOTAL` and `Trend` match
+  regardless of case. A column the pivot does not have is a usage error
+  that lists the available columns and points to `--flat` when the name is
+  a flat-layout column. `--chart` is unaffected by `-C`. See
+  [Report results](https://help.doit.com/docs/cli#report-results) and
+  [get-report](https://help.doit.com/docs/cli/generated/command-groups/reports/get-report).
+
 ## v2.7.5 — September 4, 2026
 
 ### New
