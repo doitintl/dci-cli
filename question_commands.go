@@ -180,10 +180,17 @@ func parseWindow(window string) (time.Duration, error) {
 			unit = 7 * 24 * time.Hour
 		}
 		count, err := strconv.ParseFloat(strings.TrimSuffix(window, window[len(window)-1:]), 64)
-		if err != nil || math.IsNaN(count) || math.IsInf(count, 0) {
+		if err != nil || math.IsNaN(count) {
 			return invalid()
 		}
-		duration = time.Duration(count * float64(unit))
+		// Bound-check before converting: float64 -> int64 of an out-of-range
+		// value is implementation-defined and saturates to MaxInt64 on arm64,
+		// which the duration <= 0 check below would let through.
+		nanoseconds := count * float64(unit)
+		if nanoseconds < 1 || nanoseconds >= float64(math.MaxInt64) {
+			return invalid()
+		}
+		duration = time.Duration(nanoseconds)
 	default:
 		parsed, err := time.ParseDuration(window)
 		if err != nil {
