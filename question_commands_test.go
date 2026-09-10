@@ -257,7 +257,7 @@ func TestParseWindow(t *testing.T) {
 		}
 	}
 
-	invalid := []string{"", "0h", "0d", "0w", "-1h", "-7d", "-2w", "7x", "7D", "1W", "d", "w", "1d12h", "1w1d", "seven days", "not-a-duration", "1.5.2d", "NaNd", "Infw"}
+	invalid := []string{"", "0h", "0d", "0w", "-1h", "-7d", "-2w", "7x", "7D", "1W", "d", "w", "1d12h", "1w1d", "seven days", "not-a-duration", "1.5.2d", "NaNd", "Infw", "999999999999d", "1e9w", "0.00000000000001d"}
 	for _, window := range invalid {
 		got, err := parseWindow(window)
 		if err == nil {
