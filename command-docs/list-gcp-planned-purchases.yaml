@@ -1,0 +1,24 @@
+command: list-gcp-planned-purchases
+
+arguments:
+  billing-account-id: >-
+    GCP billing account ID (format `XXXXXX-XXXXXX-XXXXXX`), as shown by
+    `dci list-gcp-billing-accounts` (`billingAccountId`).
+
+examples:
+  - description: Planned commitment purchases (laddering projections), grouped by product line and region.
+    command: "dci list-gcp-planned-purchases <billing-account-id>"
+  - description: Only the compute projections.
+    command: "dci list-gcp-planned-purchases <billing-account-id> --gcp-service compute"
+  - description: The full projections as JSON, including each ladder's steps, for scripts.
+    command: "dci list-gcp-planned-purchases <billing-account-id> --output json"
+
+notes: |
+  Omit both filters to return every product line and region; `--gcp-service compute` narrows
+  to one product line, and `--region global` (which requires `--gcp-service`) to one scope —
+  today the only supported values. A billing account with no planned purchases, including one
+  not yet onboarded, returns an empty list rather than an error; `404` only means the billing
+  account does not exist or you cannot access it. Check `onboardingStatus` with
+  `get-gcp-billing-account`. Pages split by product-line group, never inside one.
+
+related: [list-gcp-recommendations, get-gcp-recommendation, get-gcp-billing-account, list-gcp-billing-accounts-settings]

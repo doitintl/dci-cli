@@ -1,0 +1,25 @@
+command: list-gcp-spend-cuds
+
+arguments:
+  billing-account-id: >-
+    GCP billing account ID (format `XXXXXX-XXXXXX-XXXXXX`), as shown by
+    `dci list-gcp-billing-accounts` (`billingAccountId`).
+
+examples:
+  - description: Spend-based CUDs on the billing account, with commitment amount, term, and last-month utilization and savings.
+    command: "dci list-gcp-spend-cuds <billing-account-id>"
+  - description: Active CUDs only.
+    command: "dci list-gcp-spend-cuds <billing-account-id> --status active"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-gcp-spend-cuds <billing-account-id> --all --output json"
+  - description: Browse in the full-screen viewer.
+    command: "dci list-gcp-spend-cuds <billing-account-id> -M interactive"
+
+notes: |
+  `--status` accepts `active`, `expired`, `creating` (purchase in progress, not yet covering
+  usage) or `cancelled`. Omit it to return CUDs in every state. Spend-based CUDs commit to an
+  hourly spend amount (`commitmentAmount` in `commitmentUnit`) on a product such as Compute
+  Flexible, Cloud Run or BigQuery; for vCPU and memory commitments use
+  `list-gcp-resource-cuds`.
+
+related: [list-gcp-resource-cuds, list-gcp-billing-accounts, get-gcp-billing-account, list-gcp-recommendations]
