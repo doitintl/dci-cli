@@ -208,3 +208,147 @@ func TestAIOneShotParagraphBreakEdges(t *testing.T) {
 		})
 	}
 }
+
+// aiOneShotTableAnswer is a markdown answer with the shapes that read badly
+// raw at a terminal: a pipe table, bold, and inline code.
+const aiOneShotTableAnswer = "Top services:\n\n| Service | Cost |\n|---|---|\n| EC2 | $1,200 |\n| S3 | $300 |\n\n**Total** is `$1,500`."
+
+func withAIStdoutTTY(t *testing.T, tty bool) {
+	t.Helper()
+	previous := aiStdoutIsTTY
+	aiStdoutIsTTY = func() bool { return tty }
+	t.Cleanup(func() { aiStdoutIsTTY = previous })
+}
+
+func aiOneShotRun(t *testing.T, opts aiOneShotOptions, events ...aiEvent) (stdout, stderr string) {
+	t.Helper()
+	session := newFakeAISession()
+	for _, event := range events {
+		session.events <- event
+	}
+	var out, errs strings.Builder
+	if err := renderAIOneShot(session, &out, &errs, opts); err != nil {
+		t.Fatalf("renderAIOneShot: %v", err)
+	}
+	return out.String(), errs.String()
+}
+
+// A human at a terminal gets the answer rendered like the interactive
+// session: glamour draws the table with rules, and the raw |---| separator
+// row, the ** markers, and the backticks are gone.
+func TestAIOneShotRendersMarkdownAtTTY(t *testing.T) {
+	withAIStdoutTTY(t, true)
+	if !aiOneShotRendersMarkdown(false, false, false) {
+		t.Fatal("tty, no agent mode, no NO_COLOR, no --output must render")
+	}
+	stdout, stderr := aiOneShotRun(t, aiOneShotOptions{render: true, width: 80, style: "dark"},
+		aiEvent{TextDelta: &aiTextDelta{Text: aiOneShotTableAnswer[:20]}},
+		aiEvent{TextDelta: &aiTextDelta{Text: aiOneShotTableAnswer[20:]}},
+		aiEvent{TurnDone: &aiTurnDone{}},
+	)
+	plain := stripANSI(stdout)
+	if !strings.Contains(plain, "│") || !strings.Contains(plain, "┼") {
+		t.Errorf("rendered table has no glamour borders:\n%s", plain)
+	}
+	for _, raw := range []string{"|---|", "| EC2 |", "**Total**", "`$1,500`"} {
+		if strings.Contains(plain, raw) {
+			t.Errorf("rendered output still carries raw markdown %q:\n%s", raw, plain)
+		}
+	}
+	for _, text := range []string{"EC2", "$1,200", "Total", "$1,500"} {
+		if !strings.Contains(plain, text) {
+			t.Errorf("rendered output lost %q:\n%s", text, plain)
+		}
+	}
+	if !strings.HasSuffix(stdout, "\n") || strings.HasSuffix(stdout, "\n\n") {
+		t.Errorf("rendered answer must end with exactly one newline: %q", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("no status line was requested, stderr = %q", stderr)
+	}
+}
+
+// Interim narration before a tool call renders as its own block, separated
+// from the answer by a blank line — the rendered counterpart of the raw
+// mode's paragraph break — and it prints at the tool boundary, before the
+// answer round starts.
+func TestAIOneShotRenderedInterimNarrationIsItsOwnBlock(t *testing.T) {
+	stdout, _ := aiOneShotRun(t, aiOneShotOptions{render: true, width: 80, style: "dark"},
+		aiEvent{TextDelta: &aiTextDelta{Text: "I'll pull this month's anomalies for you."}},
+		aiEvent{ToolCallStarted: &aiToolCallStarted{CallID: "c1", Tool: aiToolRunCommand, Argv: []string{"list-anomalies"}, By: "agent"}},
+		aiEvent{ToolResult: &aiToolResult{CallID: "c1", OK: true, Data: "[]", Elapsed: time.Second}},
+		aiEvent{TextDelta: &aiTextDelta{Text: "Three anomalies were detected since Sept 1."}},
+		aiEvent{TurnDone: &aiTurnDone{}},
+	)
+	plain := stripANSI(stdout)
+	interim := strings.Index(plain, "I'll pull this month's anomalies")
+	answer := strings.Index(plain, "Three anomalies were detected")
+	if interim < 0 || answer < 0 || interim > answer {
+		t.Fatalf("interim narration then answer expected, got:\n%s", plain)
+	}
+	between := plain[interim:answer]
+	if !strings.Contains(between, "\n\n") {
+		t.Errorf("interim narration and answer are not separated by a blank line:\n%q", between)
+	}
+}
+
+// Piped stdout keeps the raw stream byte for byte: scripts parse it.
+func TestAIOneShotStreamsRawMarkdownWhenPiped(t *testing.T) {
+	withAIStdoutTTY(t, false)
+	if aiOneShotRendersMarkdown(false, false, false) {
+		t.Fatal("a pipe must not render")
+	}
+	stdout, _ := aiOneShotRun(t, aiOneShotOptions{},
+		aiEvent{TextDelta: &aiTextDelta{Text: aiOneShotTableAnswer}},
+		aiEvent{TurnDone: &aiTurnDone{}},
+	)
+	if stdout != aiOneShotTableAnswer+"\n" {
+		t.Errorf("piped stdout = %q, want the raw markdown unchanged", stdout)
+	}
+}
+
+// Agent mode, NO_COLOR, and an explicit --output keep the raw stream even at
+// a terminal.
+func TestAIOneShotAgentModeStreamsRaw(t *testing.T) {
+	withAIStdoutTTY(t, true)
+	cases := []struct {
+		name                            string
+		agent, noColor, outputRequested bool
+	}{
+		{"agent mode", true, false, false},
+		{"NO_COLOR", false, true, false},
+		{"--output requested", false, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if aiOneShotRendersMarkdown(c.agent, c.noColor, c.outputRequested) {
+				t.Fatalf("%s must not render", c.name)
+			}
+		})
+	}
+	stdout, _ := aiOneShotRun(t, aiOneShotOptions{},
+		aiEvent{TextDelta: &aiTextDelta{Text: aiOneShotTableAnswer}},
+		aiEvent{TurnDone: &aiTurnDone{}},
+	)
+	if stdout != aiOneShotTableAnswer+"\n" {
+		t.Errorf("agent-mode stdout = %q, want the raw markdown unchanged", stdout)
+	}
+}
+
+// With --quiet at a terminal the answer is buffered, so a status line on
+// stderr says it is coming — and is erased before the answer prints.
+func TestAIOneShotStatusLineIsErasedBeforeAnswer(t *testing.T) {
+	stdout, stderr := aiOneShotRun(t, aiOneShotOptions{render: true, width: 80, style: "dark", status: true},
+		aiEvent{TextDelta: &aiTextDelta{Text: "Answer."}},
+		aiEvent{TurnDone: &aiTurnDone{}},
+	)
+	if !strings.Contains(stderr, "thinking…") {
+		t.Errorf("status line missing from stderr: %q", stderr)
+	}
+	if !strings.HasSuffix(stderr, "\r\x1b[2K") {
+		t.Errorf("status line not erased at the end: %q", stderr)
+	}
+	if !strings.Contains(stripANSI(stdout), "Answer.") {
+		t.Errorf("stdout = %q", stdout)
+	}
+}
