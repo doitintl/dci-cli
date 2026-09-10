@@ -261,9 +261,9 @@ the CLI guide.
   you unless you pass your own. `dci commands --beta` lists the surface,
   and accounts not yet enrolled in the early-access program get a clear
   hint instead of a bare error.
-- Two new chart styles: `--chart sparkline` draws period totals as a
+- Two new chart styles: `--chart=sparkline` draws period totals as a
   one-line sparkline for the quickest look at the shape, and
-  `--chart heatmap` draws one row per group and one cell per period,
+  `--chart=heatmap` draws one row per group and one cell per period,
   colored by each value's share of the maximum — spot the hot service and
   the hot month in one glance.
 - When a long AI answer finishes while you're in another window, the
