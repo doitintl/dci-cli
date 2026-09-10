@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -119,5 +120,91 @@ func TestAIFlagsDoNotCollideWithGlobalShorthands(t *testing.T) {
 	err := cli.Root.Execute()
 	if err == nil || !strings.Contains(err.Error(), "API key") {
 		t.Fatalf("err = %v, want the missing-key error (proof flag parsing succeeded)", err)
+	}
+}
+
+// TestAIOneShotSeparatesInterimNarrationFromAnswer: the model narrates before
+// a tool call and answers in the next round. One-shot keeps the interim text
+// (scripts read the stream) but a tool-call boundary ends its paragraph, so
+// the two rounds print as two paragraphs rather than one run-on line.
+func TestAIOneShotSeparatesInterimNarrationFromAnswer(t *testing.T) {
+	session := newFakeAISession()
+	session.events <- aiEvent{TextDelta: &aiTextDelta{Text: "I'll pull this month's anomalies for you."}}
+	session.events <- aiEvent{ToolCallStarted: &aiToolCallStarted{CallID: "c1", Tool: aiToolRunCommand, Argv: []string{"list-anomalies"}, By: "agent"}}
+	session.events <- aiEvent{ToolResult: &aiToolResult{CallID: "c1", OK: true, Data: "[]", Elapsed: time.Second}}
+	session.events <- aiEvent{TextDelta: &aiTextDelta{Text: "Three anomalies were detected"}}
+	session.events <- aiEvent{TextDelta: &aiTextDelta{Text: " since Sept 1."}}
+	session.events <- aiEvent{TurnDone: &aiTurnDone{}}
+
+	var stdout, stderr strings.Builder
+	if err := renderAIOneShot(session, &stdout, &stderr, aiOneShotOptions{}); err != nil {
+		t.Fatalf("renderAIOneShot: %v", err)
+	}
+	want := "I'll pull this month's anomalies for you.\n\nThree anomalies were detected since Sept 1.\n"
+	if stdout.String() != want {
+		t.Errorf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Errorf("--quiet one-shot wrote narration to stderr: %q", stderr.String())
+	}
+}
+
+// A tool call before any text prints no separator, and interim text that
+// already ends its line gets padded to exactly one blank line.
+func TestAIOneShotParagraphBreakEdges(t *testing.T) {
+	cases := []struct {
+		name   string
+		events []aiEvent
+		want   string
+	}{
+		{
+			name: "tool call before any text",
+			events: []aiEvent{
+				{ToolCallStarted: &aiToolCallStarted{CallID: "c1", Tool: aiToolRunCommand, By: "agent"}},
+				{ToolResult: &aiToolResult{CallID: "c1", OK: true}},
+				{TextDelta: &aiTextDelta{Text: "Answer."}},
+				{TurnDone: &aiTurnDone{}},
+			},
+			want: "Answer.\n",
+		},
+		{
+			name: "interim text ends with a newline",
+			events: []aiEvent{
+				{TextDelta: &aiTextDelta{Text: "Looking.\n"}},
+				{ToolCallStarted: &aiToolCallStarted{CallID: "c1", Tool: aiToolRunCommand, By: "agent"}},
+				{ToolResult: &aiToolResult{CallID: "c1", OK: true}},
+				{TextDelta: &aiTextDelta{Text: "Answer."}},
+				{TurnDone: &aiTurnDone{}},
+			},
+			want: "Looking.\n\nAnswer.\n",
+		},
+		{
+			name: "two tool calls between narration and answer",
+			events: []aiEvent{
+				{TextDelta: &aiTextDelta{Text: "Looking."}},
+				{ToolCallStarted: &aiToolCallStarted{CallID: "c1", Tool: aiToolRunCommand, By: "agent"}},
+				{ToolResult: &aiToolResult{CallID: "c1", OK: true}},
+				{ToolCallStarted: &aiToolCallStarted{CallID: "c2", Tool: aiToolRunCommand, By: "agent"}},
+				{ToolResult: &aiToolResult{CallID: "c2", OK: true}},
+				{TextDelta: &aiTextDelta{Text: "Answer."}},
+				{TurnDone: &aiTurnDone{}},
+			},
+			want: "Looking.\n\nAnswer.\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			session := newFakeAISession()
+			for _, event := range c.events {
+				session.events <- event
+			}
+			var stdout strings.Builder
+			if err := renderAIOneShot(session, &stdout, io.Discard, aiOneShotOptions{}); err != nil {
+				t.Fatalf("renderAIOneShot: %v", err)
+			}
+			if stdout.String() != c.want {
+				t.Errorf("stdout = %q, want %q", stdout.String(), c.want)
+			}
+		})
 	}
 }

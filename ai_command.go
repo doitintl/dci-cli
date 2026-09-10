@@ -10,6 +10,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -92,19 +93,61 @@ func runAIOneShot(configDir, question string, approveDestructive, quiet, forceVe
 		return errors.New("AI needs an Anthropic API key: export ANTHROPIC_API_KEY, run dci ai interactively to save one, or add {\"api_key\": \"…\"} to " + aiSettingsPath(configDir))
 	}
 	verbose, verdictShown := aiOneShotVerbosity(term.IsTerminal(int(os.Stderr.Fd())), quiet, forceVerbose)
-	stats := os.Getenv("DCI_AI_STATS") == "1"
 	session := newLocalAISession(configDir, creds, resolveAIModel(settings), aiSessionCatalog())
 	defer session.Close()
 	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: question}); err != nil {
 		return err
 	}
+	return renderAIOneShot(session, os.Stdout, os.Stderr, aiOneShotOptions{
+		configDir:          configDir,
+		approveDestructive: approveDestructive,
+		verbose:            verbose,
+		verdictShown:       verdictShown,
+		stats:              os.Getenv("DCI_AI_STATS") == "1",
+	})
+}
 
+// aiOneShotOptions is what renderAIOneShot needs beyond the streams.
+type aiOneShotOptions struct {
+	configDir          string
+	approveDestructive bool
+	verbose            bool // narration (thinking, tool traffic) on stderr
+	verdictShown       bool // destructive-approval verdict on stderr
+	stats              bool // DCI_AI_STATS=1 footer on stderr
+}
+
+// renderAIOneShot consumes the session's events for one turn. Answer text
+// goes to stdout; everything else is stderr narration gated by opts.
+//
+// The model often narrates before a tool call ("I'll pull this month's
+// anomalies.") and answers in the next round, after the tool result. The
+// session's quiet turn drops that interim text from the transcript
+// (ai_tui.go, ToolCallStarted); one-shot keeps it — agents and scripts read
+// the stream — but a tool-call boundary ends the paragraph, so the interim
+// narration and the answer print as two paragraphs instead of running
+// together on one line.
+func renderAIOneShot(session conversationSession, stdout, stderr io.Writer, opts aiOneShotOptions) error {
 	var failure error
 	printedText := false
+	paragraphOpen := false // stdout text printed since the last tool-call boundary
+	breakPending := false  // a tool call interrupted an open paragraph
+	tail := ""             // last two bytes written to stdout, for newline accounting
+	writeText := func(text string) {
+		if text == "" {
+			return
+		}
+		fmt.Fprint(stdout, text)
+		printedText = true
+		paragraphOpen = true
+		tail += text
+		if len(tail) > 2 {
+			tail = tail[len(tail)-2:]
+		}
+	}
 	thinkingOpen := false // a thinking stream is mid-line on stderr
 	closeThinking := func() {
 		if thinkingOpen {
-			fmt.Fprint(os.Stderr, "\n")
+			fmt.Fprint(stderr, "\n")
 			thinkingOpen = false
 		}
 	}
@@ -112,40 +155,56 @@ func runAIOneShot(configDir, question string, approveDestructive, quiet, forceVe
 		switch {
 		case event.TextDelta != nil:
 			closeThinking()
-			fmt.Print(event.TextDelta.Text)
-			printedText = true
+			if breakPending && event.TextDelta.Text != "" {
+				// Pad to a blank line whatever the interim text ended with.
+				switch {
+				case strings.HasSuffix(tail, "\n\n"):
+				case strings.HasSuffix(tail, "\n"):
+					fmt.Fprint(stdout, "\n")
+				default:
+					fmt.Fprint(stdout, "\n\n")
+				}
+				breakPending = false
+			}
+			writeText(event.TextDelta.Text)
 
-		case event.ThinkingDelta != nil && verbose:
+		case event.ThinkingDelta != nil && opts.verbose:
 			// The model's reasoning, dimmed on stderr: analytical questions
 			// can think for a minute before the first answer token, and a
 			// silent terminal reads as a hang. Piped/agent callers (verbose
 			// off) keep clean streams.
-			fmt.Fprint(os.Stderr, "\x1b[2m"+event.ThinkingDelta.Text+"\x1b[0m")
+			fmt.Fprint(stderr, "\x1b[2m"+event.ThinkingDelta.Text+"\x1b[0m")
 			thinkingOpen = true
 
-		case event.ToolCallStarted != nil && verbose:
+		case event.ToolCallStarted != nil:
 			closeThinking()
-			fmt.Fprintln(os.Stderr, renderAIToolStart(*event.ToolCallStarted))
+			if paragraphOpen {
+				breakPending = true
+				paragraphOpen = false
+			}
+			if opts.verbose {
+				fmt.Fprintln(stderr, renderAIToolStart(*event.ToolCallStarted))
+			}
 
-		case event.ToolResult != nil && verbose:
+		case event.ToolResult != nil && opts.verbose:
 			closeThinking()
-			fmt.Fprintln(os.Stderr, renderAIToolResult(*event.ToolResult))
+			fmt.Fprintln(stderr, renderAIToolResult(*event.ToolResult))
 
 		case event.ApprovalRequest != nil:
 			closeThinking()
-			answer := approveDestructive
-			if verdictShown {
+			answer := opts.approveDestructive
+			if opts.verdictShown {
 				verdict := "declined (pass --yes to approve)"
 				if answer {
 					verdict = "approved via --yes"
 				}
-				fmt.Fprintln(os.Stderr, "destructive command "+verdict+": dci "+strings.Join(event.ApprovalRequest.Argv, " "))
+				fmt.Fprintln(stderr, "destructive command "+verdict+": dci "+strings.Join(event.ApprovalRequest.Argv, " "))
 			}
 			_ = session.Send(aiUserInput{Kind: aiInputApproval, CallID: event.ApprovalRequest.CallID, Approved: answer})
 
-		case event.ContextSwitched != nil && verbose:
+		case event.ContextSwitched != nil && opts.verbose:
 			closeThinking()
-			fmt.Fprintf(os.Stderr, "customer context switched: %s → %s\n",
+			fmt.Fprintf(stderr, "customer context switched: %s → %s\n",
 				aiDisplayContext(event.ContextSwitched.From), event.ContextSwitched.To)
 
 		case event.LimitReached != nil:
@@ -154,15 +213,15 @@ func runAIOneShot(configDir, question string, approveDestructive, quiet, forceVe
 
 		case event.Error != nil:
 			closeThinking()
-			failure = errors.New(aiFriendlyAPIError(configDir, event.Error.Message))
+			failure = errors.New(aiFriendlyAPIError(opts.configDir, event.Error.Message))
 
 		case event.TurnDone != nil:
 			closeThinking()
 			if printedText {
-				fmt.Println()
+				fmt.Fprintln(stdout)
 			}
-			if stats {
-				fmt.Fprintln(os.Stderr, aiStatsLine(*event.TurnDone))
+			if opts.stats {
+				fmt.Fprintln(stderr, aiStatsLine(*event.TurnDone))
 			}
 			return failure
 		}
