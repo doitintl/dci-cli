@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
@@ -40,7 +41,12 @@ func registerAICommand(configDir string) {
 			}
 			if len(args) > 0 {
 				yes, _ := command.Flags().GetBool("yes")
-				return runAIOneShot(configDir, strings.Join(args, " "), yes, quiet, verbose)
+				return runAIOneShot(configDir, strings.Join(args, " "), aiOneShotFlags{
+					approveDestructive: yes,
+					quiet:              quiet,
+					forceVerbose:       verbose,
+					outputRequested:    command.Flags().Changed("output"),
+				})
 			}
 			if quiet || verbose {
 				return errors.New("--quiet/--verbose apply to one-shot mode (dci ai \"question\"); the interactive session always shows the investigation")
@@ -83,41 +89,86 @@ func aiOneShotVerbosity(tty, quiet, forceVerbose bool) (narrate, verdict bool) {
 	return (tty || forceVerbose) && !quiet, tty || forceVerbose
 }
 
+// aiOneShotFlags is the one-shot invocation as parsed from the command line.
+type aiOneShotFlags struct {
+	approveDestructive bool // --yes
+	quiet              bool // --quiet
+	forceVerbose       bool // --verbose
+	outputRequested    bool // an explicit --output: the caller wants a fixed format, not a rendering
+}
+
+// aiStdoutIsTTY is the one-shot's stdout terminal check, a var so tests can
+// flip it without a pty.
+var aiStdoutIsTTY = stdoutIsTTY
+
+// aiOneShotRendersMarkdown decides whether the one-shot answer is rendered
+// as markdown (glamour, like the interactive session) or streamed raw. Only
+// a human at a terminal gets the rendering: pipes, agent mode, NO_COLOR, and
+// an explicit --output keep the raw stream, which scripts and agents parse.
+func aiOneShotRendersMarkdown(agent, noColor, outputRequested bool) bool {
+	return aiStdoutIsTTY() && !agent && !noColor && !outputRequested
+}
+
 // runAIOneShot drives one question through the conversation session without
-// a TUI: the answer streams to stdout; the investigation narration and the
-// destructive-approval verdict go to stderr per aiOneShotVerbosity.
-func runAIOneShot(configDir, question string, approveDestructive, quiet, forceVerbose bool) error {
+// a TUI: the answer goes to stdout — rendered as markdown at a terminal,
+// streamed raw otherwise (aiOneShotRendersMarkdown); the investigation
+// narration and the destructive-approval verdict go to stderr per
+// aiOneShotVerbosity.
+func runAIOneShot(configDir, question string, flags aiOneShotFlags) error {
 	settings := loadAISettings(configDir)
 	creds := resolveAICredentials(settings)
 	if !creds.available() {
 		return errors.New("AI needs an Anthropic API key: export ANTHROPIC_API_KEY, run dci ai interactively to save one, or add {\"api_key\": \"…\"} to " + aiSettingsPath(configDir))
 	}
-	verbose, verdictShown := aiOneShotVerbosity(term.IsTerminal(int(os.Stderr.Fd())), quiet, forceVerbose)
+	stderrTTY := term.IsTerminal(int(os.Stderr.Fd()))
+	verbose, verdictShown := aiOneShotVerbosity(stderrTTY, flags.quiet, flags.forceVerbose)
+	opts := aiOneShotOptions{
+		configDir:          configDir,
+		approveDestructive: flags.approveDestructive,
+		verbose:            verbose,
+		verdictShown:       verdictShown,
+		stats:              os.Getenv("DCI_AI_STATS") == "1",
+	}
+	if aiOneShotRendersMarkdown(agentMode, os.Getenv("NO_COLOR") != "", flags.outputRequested) {
+		opts.render = true
+		opts.style = aiMarkdownStyle()
+		if width, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			opts.width = width
+		}
+		// Buffering hides the answer until the turn ends; without the
+		// narration a quiet terminal reads as a hang, so a status line on
+		// stderr says the answer is coming.
+		opts.status = !verbose && stderrTTY
+	}
 	session := newLocalAISession(configDir, creds, resolveAIModel(settings), aiSessionCatalog())
 	defer session.Close()
 	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: question}); err != nil {
 		return err
 	}
-	return renderAIOneShot(session, os.Stdout, os.Stderr, aiOneShotOptions{
-		configDir:          configDir,
-		approveDestructive: approveDestructive,
-		verbose:            verbose,
-		verdictShown:       verdictShown,
-		stats:              os.Getenv("DCI_AI_STATS") == "1",
-	})
+	return renderAIOneShot(session, os.Stdout, os.Stderr, opts)
 }
 
 // aiOneShotOptions is what renderAIOneShot needs beyond the streams.
 type aiOneShotOptions struct {
 	configDir          string
 	approveDestructive bool
-	verbose            bool // narration (thinking, tool traffic) on stderr
-	verdictShown       bool // destructive-approval verdict on stderr
-	stats              bool // DCI_AI_STATS=1 footer on stderr
+	verbose            bool   // narration (thinking, tool traffic) on stderr
+	verdictShown       bool   // destructive-approval verdict on stderr
+	stats              bool   // DCI_AI_STATS=1 footer on stderr
+	render             bool   // buffer the answer and render it as markdown (tty) instead of streaming raw
+	width              int    // terminal width for the rendering; 0 lets renderAIMarkdown pick a default
+	style              string // glamour style for the rendering (aiMarkdownStyle)
+	status             bool   // show a "thinking…" status line on stderr while buffering (render && no narration)
 }
 
 // renderAIOneShot consumes the session's events for one turn. Answer text
 // goes to stdout; everything else is stderr narration gated by opts.
+//
+// Two stdout shapes. Raw (pipes, agent mode, NO_COLOR, --output): every text
+// delta is written as it arrives, byte for byte — scripts and agents read
+// the stream. Rendered (a human at a terminal): text is buffered per round
+// and rendered through glamour like the interactive session, with the
+// terminal's width and style, so tables get borders instead of |---| rows.
 //
 // The model often narrates before a tool call ("I'll pull this month's
 // anomalies.") and answers in the next round, after the tool result. The
@@ -125,15 +176,27 @@ type aiOneShotOptions struct {
 // (ai_tui.go, ToolCallStarted); one-shot keeps it — agents and scripts read
 // the stream — but a tool-call boundary ends the paragraph, so the interim
 // narration and the answer print as two paragraphs instead of running
-// together on one line.
+// together on one line. Rendered mode prints each round's text as its own
+// block at that boundary, so the interim line shows while the tools run.
 func renderAIOneShot(session conversationSession, stdout, stderr io.Writer, opts aiOneShotOptions) error {
 	var failure error
 	printedText := false
-	paragraphOpen := false // stdout text printed since the last tool-call boundary
-	breakPending := false  // a tool call interrupted an open paragraph
-	tail := ""             // last two bytes written to stdout, for newline accounting
+	paragraphOpen := false      // stdout text printed since the last tool-call boundary
+	breakPending := false       // a tool call interrupted an open paragraph
+	tail := ""                  // last two bytes written to stdout, for newline accounting
+	var pending strings.Builder // rendered mode: this round's text, not yet printed
+	status := aiStatusLine{w: stderr}
+	if opts.status {
+		status.start()
+	}
+	defer status.stop()
 	writeText := func(text string) {
 		if text == "" {
+			return
+		}
+		if opts.render {
+			pending.WriteString(text)
+			paragraphOpen = true
 			return
 		}
 		fmt.Fprint(stdout, text)
@@ -142,6 +205,23 @@ func renderAIOneShot(session conversationSession, stdout, stderr io.Writer, opts
 		tail += text
 		if len(tail) > 2 {
 			tail = tail[len(tail)-2:]
+		}
+	}
+	// flushRendered prints the buffered round as one rendered block; blocks
+	// are separated by a blank line, mirroring the raw mode's paragraphs.
+	flushRendered := func() {
+		if pending.Len() == 0 {
+			return
+		}
+		status.stop()
+		if printedText {
+			fmt.Fprint(stdout, "\n")
+		}
+		fmt.Fprintln(stdout, renderAIMarkdown(pending.String(), opts.width, opts.style))
+		pending.Reset()
+		printedText = true
+		if opts.status {
+			status.start()
 		}
 	}
 	thinkingOpen := false // a thinking stream is mid-line on stderr
@@ -156,13 +236,15 @@ func renderAIOneShot(session conversationSession, stdout, stderr io.Writer, opts
 		case event.TextDelta != nil:
 			closeThinking()
 			if breakPending && event.TextDelta.Text != "" {
-				// Pad to a blank line whatever the interim text ended with.
-				switch {
-				case strings.HasSuffix(tail, "\n\n"):
-				case strings.HasSuffix(tail, "\n"):
-					fmt.Fprint(stdout, "\n")
-				default:
-					fmt.Fprint(stdout, "\n\n")
+				if !opts.render {
+					// Pad to a blank line whatever the interim text ended with.
+					switch {
+					case strings.HasSuffix(tail, "\n\n"):
+					case strings.HasSuffix(tail, "\n"):
+						fmt.Fprint(stdout, "\n")
+					default:
+						fmt.Fprint(stdout, "\n\n")
+					}
 				}
 				breakPending = false
 			}
@@ -181,6 +263,7 @@ func renderAIOneShot(session conversationSession, stdout, stderr io.Writer, opts
 			if paragraphOpen {
 				breakPending = true
 				paragraphOpen = false
+				flushRendered()
 			}
 			if opts.verbose {
 				fmt.Fprintln(stderr, renderAIToolStart(*event.ToolCallStarted))
@@ -198,7 +281,11 @@ func renderAIOneShot(session conversationSession, stdout, stderr io.Writer, opts
 				if answer {
 					verdict = "approved via --yes"
 				}
+				status.stop()
 				fmt.Fprintln(stderr, "destructive command "+verdict+": dci "+strings.Join(event.ApprovalRequest.Argv, " "))
+				if opts.status {
+					status.start()
+				}
 			}
 			_ = session.Send(aiUserInput{Kind: aiInputApproval, CallID: event.ApprovalRequest.CallID, Approved: answer})
 
@@ -217,7 +304,10 @@ func renderAIOneShot(session conversationSession, stdout, stderr io.Writer, opts
 
 		case event.TurnDone != nil:
 			closeThinking()
-			if printedText {
+			status.stop()
+			if opts.render {
+				flushRendered()
+			} else if printedText {
 				fmt.Fprintln(stdout)
 			}
 			if opts.stats {
@@ -226,5 +316,58 @@ func renderAIOneShot(session conversationSession, stdout, stderr io.Writer, opts
 			return failure
 		}
 	}
+	status.stop()
+	if opts.render {
+		flushRendered()
+	}
 	return failure
+}
+
+// aiStatusLine is the one-shot's minimal waiting indicator for a terminal
+// that would otherwise be silent: the DoiT spinner (aiDoitSpinner, shared
+// with the session) and a dim "thinking…" on one stderr line, erased before
+// anything else prints. start and stop are idempotent; stop blocks until
+// the line is clear, so the caller can write right after it.
+type aiStatusLine struct {
+	w    io.Writer
+	halt chan struct{}
+	done chan struct{}
+}
+
+func (s *aiStatusLine) start() {
+	if s.halt != nil {
+		return
+	}
+	s.halt = make(chan struct{})
+	s.done = make(chan struct{})
+	go func(stop, done chan struct{}) {
+		defer close(done)
+		ticker := time.NewTicker(aiDoitSpinner.FPS)
+		defer ticker.Stop()
+		frame := 0
+		draw := func() {
+			fmt.Fprintf(s.w, "\r\x1b[2K\x1b[2m%s thinking…\x1b[0m", aiDoitSpinner.Frames[frame%len(aiDoitSpinner.Frames)])
+			frame++
+		}
+		draw()
+		for {
+			select {
+			case <-stop:
+				fmt.Fprint(s.w, "\r\x1b[2K")
+				return
+			case <-ticker.C:
+				draw()
+			}
+		}
+	}(s.halt, s.done)
+}
+
+func (s *aiStatusLine) stop() {
+	if s.halt == nil {
+		return
+	}
+	close(s.halt)
+	<-s.done
+	s.halt = nil
+	s.done = nil
 }
