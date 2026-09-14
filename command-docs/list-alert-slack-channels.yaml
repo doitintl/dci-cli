@@ -1,0 +1,10 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: list-alert-slack-channels
+draft: true
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci list-alert-slack-channels"
+
+related: [create-alert, delete-alert, get-alert, list-alerts, update-alert]
