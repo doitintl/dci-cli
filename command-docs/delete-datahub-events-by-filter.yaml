@@ -8,7 +8,7 @@ examples:
   - description: Delete specific events by ID without a prompt (event IDs and a time range are mutually exclusive).
     command: >-
       dci delete-datahub-events-by-filter dataset: litellm-usage,
-      eventIds: [beb21d99-a8c9-4dc0-8a69-5d684cc41e6c] --yes
+      eventIds: [<event-id>] --yes
     output: Exit code 0 and no output; the events no longer appear in Cloud Analytics reports on the dataset.
 
 related: [ingest-datahub-events, delete-datahub-dataset, delete-datahub-datasets, list-datahub-datasets]

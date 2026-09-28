@@ -524,12 +524,12 @@ func TestEnsureConfirmTargetDetailsLooksUpRawID(t *testing.T) {
 	originalFetch := resolverListFetch
 	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
 		return resolverListResult{entries: []nameCacheEntry{
-			{ID: "IQYiclcHa3KdjWGV3Lph", Name: "BigQuery Spend by SKU", Owner: "vadim@doit.com", Description: "Daily BQ spend"},
+			{ID: "ExampleReport1000000", Name: "BigQuery Spend by SKU", Owner: "vadim@doit.com", Description: "Daily BQ spend"},
 		}}, nil
 	}
 	t.Cleanup(func() { resolverListFetch = originalFetch })
 
-	ensureConfirmTargetDetails("delete-report", []string{"IQYiclcHa3KdjWGV3Lph"})
+	ensureConfirmTargetDetails("delete-report", []string{"ExampleReport1000000"})
 	resolved := commandResolvedTarget("delete-report")
 	if resolved == nil || resolved.name != "BigQuery Spend by SKU" {
 		t.Fatalf("resolved target = %+v, want the looked-up report", resolved)
@@ -540,7 +540,7 @@ func TestEnsureConfirmTargetDetailsLooksUpRawID(t *testing.T) {
 
 	// A miss must leave the prompt without a target, not invent one.
 	ensureConfirmTargetDetails("delete-report", []string{"UnknownIdentifier0000"})
-	if got := commandResolvedTarget("delete-report"); got == nil || got.id != "IQYiclcHa3KdjWGV3Lph" {
+	if got := commandResolvedTarget("delete-report"); got == nil || got.id != "ExampleReport1000000" {
 		t.Fatalf("miss must not overwrite or invent a target: %+v", got)
 	}
 }
@@ -558,7 +558,7 @@ func TestEnsureConfirmTargetDetailsSkipsOutsideTUI(t *testing.T) {
 		return resolverListResult{}, nil
 	}
 	t.Cleanup(func() { resolverListFetch = originalFetch })
-	ensureConfirmTargetDetails("delete-report", []string{"IQYiclcHa3KdjWGV3Lph"})
+	ensureConfirmTargetDetails("delete-report", []string{"ExampleReport1000000"})
 	if commandResolvedTarget("delete-report") != nil {
 		t.Fatal("no lookup must mean no resolved target")
 	}

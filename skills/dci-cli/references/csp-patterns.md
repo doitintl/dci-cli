@@ -3,8 +3,8 @@
 **Applies only to doer (DoiT employee) accounts.** For customers and partners the CSP
 tenant simply returns an authorization error — skip this file entirely.
 
-The CSP tenant (`csp.doit.com`, customer id `CIgtnEximnd4fevT3qIU`) aggregates every
-DoiT customer's billing data. Use it for questions that span multiple customers or an
+The CSP tenant (`csp.doit.com`) aggregates every DoiT customer's billing data.
+Use it for questions that span multiple customers or an
 account team's book of business; switch to the specific customer's own tenant for
 anything deeper.
 

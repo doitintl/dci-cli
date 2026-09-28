@@ -654,13 +654,13 @@ func TestResolvePathArgumentsPropagatesLookupFailures(t *testing.T) {
 	})
 }
 
-// Regression for get-asset g-suite-2319621428: the argument is an exact asset
+// Regression for get-asset g-suite-1234567890: the argument is an exact asset
 // id but does not match the Firestore ID shape, so the resolver used to issue
 // a lookup that /billing/v1/assets rejects with 400 and hard-fail the command.
 // A whitespace-free argument must instead degrade to being sent verbatim when
 // the lookup request fails or matches nothing.
 func TestResolvePathArgumentsFallsBackToVerbatimArgument(t *testing.T) {
-	const assetID = "g-suite-2319621428"
+	const assetID = "g-suite-1234567890"
 	for _, testCase := range []struct {
 		name     string
 		result   resolverListResult

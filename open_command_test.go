@@ -12,7 +12,7 @@ import (
 )
 
 func TestLooksLikeCustomerID(t *testing.T) {
-	if !looksLikeCustomerID("RSTDkHhaoGWwOEvlYlHyBUhm") {
+	if !looksLikeCustomerID("ExampleCustomerID0000001") {
 		t.Error("customer-ID shaped context rejected")
 	}
 	if looksLikeCustomerID("acme.com") {

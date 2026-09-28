@@ -52,11 +52,11 @@ func listViewCases() []listViewCase {
 			command:  "list-budgets",
 			itemsKey: "budgets",
 			row: map[string]interface{}{
-				"id": "zwW1rPpV43nHkE0zTJoj", "budgetName": "GCP dev — App Engine",
+				"id": "ExampleBudget0000000", "budgetName": "GCP dev — App Engine",
 				"owner": "someone@example.com", "amount": int64(4900),
 				"currency": "USD", "currentUtilization": 2737.09, "riskStatus": "onTrack",
 				"createTime": int64(1786400706138), "updateTime": int64(1786400706138),
-				"url": "https://console.example.com/budgets/zwW1rPpV43nHkE0zTJoj",
+				"url": "https://console.example.com/budgets/ExampleBudget0000000",
 			},
 			columns: "budget name,owner,amount,spend to date,risk,updated (UTC)",
 			linkURL: "url",
@@ -71,10 +71,10 @@ func listViewCases() []listViewCase {
 			command:  "list-allocations",
 			itemsKey: "allocations",
 			row: map[string]interface{}{
-				"id": "aWUB9gRAEkCqcdK2PCOh", "name": "CloudDiagrams",
+				"id": "ExampleAllocation000", "name": "CloudDiagrams",
 				"owner": "someone@example.com", "type": "custom", "allocationType": "single",
 				"folderId": "root", "createTime": int64(1787051321353), "updateTime": int64(1787051321353),
-				"urlUI": "https://console.example.com/allocations/aWUB9gRAEkCqcdK2PCOh",
+				"urlUI": "https://console.example.com/allocations/ExampleAllocation000",
 			},
 			columns: "name,owner,type,folder,updated (UTC)",
 			linkURL: "urlUI",
@@ -84,7 +84,7 @@ func listViewCases() []listViewCase {
 			command:  "list-anomalies",
 			itemsKey: "anomalies",
 			row: map[string]interface{}{
-				"id": "c72f2bda", "serviceName": "Cursor", "severityLevel": "warning",
+				"id": "abcdef01", "serviceName": "Cursor", "severityLevel": "warning",
 				"costOfAnomaly": 116.39, "platform": "cursor", "status": "active",
 				"startTime": int64(1786924800000), "acknowledged": false,
 			},
@@ -98,7 +98,7 @@ func listViewCases() []listViewCase {
 			command:  "list-alerts",
 			itemsKey: "alerts",
 			row: map[string]interface{}{
-				"id": "beNMYP7z8f2C8Qzfx4aJ", "name": "BQ storage alert",
+				"id": "ExampleAlert10000000", "name": "BQ storage alert",
 				"owner": "someone@example.com", "lastAlerted": nil,
 				"createTime": int64(1783503010786), "updateTime": int64(1783503080037),
 			},
@@ -109,15 +109,15 @@ func listViewCases() []listViewCase {
 			command:  "list-invoices",
 			itemsKey: "invoices",
 			row: map[string]interface{}{
-				"id": "INV-US-26001403", "platform": "google-cloud", "status": "PAID",
+				"id": "INV-US-00000001", "platform": "google-cloud", "status": "PAID",
 				"invoiceDate": int64(1769817600000), "dueDate": int64(1772409600000),
 				"totalAmount": 301022.7, "balanceAmount": int64(0), "currency": "USD",
-				"url": "https://console.example.com/invoices/INV-US-26001403",
+				"url": "https://console.example.com/invoices/INV-US-00000001",
 			},
 			columns: "invoice,platform,issued,due,total,balance,status",
 			linkURL: "url",
 			cells: map[string]interface{}{
-				"invoice": "INV-US-26001403", "issued": int64(1769817600000),
+				"invoice": "INV-US-00000001", "issued": int64(1769817600000),
 				"due": int64(1772409600000), "total": 301022.7, "balance": int64(0),
 			},
 		},
@@ -125,7 +125,7 @@ func listViewCases() []listViewCase {
 			command:  "list-assets",
 			itemsKey: "assets",
 			row: map[string]interface{}{
-				"id": "amazon-web-services-005097884916", "name": "partnerops-msp-dev",
+				"id": "amazon-web-services-123456789012", "name": "partnerops-msp-dev",
 				"type": "amazon-web-services", "createTime": int64(1776854665476),
 				"url": "https://console.example.com/assets/amazon-web-services",
 			},
@@ -137,7 +137,7 @@ func listViewCases() []listViewCase {
 			command:  "list-labels",
 			itemsKey: "labels",
 			row: map[string]interface{}{
-				"id": "cEnk7VN9x7hibWcLIgqh", "name": "House ANA", "type": "custom",
+				"id": "ExampleLabel00000000", "name": "House ANA", "type": "custom",
 				"color": "apricot", "createTime": "2026-07-06T11:45:06.445274Z",
 				"updateTime": "2026-07-06T11:45:41.503007Z",
 			},
@@ -149,10 +149,10 @@ func listViewCases() []listViewCase {
 			command:  "list-tickets",
 			itemsKey: "tickets",
 			row: map[string]interface{}{
-				"id": int64(306123), "subject": "App Engine CreateVersion failures",
+				"id": int64(123456), "subject": "App Engine CreateVersion failures",
 				"status": "closed", "severity": "high", "requester": "someone@example.com",
 				"createTime": int64(1746718583000), "updateTime": int64(1748970150000),
-				"urlUI": "https://console.example.com/support/tickets/306123",
+				"urlUI": "https://console.example.com/support/tickets/123456",
 			},
 			columns: "subject,status,severity,updated (UTC)",
 			linkURL: "urlUI",
@@ -163,7 +163,7 @@ func listViewCases() []listViewCase {
 			command:  "list-tickets",
 			itemsKey: "tickets",
 			row: map[string]interface{}{
-				"id": int64(306123), "subject": "App Engine CreateVersion failures",
+				"id": int64(123456), "subject": "App Engine CreateVersion failures",
 				"status": "closed", "priority": "high",
 				"created_at": "2026-05-08T15:36:23Z", "updated_at": "2026-06-03T17:02:30Z",
 			},
@@ -175,7 +175,7 @@ func listViewCases() []listViewCase {
 			command:  "list-users",
 			itemsKey: "users",
 			row: map[string]interface{}{
-				"id": "hVOgqIg3NjSRQg8i0KJW", "email": "someone@example.com", "status": "Active",
+				"id": "ExampleUser000000000", "email": "someone@example.com", "status": "Active",
 				"lastLogin": "2026-03-10T16:16:50.888Z", "mfaEnrolled": nil, "roleId": "r1",
 				"hasAccessKey": true, "userNotifications": []interface{}{int64(2), int64(3)},
 			},
@@ -189,7 +189,7 @@ func listViewCases() []listViewCase {
 			command:  "list-roles",
 			itemsKey: "roles",
 			row: map[string]interface{}{
-				"id": "59w2TJPTCa3XPsJ3KITY", "name": "FinOps Admin", "type": "preset",
+				"id": "ExampleRole000000000", "name": "FinOps Admin", "type": "preset",
 				"description": "Full analytics access", "permissions": []interface{}{"p1"},
 			},
 			columns: "name,type,description",
@@ -199,7 +199,7 @@ func listViewCases() []listViewCase {
 			command:  "list-annotations",
 			itemsKey: "annotations",
 			row: map[string]interface{}{
-				"id": "g6rAMFoNN0MmAAZ4JsSK", "content": "deploy103.60.0",
+				"id": "ExampleAnnotation000", "content": "deploy103.60.0",
 				"labels":    []interface{}{map[string]interface{}{"id": "l1", "name": "repo:omni"}},
 				"reports":   []interface{}{},
 				"timestamp": "2026-08-18T16:49:18Z", "createTime": "2026-08-18T16:49:19.073488Z",
@@ -221,7 +221,7 @@ func listViewCases() []listViewCase {
 			command:  "list-commitments",
 			itemsKey: "commitments",
 			row: map[string]interface{}{
-				"id": "PQqsrbE3x8dXeckBvD1f", "name": "2026 Contract", "cloudProvider": "google-cloud",
+				"id": "ExampleCommitment000", "name": "2026 Contract", "cloudProvider": "google-cloud",
 				"currency": "USD", "totalCommitmentValue": int64(4000000),
 				"totalCurrentAttainment": 2673691.487, "totalForecastValue": int64(4355238),
 				"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-12-31T00:00:00Z",
@@ -237,20 +237,20 @@ func listViewCases() []listViewCase {
 			command:  "list-cloudflows",
 			itemsKey: "items",
 			row: map[string]interface{}{
-				"id": "G2zdE9inbvwxBc38FCVc", "name": "Delete unused IPs", "published": true,
+				"id": "ExampleFlow200000000", "name": "Delete unused IPs", "published": true,
 				"triggerType": "triggerNode", "lastExecutionStatus": "complete",
 				"lastExecutedTime": "2026-08-14T13:10:29.705Z", "nextRun": "2026-08-16T13:00:00Z",
 			},
 			columns: "name,id,published,trigger,run status,last run (UTC),next run (UTC)",
 			cells: map[string]interface{}{
-				"id": "G2zdE9inbvwxBc38FCVc", "trigger": "triggerNode", "run status": "complete",
+				"id": "ExampleFlow200000000", "trigger": "triggerNode", "run status": "complete",
 			},
 		},
 		{
 			command:  "list-budget-suggestions",
 			itemsKey: "items",
 			row: map[string]interface{}{
-				"id": "BYRp0IQy6hLM2fPlDAwj", "name": "AWS — OpenSearch",
+				"id": "ExampleSuggestion000", "name": "AWS — OpenSearch",
 				"amount":     map[string]interface{}{"amount": "3120", "currency": "USD"},
 				"confidence": "high", "timeInterval": "month", "status": "pending",
 			},
@@ -433,10 +433,10 @@ func TestListViewAllocationsResolveFolders(t *testing.T) {
 		if listPath != foldersListPath {
 			t.Fatalf("listPath = %q, want %q", listPath, foldersListPath)
 		}
-		return resolverListResult{entries: []nameCacheEntry{{ID: "T0bkYjXi5fOfFNiF5Zhf", Name: "House ANA"}}}, nil
+		return resolverListResult{entries: []nameCacheEntry{{ID: "ExampleFolder0000000", Name: "House ANA"}}}, nil
 	}
 	body := map[string]interface{}{"allocations": []interface{}{
-		map[string]interface{}{"name": "a", "folderId": "T0bkYjXi5fOfFNiF5Zhf", "updateTime": int64(1)},
+		map[string]interface{}{"name": "a", "folderId": "ExampleFolder0000000", "updateTime": int64(1)},
 	}}
 	root := transformSuccessBody(body).(map[string]interface{})
 	row := root["allocations"].([]interface{})[0].(map[string]interface{})
@@ -477,10 +477,10 @@ func TestTicketsRowsPreferPrimaryCollectionWithoutCuratedView(t *testing.T) {
 				map[string]interface{}{"subject": "s3", "status": "closed"},
 			},
 			"users": []interface{}{
-				map[string]interface{}{"id": int64(372376685811)},
-				map[string]interface{}{"id": int64(372376685812)},
-				map[string]interface{}{"id": int64(372376685813)},
-				map[string]interface{}{"id": int64(372376685814)},
+				map[string]interface{}{"id": int64(123456789011)},
+				map[string]interface{}{"id": int64(123456789012)},
+				map[string]interface{}{"id": int64(123456789013)},
+				map[string]interface{}{"id": int64(123456789014)},
 			},
 		}
 	}
@@ -510,7 +510,7 @@ func TestListViewInvoiceCreditMemoBlanksZeroTimeDueDate(t *testing.T) {
 	resetListViewTest(t, "list-invoices")
 	body := map[string]interface{}{"invoices": []interface{}{
 		map[string]interface{}{
-			"id": "CM-US-26000060", "platform": "google-cloud", "status": "PAID",
+			"id": "CM-US-00000001", "platform": "google-cloud", "status": "PAID",
 			"invoiceDate": int64(1769817600000), "dueDate": int64(-62135596800000),
 			"totalAmount": -301022.7, "balanceAmount": int64(0), "currency": "USD",
 		},

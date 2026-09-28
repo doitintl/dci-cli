@@ -241,7 +241,7 @@ func TestValidateRequestBodyCanBeBypassed(t *testing.T) {
 	}
 	// The bypass covers the value-shape check too.
 	tagsCommand := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
-	if err := validateRequestBody(tagsCommand, []string{"318240", "tags:", "prod,", "billing"}); err != nil {
+	if err := validateRequestBody(tagsCommand, []string{"123456", "tags:", "prod,", "billing"}); err != nil {
 		t.Fatalf("bypass rejected mis-shaped body: %v", err)
 	}
 }
@@ -308,7 +308,7 @@ func TestSchemaTypeWord(t *testing.T) {
 // with the corrected line.
 func TestValidateRequestBodyCatchesUnbracketedArrayItems(t *testing.T) {
 	command := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
-	errorValue := validateRequestBody(command, []string{"318240", "tags:", "prod,", "billing"})
+	errorValue := validateRequestBody(command, []string{"123456", "tags:", "prod,", "billing"})
 	if errorValue == nil {
 		t.Fatal("unbracketed array items accepted")
 	}
@@ -330,12 +330,12 @@ func TestValidateRequestBodyCatchesScalarWhereArrayExpected(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"318240", "tags:", "prod", "billing"}, "tags expects an array of strings — did you mean: tags: [prod, billing]"},
-		{[]string{"318240", "tags:", "prod"}, "tags expects an array of strings — did you mean: tags: [prod]"},
-		{[]string{"318240", "limits:", "5"}, "limits expects an array of integers — did you mean: limits: [5]"},
+		{[]string{"123456", "tags:", "prod", "billing"}, "tags expects an array of strings — did you mean: tags: [prod, billing]"},
+		{[]string{"123456", "tags:", "prod"}, "tags expects an array of strings — did you mean: tags: [prod]"},
+		{[]string{"123456", "limits:", "5"}, "limits expects an array of integers — did you mean: limits: [5]"},
 		// A bare prefix submitted with no value: no items to suggest, so the
 		// generic bracketed spelling shows instead.
-		{[]string{"318240", "tags:"}, "tags expects an array of strings — array values are bracketed: tags: [a, b]"},
+		{[]string{"123456", "tags:"}, "tags expects an array of strings — array values are bracketed: tags: [a, b]"},
 	}
 	for _, testCase := range cases {
 		errorValue := validateRequestBody(command, testCase.args)
@@ -351,13 +351,13 @@ func TestValidateRequestBodyCatchesScalarWhereArrayExpected(t *testing.T) {
 func TestValidateRequestBodyAcceptsWellShapedArrays(t *testing.T) {
 	command := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
 	for _, args := range [][]string{
-		{"318240", "tags:", "[prod,", "billing]"},
-		{"318240", "tags[]:", "prod"},
-		{"318240", "tags:", "[prod],", "note:", "hi"},
-		{"318240", `{"tags":["prod"]}`},
+		{"123456", "tags:", "[prod,", "billing]"},
+		{"123456", "tags[]:", "prod"},
+		{"123456", "tags:", "[prod],", "note:", "hi"},
+		{"123456", `{"tags":["prod"]}`},
 		// Whole-body tokens pass through untouched — even ones whose file
 		// does not exist (restish owns that failure at request time).
-		{"318240", "@nosuchfile.json"},
+		{"123456", "@nosuchfile.json"},
 	} {
 		if err := validateRequestBody(command, args); err != nil {
 			t.Fatalf("well-shaped body %v rejected: %v", args, err)
@@ -367,7 +367,7 @@ func TestValidateRequestBodyAcceptsWellShapedArrays(t *testing.T) {
 
 func TestValidateRequestBodyRejectsNonObjectShorthand(t *testing.T) {
 	command := &cobra.Command{Use: "add-ticket-tags ticketid", Long: tagsRequestHelp}
-	errorValue := validateRequestBody(command, []string{"318240", "prod"})
+	errorValue := validateRequestBody(command, []string{"123456", "prod"})
 	if errorValue == nil {
 		t.Fatal("non-object body accepted")
 	}

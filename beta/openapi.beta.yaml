@@ -775,8 +775,8 @@ components:
           - id: attribution
             type: attribution
             values:
-              - RB8DndcxODriK83IBXXf
-              - D7r4znsTj2UC95zGnunW
+              - ExampleAttribution10
+              - ExampleAttribution20
             inverse: true
           - id: cloud_provider
             type: fixed

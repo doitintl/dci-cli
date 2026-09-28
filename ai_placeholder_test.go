@@ -21,7 +21,7 @@ func placeholderTestTree(t *testing.T) {
 	ticketTags := &cobra.Command{
 		Use:     "add-ticket-tags ticketid",
 		Long:    "Add tags.\n\n## Request Schema (application/json)\n\n```schema\n{\n  tags*: [\n    (string)\n  ]\n}\n```\n",
-		Example: "  dci add-ticket-tags 318240 tags: [prod]\n",
+		Example: "  dci add-ticket-tags 123456 tags: [prod]\n",
 	}
 	ticketTags.Flags().String("note", "", "")
 	ticketTags.Flags().Bool("force", false, "")
@@ -49,7 +49,7 @@ func placeholderTestTree(t *testing.T) {
 	}
 	oldParameters := operationPathParameters
 	operationPathParameters = map[string][]*cli.Param{
-		"add-ticket-tags": {{Name: "ticketId", Type: "integer", Example: 318240}},
+		"add-ticket-tags": {{Name: "ticketId", Type: "integer", Example: 123456}},
 		"get-report":      {{Name: "reportId", Type: "string"}},
 	}
 	t.Cleanup(func() {
@@ -74,7 +74,7 @@ func TestAIPlaceholderSignatures(t *testing.T) {
 		optionalBody bool
 	}{
 		{"add-ticket-tags", "ticketid · tags*: [a, b]", 1, false},
-		{"add-ticket-tags 318240 tags: a", "ticketid · tags*: [a, b]", 1, false},
+		{"add-ticket-tags 123456 tags: a", "ticketid · tags*: [a, b]", 1, false},
 		{"create-thing", "config*: object", 1, true},
 		{"get-report", "report-name-or-id", 1, false},
 		{"beta run-report", "report-name-or-id", 2, false},
@@ -117,19 +117,19 @@ func TestAIPlaceholdersRemaining(t *testing.T) {
 	}{
 		// Path first, then body, positionally.
 		{"add-ticket-tags", "ticketid · tags*: [a, b]"},
-		{"add-ticket-tags 318240", "tags*: [a, b]"},
-		{"add-ticket-tags 318240 tags: a, b", ""},
+		{"add-ticket-tags 123456", "tags*: [a, b]"},
+		{"add-ticket-tags 123456 tags: a, b", ""},
 		// Flags and their values are skipped; bool flags take no value.
-		{"add-ticket-tags --note x 318240", "tags*: [a, b]"},
-		{"add-ticket-tags --force 318240", "tags*: [a, b]"},
+		{"add-ticket-tags --note x 123456", "tags*: [a, b]"},
+		{"add-ticket-tags --force 123456", "tags*: [a, b]"},
 		{"add-ticket-tags --note=x", "ticketid · tags*: [a, b]"},
 		// Whole-body tokens consume every body placeholder.
-		{"add-ticket-tags 318240 @body.json", ""},
-		{"add-ticket-tags 318240 <body.json", ""},
+		{"add-ticket-tags 123456 @body.json", ""},
+		{"add-ticket-tags 123456 <body.json", ""},
 		// Inline JSON (shell-quoted, as the splitter delivers it) consumes
 		// the fields it names, nothing else.
-		{`add-ticket-tags 318240 '{"tags":["a"]}'`, ""},
-		{`add-ticket-tags 318240 '{"other":1}'`, "tags*: [a, b]"},
+		{`add-ticket-tags 123456 '{"tags":["a"]}'`, ""},
+		{`add-ticket-tags 123456 '{"other":1}'`, "tags*: [a, b]"},
 		// Positional order wins: a body-shaped token still fills an open
 		// path slot, exactly as the CLI would parse it.
 		{"add-ticket-tags tags: a", "tags*: [a, b]"},
@@ -254,15 +254,15 @@ func TestAIValueGhost(t *testing.T) {
 	}{
 		// A bare field prefix ghosts the value's literal syntax — the moment
 		// the old ghost went silent right when the shape needed teaching.
-		{"/add-ticket-tags 318240 tags:", " [a, b]"},
-		{"/add-ticket-tags 318240 tags: ", "[a, b]"},
+		{"/add-ticket-tags 123456 tags:", " [a, b]"},
+		{"/add-ticket-tags 123456 tags: ", "[a, b]"},
 		// Inside an unclosed array: items after the opener, then the closing
 		// guidance — silence returns only once the bracket closes.
-		{"/add-ticket-tags 318240 tags: [", "a, b]"},
-		{"/add-ticket-tags 318240 tags: [prod", ", …]"},
-		{"/add-ticket-tags 318240 tags: [prod,", " …]"},
-		{"/add-ticket-tags 318240 tags: [prod, ", "…]"},
-		{"/add-ticket-tags 318240 tags: [prod, billing]", ""},
+		{"/add-ticket-tags 123456 tags: [", "a, b]"},
+		{"/add-ticket-tags 123456 tags: [prod", ", …]"},
+		{"/add-ticket-tags 123456 tags: [prod,", " …]"},
+		{"/add-ticket-tags 123456 tags: [prod, ", "…]"},
+		{"/add-ticket-tags 123456 tags: [prod, billing]", ""},
 		// Objects get their own brackets; scalars their type word.
 		{"/create-thing config:", " {…}"},
 		{"/create-thing config: {", "…}"},
@@ -277,8 +277,8 @@ func TestAIValueGhost(t *testing.T) {
 		{"/create-thing labels:[a],name:", " string"},
 		// Not value entry: values typed through, whole-body tokens, unfilled
 		// path slots (positional order wins — "tags:" is the path argument).
-		{"/add-ticket-tags 318240 tags: a, b", ""},
-		{"/add-ticket-tags 318240 @body.json", ""},
+		{"/add-ticket-tags 123456 tags: a, b", ""},
+		{"/add-ticket-tags 123456 @body.json", ""},
 		{"/add-ticket-tags tags:", ""},
 		{"/get-report", ""},
 	}
@@ -357,7 +357,7 @@ func TestAIGhostFollowsTypingAndFreezesMidToken(t *testing.T) {
 	if m.ghost != "ticketid tags*: [a, b]" {
 		t.Fatalf("ghost after the command = %q", m.ghost)
 	}
-	m = aiType(m, "318240 ")
+	m = aiType(m, "123456 ")
 	if m.ghost != "tags*: [a, b]" {
 		t.Fatalf("ghost after the path argument = %q", m.ghost)
 	}
@@ -441,12 +441,12 @@ func TestAITabActionFor(t *testing.T) {
 		// A gated pickable slot degrades to the value hint (type: no example).
 		{"/get-report --id", aiTabHint, "report-name-or-id (string)"},
 		// A plain path value slot hints with the spec example.
-		{"/add-ticket-tags", aiTabHint, "ticketid — e.g. 318240"},
+		{"/add-ticket-tags", aiTabHint, "ticketid — e.g. 123456"},
 		// Path filled → insert the next required field's prefix, separator
 		// depending on what the line already carries. An array field's
 		// prefix brings its opening bracket along.
-		{"/add-ticket-tags 318240", aiTabInsert, " tags: ["},
-		{"/add-ticket-tags 318240 ", aiTabInsert, "tags: ["},
+		{"/add-ticket-tags 123456", aiTabInsert, " tags: ["},
+		{"/add-ticket-tags 123456 ", aiTabInsert, "tags: ["},
 		{"/create-thing", aiTabInsert, " config: "},
 		// Mid-body, shorthand properties are comma-separated.
 		{"/create-widget a: 1", aiTabInsert, ", b: "},
@@ -454,14 +454,14 @@ func TestAITabActionFor(t *testing.T) {
 		{"/create-widget a: 1, ", aiTabInsert, "b: "},
 		// Mid-value, Tab offers the spec example's assignment instead of
 		// jamming the next field's prefix into the value.
-		{"/add-ticket-tags 318240 tags:", aiTabHint, "e.g. tags: [prod]"},
-		{"/add-ticket-tags 318240 tags: [", aiTabHint, "e.g. tags: [prod]"},
-		{"/add-ticket-tags 318240 tags: [prod", aiTabHint, "e.g. tags: [prod]"},
+		{"/add-ticket-tags 123456 tags:", aiTabHint, "e.g. tags: [prod]"},
+		{"/add-ticket-tags 123456 tags: [", aiTabHint, "e.g. tags: [prod]"},
+		{"/add-ticket-tags 123456 tags: [prod", aiTabHint, "e.g. tags: [prod]"},
 		// Mid-value with no spec example → inert (the value ghost already
 		// shows the syntax).
 		{"/create-thing config:", aiTabNone, ""},
 		// Nothing to offer → Tab stays inert.
-		{"/add-ticket-tags 318240 tags: prod", aiTabNone, ""},
+		{"/add-ticket-tags 123456 tags: prod", aiTabNone, ""},
 		{"/model", aiTabNone, ""},
 		{"/no-such-command", aiTabNone, ""},
 		{"plain question", aiTabNone, ""},
@@ -485,10 +485,10 @@ func TestAITabActionFor(t *testing.T) {
 func TestAITabInsertsFieldPrefixInTheSession(t *testing.T) {
 	placeholderTestTree(t)
 	m := aiTestModel(t)
-	m = aiType(m, "/add-ticket-tags 318240")
+	m = aiType(m, "/add-ticket-tags 123456")
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = updated.(aiModel)
-	if got := m.input.Value(); got != "/add-ticket-tags 318240 tags: [" {
+	if got := m.input.Value(); got != "/add-ticket-tags 123456 tags: [" {
 		t.Fatalf("input after Tab = %q", got)
 	}
 	// The prefix used to consume its placeholder and silence the ghost right
@@ -510,7 +510,7 @@ func TestAITabInsertsFieldPrefixInTheSession(t *testing.T) {
 	if got := m.input.Value(); got != "/add-ticket-tags " {
 		t.Fatalf("value-slot Tab changed the input: %q", got)
 	}
-	if m.ghost != "ticketid — e.g. 318240" {
+	if m.ghost != "ticketid — e.g. 123456" {
 		t.Fatalf("value-slot Tab ghost = %q", m.ghost)
 	}
 	// The hint is transient: the next keystroke recomputes the normal ghost
