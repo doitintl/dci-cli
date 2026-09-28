@@ -83,7 +83,7 @@ ops only).
 ```
 dci beta                         # branded help: list of beta commands + disclaimer
 dci beta <command> [args]        # invoke a beta operation, e.g.:
-dci beta run-report 8EmhotO0poyBBOm2kO7q
+dci beta run-report <report-id>
 dci beta <command> --help        # per-command help, "(BETA)" prefix on the summary
 ```
 

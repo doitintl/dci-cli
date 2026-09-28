@@ -46,7 +46,7 @@ var pathParameterChecks = map[string]pathParameterCheck{
 }
 
 // embeddedIntegerPattern recovers the identifier from a value that carries the
-// argument name alongside it, e.g. `ticket-id: 318240`. Digits only: a hyphen
+// argument name alongside it, e.g. `ticket-id: 123456`. Digits only: a hyphen
 // here belongs to the label, not to the number, and a suggestion starting with
 // one would be parsed as a flag and fail all over again.
 var embeddedIntegerPattern = regexp.MustCompile(`\d+`)

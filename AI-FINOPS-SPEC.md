@@ -200,7 +200,7 @@ is the floor; `effort=medium` proved out as the speed lever and is now the defau
 
 ### 3.1 What it is (validated)
 
-- Customer context `csp.doit.com` (id `CIgtnEximnd4fevT3qIU`); both forms pass
+- The CSP tenant domain and its customer ID both pass
   `validateCustomerContextValue` and resolve (`dci validate` returns the tenant).
 - An **aggregation of all DoiT customers' billing data**, Doer-only (console gates it;
   the API authorizes whatever the token allows, per AI-SPEC §6).

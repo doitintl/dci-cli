@@ -363,7 +363,7 @@ func reportsListRow(overrides map[string]interface{}) map[string]interface{} {
 	row := map[string]interface{}{
 		"createTime": int64(1787065375365),
 		"folderId":   "root",
-		"id":         "qPA5QvltVGvhlSUiNw3O",
+		"id":         "ExampleReportID00000",
 		"labels":     []interface{}{},
 		"owner":      "someone@example.com",
 		"reportName": "BQ storage data",
@@ -435,10 +435,10 @@ func TestTransformReportsResolvesFolderNames(t *testing.T) {
 		if listPath != foldersListPath {
 			t.Fatalf("listPath = %q, want %q", listPath, foldersListPath)
 		}
-		return resolverListResult{entries: []nameCacheEntry{{ID: "T0bkYjXi5fOfFNiF5Zhf", Name: "House ANA"}}}, nil
+		return resolverListResult{entries: []nameCacheEntry{{ID: "ExampleFolder0000000", Name: "House ANA"}}}, nil
 	}
 	body := reportsListBody(
-		reportsListRow(map[string]interface{}{"folderId": "T0bkYjXi5fOfFNiF5Zhf"}),
+		reportsListRow(map[string]interface{}{"folderId": "ExampleFolder0000000"}),
 		reportsListRow(map[string]interface{}{"folderId": "UnknownFolderId000000"}),
 		reportsListRow(nil),
 	)
@@ -460,10 +460,10 @@ func TestTransformReportsFolderLookupFailureFallsBack(t *testing.T) {
 	resolverListFetch = func(listPath, context string, maxPages int) (resolverListResult, error) {
 		return resolverListResult{}, fmt.Errorf("network down")
 	}
-	body := reportsListBody(reportsListRow(map[string]interface{}{"folderId": "T0bkYjXi5fOfFNiF5Zhf"}))
+	body := reportsListBody(reportsListRow(map[string]interface{}{"folderId": "ExampleFolder0000000"}))
 	root := transformSuccessBody(body).(map[string]interface{})
 	row := root["reports"].([]interface{})[0].(map[string]interface{})
-	if row["folder"] != "T0bkYjXi5fOfFNiF5Zhf" {
+	if row["folder"] != "ExampleFolder0000000" {
 		t.Errorf("folder = %v, want the raw id when the lookup fails", row["folder"])
 	}
 }
@@ -674,7 +674,7 @@ func TestBuildTableStringHyperlinksPreserveAlignment(t *testing.T) {
 	viper.Set("table-color", true)
 	viper.Set("table-link-column", "name")
 	viper.Set("table-link-url-key", "urlUI")
-	url := "https://console.example.com/customers/RSTDkHhaoGWwOEvlYlHyBUhm/analyze/reports/qPA5QvltVGvhlSUiNw3O"
+	url := "https://console.example.com/customers/ExampleCustomerID0000001/analyze/reports/ExampleReportID00000"
 	rows := []map[string]interface{}{
 		{"name": "Anomaly Detection Dev WoW", "owner": "someone@example.com", "urlUI": url},
 		{"name": "Spend by User", "owner": "other@example.com", "urlUI": ""},
