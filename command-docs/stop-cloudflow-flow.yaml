@@ -1,0 +1,14 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: stop-cloudflow-flow
+draft: true
+
+arguments:
+  flow-id: "The ID of the flow whose in-progress run should be stopped."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci stop-cloudflow-flow <flow-id>"
+
+related:
+  [build-cloud-flow, export-cloudflow-flow, get-cloudflow-flow-run, import-cloudflow-flow, list-cloudflow-flow-runs]
