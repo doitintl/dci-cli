@@ -69,7 +69,7 @@ This is intentional. The CLI has no external package consumers, so sub-packages 
 
 ### Project Conventions
 
-- Use synthetic customer and resource IDs in source, tests, documentation, and bundled guidance. Replace identifiers from captured API responses before committing them.
+- Read [tenant-identifier-hygiene](.agents/skills/tenant-identifier-hygiene/SKILL.md) before adding or publishing customer/tenant IDs or tenant-specific domains. Use synthetic customer and resource IDs in source examples, tests, documentation, CLI help, command docs and bundled guidance. Sanitize captured API responses and generated output before committing or publishing. Run the skill's identifier check before pushing.
 - README and DISTRIBUTION.md are user-facing — no internal jargon, no restish references
 - README targets end users; DISTRIBUTION.md targets developers/contributors
 - Homebrew tap works via GitHub redirect (`doitintl/homebrew-dci-cli` → `doitintl/dci-cli`)
