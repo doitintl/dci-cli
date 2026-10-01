@@ -1,0 +1,29 @@
+command: get-gcp-billing-account
+
+arguments:
+  billing-account-id: >-
+    GCP billing account ID (format `XXXXXX-XXXXXX-XXXXXX`), as shown by
+    `dci list-gcp-billing-accounts` (`billingAccountId`).
+
+examples:
+  - description: One billing account's onboarding status, CUD export health, 30-day ESR and savings, and year-to-date and lifetime totals.
+    command: "dci get-gcp-billing-account <billing-account-id>"
+  - description: The full record as JSON, including the six-month `monthlyStats` and 30-day `dailyCoverage` series behind the console Overview charts.
+    command: "dci get-gcp-billing-account <billing-account-id> --output json"
+  - description: Only onboarding status and savings totals.
+    command: "dci get-gcp-billing-account <billing-account-id> --fields displayName,onboardingStatus,savingsTotals --output json"
+
+notes: |
+  The list-item fields are the same ones `list-gcp-billing-accounts` returns; this command adds
+  the time series. `dailyCoverage` breaks CUD coverage down by commitment kind per day
+  (`computeFlexible`, `cloudRun`, `bigQuery`, `cloudSql`, `resourceBased`, `onDemand`, and
+  others), which is the data behind the console's CUD Coverage chart.
+
+related:
+  [
+    list-gcp-billing-accounts,
+    list-gcp-billing-accounts-settings,
+    list-gcp-recommendations,
+    list-gcp-planned-purchases,
+    list-gcp-spend-cuds,
+  ]

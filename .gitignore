@@ -27,3 +27,7 @@ firebase-debug.log
 
 # Claude Code personal overrides
 .claude/settings.local.json
+
+# Demo recordings (demo/record.sh output)
+demo/out/
+demo/*.csv

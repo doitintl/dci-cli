@@ -1,0 +1,24 @@
+command: get-anomaly-explanation
+
+arguments:
+  id: >-
+    Anomaly ID as shown by `dci list-anomalies` or `dci anomalies-recent`.
+    Anomalies have no names, so name resolution does not apply.
+
+examples:
+  - description: A likely-cause explanation of an anomaly, with the facts it was grounded in.
+    command: "dci get-anomaly-explanation <anomaly-id>"
+  - description: Just the explanation text.
+    command: "dci get-anomaly-explanation <anomaly-id> --fields explanation.text --output json"
+  - description: The deterministic facts (service, scope, severity, costs, top SKUs) and evidence as JSON, for scripts.
+    command: "dci get-anomaly-explanation <anomaly-id> --fields facts,evidence --output json"
+
+notes: |
+  :::info AI-generated content
+  The `explanation` block is AI-generated and marked as such (`aiGenerated: true`); `facts` and
+  `evidence` are deterministic and come from the anomaly record itself. Nothing is stored — each
+  call generates the explanation afresh, so the wording can differ between calls. A `503` means
+  the explanation service was unavailable; retry after the interval in `Retry-After`.
+  :::
+
+related: [get-anomaly, list-anomalies, anomalies-recent, patch-anomaly]

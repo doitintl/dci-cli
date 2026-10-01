@@ -230,7 +230,7 @@ func resolvePathArguments(cmd *cobra.Command, args []string) error {
 // degrade to sending the positional argument verbatim instead of failing the
 // command. Only a whitespace-free argument can fall back: it may simply be a
 // resource id whose shape the strict Firestore ID gate does not recognize
-// (asset ids like "g-suite-2319621428"), while an argument with spaces can
+// (asset ids like "g-suite-1234567890"), while an argument with spaces can
 // only be a name, so its resolution errors stay fatal and descriptive. The
 // fallback covers a lookup request that itself failed — some list endpoints
 // reject the lookup's paging parameters, and the real request will surface

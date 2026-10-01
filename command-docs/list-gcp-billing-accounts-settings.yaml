@@ -1,0 +1,19 @@
+command: list-gcp-billing-accounts-settings
+
+examples:
+  - description: The recommendation and purchasing engine settings for each onboarded GCP billing account, per activated product line.
+    command: "dci list-gcp-billing-accounts-settings"
+  - description: The nested settings as JSON, for scripts.
+    command: "dci list-gcp-billing-accounts-settings --output json"
+  - description: Every page as YAML, easier to read when there are many billing accounts.
+    command: "dci list-gcp-billing-accounts-settings --all --output yaml"
+
+notes: |
+  Settings are read-only through the API and edited on the account's Settings tab in the DoiT
+  Console. Each item lists `services[]` (today `compute` only) with `purchaseMode`
+  (`autonomous` or `requires_approval`), `minimumCommitment` and `maximumCommitment` in USD
+  per hour (`0` means no cap), `lastDayOfMonthForPurchase`, the preferred `term`, and the
+  coverage `policy`. Unlike the AWS settings, GCP settings are stored per billing account, so
+  values can differ between accounts.
+
+related: [list-gcp-billing-accounts, get-gcp-billing-account, list-gcp-recommendations, list-gcp-planned-purchases]

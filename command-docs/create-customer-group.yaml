@@ -1,0 +1,20 @@
+command: create-customer-group
+
+examples:
+  - description: Create a group of downstream customers (customer IDs are the ones shown in each customer's Console URL).
+    command: 'dci create-customer-group name: "EMEA sales team", memberCustomerIds: [<customer-id>, <customer-id>]'
+  - description: Create it from a JSON file.
+    command: "dci create-customer-group < group.json"
+    output: |
+      # group.json
+      {"name": "EMEA sales team", "memberCustomerIds": ["<customer-id>", "<customer-id>"]}
+  - description: Capture the new group's ID for a script, then assign users to it.
+    command: 'dci create-customer-group name: "EMEA sales team", memberCustomerIds: [<customer-id>] --output json | jq -r .id'
+
+notes: |
+  Both `name` and `memberCustomerIds` are required, and the group needs at least one member.
+  Requires the users-manager permission. Creating a group with a name that already exists
+  returns `409`.
+
+related:
+  [list-customer-groups, get-customer-group, update-customer-group, assign-customer-group-user, delete-customer-group]

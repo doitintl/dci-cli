@@ -417,7 +417,7 @@ func aiValueGhost(signature *aiCommandSignature, argv []string, input string) st
 }
 
 // aiFieldExampleExcerpt pulls one field's assignment out of a spec example
-// line ("/add-ticket-tags 318240 tags: [prod]" → "tags: [prod]"), cut at the
+// line ("/add-ticket-tags 123456 tags: [prod]" → "tags: [prod]"), cut at the
 // top-level comma that starts the next property. "" when the example never
 // assigns the field.
 func aiFieldExampleExcerpt(example, field string) string {

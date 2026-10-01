@@ -1,0 +1,20 @@
+command: assign-customer-group-user
+
+arguments:
+  customer-group-id: >-
+    Customer group ID as shown by `dci list-customer-groups` (the `id` field).
+  user-id: >-
+    User ID as shown by `dci list-users` (the `id` field). Users are not resolved by name;
+    pass the ID.
+
+examples:
+  - description: Scope a user to a customer group.
+    command: "dci assign-customer-group-user <customer-group-id> <user-id>"
+  - description: In a script; the assignment returns no body, so branch on the exit code (non-zero when the group or user does not exist).
+    command: "dci assign-customer-group-user <customer-group-id> <user-id> && echo assigned"
+
+notes: |
+  A successful assignment returns no body. Once assigned, the user sees only the group's member
+  customers. Requires the users-manager permission.
+
+related: [unassign-customer-group-user, list-customer-groups, get-customer-group, list-users]

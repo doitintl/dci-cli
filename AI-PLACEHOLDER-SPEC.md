@@ -23,16 +23,16 @@ The worked example, phase 1 (`·` marks the cursor; `▒text▒` marks faint gho
 
 ```
 › /add-ticket-tags ·▒ticket-id tags*: [a, b]▒          command accepted, nothing typed
-› /add-ticket-tags 318240 ·▒tags*: [a, b]▒             ticket-id consumed
-› /add-ticket-tags 318240 tags: [prod, billing]·       all placeholders consumed, ghost gone
+› /add-ticket-tags 123456 ·▒tags*: [a, b]▒             ticket-id consumed
+› /add-ticket-tags 123456 tags: [prod, billing]·       all placeholders consumed, ghost gone
 ```
 
 And phase 2, the same command:
 
 ```
 › /add-ticket-tags ·▒ticket-id tags*: [a, b]▒          Tab → cursor stays, user types the ID
-› /add-ticket-tags 318240 ·▒tags*: [a, b]▒             Tab → "tags: [" inserted, bracket included
-› /add-ticket-tags 318240 tags: [·▒a, b]▒              the value ghost walks the array to its "]"
+› /add-ticket-tags 123456 ·▒tags*: [a, b]▒             Tab → "tags: [" inserted, bracket included
+› /add-ticket-tags 123456 tags: [·▒a, b]▒              the value ghost walks the array to its "]"
 ```
 
 The vocabulary is the usage trailer's (PR #133, `argvUsageTrailer`, error_contract.go): path parameters spelled as cobra's `Use` spells them, body fields with their `*` required markers. A user who ignores the ghost and gets the arity error sees the same words in the trailer — the overlay is the *before* view of the same contract the trailer shows *after* failure.
@@ -103,7 +103,7 @@ Phase 1 changes **zero** key handling. Explicitly:
 Phase 2 makes Tab, in argument position, mean **accept what the ghost offers next** (`aiTabActionFor`, ai_placeholder.go; `handleArgumentTab`, ai_tui.go). Decided scope, in the order the action resolves:
 
 - **The empty pickable slot → Tab submits like Enter**, opening the zero-argument name picker: the cue says "enter to pick from a list" and Tab agrees, so Tab always accepts the offer whatever kind it is. Implementation is literally `m.submit()` — the picker, echo, history, and fetch fallback all ride the existing path.
-- **A path value slot → hint only, never an insertion** (Q2 decided): the cursor is already where the value goes; Tab swaps the ghost to the parameter's spec example (`ticketid — e.g. 318240`) or its type (`report-name-or-id (string)`), from `operationPathParameters` — so beta ops (which never populate that map) keep Tab inert on value slots. Inserting example text as real input was rejected: ghost-to-real-text promotion of a value the user didn't choose is how wrong IDs get submitted. The hint is transient — the next keystroke recomputes the normal ghost.
+- **A path value slot → hint only, never an insertion** (Q2 decided): the cursor is already where the value goes; Tab swaps the ghost to the parameter's spec example (`ticketid — e.g. 123456`) or its type (`report-name-or-id (string)`), from `operationPathParameters` — so beta ops (which never populate that map) keep Tab inert on value slots. Inserting example text as real input was rejected: ghost-to-real-text promotion of a value the user didn't choose is how wrong IDs get submitted. The hint is transient — the next keystroke recomputes the normal ghost.
 - **The next required body field → Tab inserts its fixed `name: ` prefix** — Alfredo's "auto-inserts the fixed `tags:`". The separator follows restish shorthand's comma-separated properties: a space after path arguments, `", "` once a body property is already on the line, bare after a trailing comma or space.
 - **Popup precedence**: with the popup open, Tab keeps accepting the highlighted completion (F1) — with one carve-out: when accepting would change nothing (the input already reads `/name ` and the exact-match popup is still open, because completions recompute on the trimmed input), Tab falls through to the argument action instead of no-opping.
 - **Esc** keeps today's meaning — there is no mode: phase 2 stays stateless like phase 1, every Tab decided per keypress from the same pure model, end-of-line only (the ghost's own cursor rule).

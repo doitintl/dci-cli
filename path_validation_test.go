@@ -29,21 +29,21 @@ var pathParameterIntegerCases = []struct {
 	value   string
 	isValid bool
 }{
-	{"318240", true},
+	{"123456", true},
 	{"-1", true},
 	{"0", true},
-	{"ticket-id: 318240", false},
-	{"ticketId:309353", false},
-	{`{"ticket-id": 310201}`, false},
+	{"ticket-id: 123456", false},
+	{"ticketId:123457", false},
+	{`{"ticket-id": 123458}`, false},
 	{"ticket-id", false},
 	{"ticketid", false},
-	{"ticket-id-318240", false},
+	{"ticket-id-123456", false},
 	{"", false},
 	{"99999999999999999999", false},
-	{"318240.0", false},
+	{"123456.0", false},
 	// Parse cleanly but reach the API as written, where they 404.
-	{"+318240", false},
-	{"0318240", false},
+	{"+123456", false},
+	{"0123456", false},
 }
 
 func TestValidatePathParametersRejectsNonIntegerValues(t *testing.T) {
@@ -89,7 +89,7 @@ func TestValidatePathParametersChecksNumberAndBooleanTypes(t *testing.T) {
 	}{
 		{"number", "1.5", "amount: 1.5"},
 		{"boolean", "true", "active: true"},
-		{"array[integer]", "310032,318240", "ticket-id: 310032,318240"},
+		{"array[integer]", "123459,123456", "ticket-id: 123459,123456"},
 	} {
 		setOperationPathParameters(ticketOperations(testCase.declaredType))
 		if err := validatePathParameters(ticketCommand(), []string{testCase.accepted}); err != nil {
@@ -110,13 +110,13 @@ func TestValidatePathParametersFailsOpenWithoutMetadata(t *testing.T) {
 	t.Cleanup(resetPathValidationState)
 	resetPathValidationState()
 
-	if err := validatePathParameters(ticketCommand(), []string{"ticket-id: 318240"}); err != nil {
+	if err := validatePathParameters(ticketCommand(), []string{"ticket-id: 123456"}); err != nil {
 		t.Fatalf("validation ran without operation metadata: %v", err)
 	}
 
 	setOperationPathParameters(ticketOperations("integer"))
 	unknown := &cobra.Command{Use: "list-budgets"}
-	if err := validatePathParameters(unknown, []string{"ticket-id: 318240"}); err != nil {
+	if err := validatePathParameters(unknown, []string{"ticket-id: 123456"}); err != nil {
 		t.Fatalf("unknown command validated: %v", err)
 	}
 }
@@ -134,19 +134,19 @@ func TestValidatePathParametersChecksEachParameterPositionally(t *testing.T) {
 	command := &cobra.Command{Use: "create-ticket-comment customerid ticketid"}
 
 	// Body arguments follow the path arguments and are never type-checked.
-	args := []string{"acme.com", "318240", `body: "thanks"`}
+	args := []string{"acme.com", "123456", `body: "thanks"`}
 	if err := validatePathParameters(command, args); err != nil {
 		t.Fatalf("valid arguments rejected: %v", err)
 	}
 
-	err := validatePathParameters(command, []string{"acme.com", "ticket-id: 318240", `body: "thanks"`})
+	err := validatePathParameters(command, []string{"acme.com", "ticket-id: 123456", `body: "thanks"`})
 	if err == nil {
 		t.Fatal("second path argument not validated")
 	}
 	if !strings.Contains(err.Error(), `"ticket-id"`) {
 		t.Fatalf("error names the wrong argument: %q", err)
 	}
-	if hint := err.(pathParameterValidationError).AgentErrorHint(); !strings.Contains(hint, `dci create-ticket-comment acme.com 318240 'body: "thanks"'`) {
+	if hint := err.(pathParameterValidationError).AgentErrorHint(); !strings.Contains(hint, `dci create-ticket-comment acme.com 123456 'body: "thanks"'`) {
 		t.Fatalf("hint = %q", hint)
 	}
 
@@ -160,7 +160,7 @@ func TestPathParameterValidationErrorContract(t *testing.T) {
 	t.Cleanup(resetPathValidationState)
 	setOperationPathParameters(ticketOperations("integer"))
 
-	err := validatePathParameters(ticketCommand(), []string{"ticket-id: 318240"})
+	err := validatePathParameters(ticketCommand(), []string{"ticket-id: 123456"})
 	if err == nil {
 		t.Fatal("malformed ticket ID accepted")
 	}
@@ -168,7 +168,7 @@ func TestPathParameterValidationErrorContract(t *testing.T) {
 	if !ok {
 		t.Fatalf("error type = %T", err)
 	}
-	if got := validationError.Error(); got != `invalid value for path argument "ticket-id": "ticket-id: 318240" is not an integer` {
+	if got := validationError.Error(); got != `invalid value for path argument "ticket-id": "ticket-id: 123456" is not an integer` {
 		t.Fatalf("message = %q", got)
 	}
 	if validationError.ExitCode() != exitUsage {
@@ -182,7 +182,7 @@ func TestPathParameterValidationErrorContract(t *testing.T) {
 	if structured.Code != "USAGE_ERROR" || structured.Retryable {
 		t.Fatalf("structured error = %+v", structured)
 	}
-	if !strings.Contains(structured.Hint, "dci get-ticket 318240") {
+	if !strings.Contains(structured.Hint, "dci get-ticket 123456") {
 		t.Fatalf("hint = %q", structured.Hint)
 	}
 	if exitCodeForExecutionError(err, 0) != exitUsage {
@@ -192,9 +192,9 @@ func TestPathParameterValidationErrorContract(t *testing.T) {
 	fallback := pathParameterValidationError{
 		argumentName: "ticket-id",
 		expectation:  "an integer",
-		recovered:    "318240",
+		recovered:    "123456",
 	}
-	if got := fallback.AgentErrorHint(); got != `Pass only the value, not the argument name — use 318240 for "ticket-id"` {
+	if got := fallback.AgentErrorHint(); got != `Pass only the value, not the argument name — use 123456 for "ticket-id"` {
 		t.Fatalf("recovered-value hint = %q", got)
 	}
 }
@@ -207,14 +207,14 @@ func TestPathParameterValidationSuggestsCorrectedInvocation(t *testing.T) {
 		value string
 		want  string
 	}{
-		{"ticket-id: 318240", "dci get-ticket 318240"},
-		{"ticketId:309353", "dci get-ticket 309353"},
-		{`{"ticket-id": 310201}`, "dci get-ticket 310201"},
+		{"ticket-id: 123456", "dci get-ticket 123456"},
+		{"ticketId:123457", "dci get-ticket 123457"},
+		{`{"ticket-id": 123458}`, "dci get-ticket 123458"},
 		// A hyphen before the digits belongs to the label. Suggesting
-		// "-318240" would be parsed as a flag and fail a second time.
-		{"ticket-id-318240", "dci get-ticket 318240"},
-		{"+318240", "dci get-ticket 318240"},
-		{"0318240", "dci get-ticket 318240"},
+		// "-123456" would be parsed as a flag and fail a second time.
+		{"ticket-id-123456", "dci get-ticket 123456"},
+		{"+123456", "dci get-ticket 123456"},
+		{"0123456", "dci get-ticket 123456"},
 	} {
 		err := validatePathParameters(ticketCommand(), []string{testCase.value})
 		if err == nil {
@@ -257,13 +257,13 @@ func TestPathParameterValidationPreservesChangedFlagsInRunnableRetry(t *testing.
 		t.Fatal(err)
 	}
 
-	err := validatePathParameters(command, []string{"ticket-id: 318240"})
+	err := validatePathParameters(command, []string{"ticket-id: 123456"})
 	if err == nil {
 		t.Fatal("malformed ticket ID accepted")
 	}
 	hint := err.(pathParameterValidationError).AgentErrorHint()
 	for _, expected := range []string{
-		"dci get-ticket 318240",
+		"dci get-ticket 123456",
 		"--customer-context acme.com",
 		"--dry-run",
 		"--heatmap=false",
@@ -273,7 +273,7 @@ func TestPathParameterValidationPreservesChangedFlagsInRunnableRetry(t *testing.
 			t.Errorf("hint = %q, missing %q", hint, expected)
 		}
 	}
-	if strings.Contains(hint, "ticket-id: 318240") {
+	if strings.Contains(hint, "ticket-id: 123456") {
 		t.Errorf("hint kept malformed value: %q", hint)
 	}
 }
@@ -296,9 +296,9 @@ func TestPathParameterValidationBlocksExecution(t *testing.T) {
 		wantBlocked bool
 		wantExample string
 	}{
-		{"malformed", []string{"dci", "get-ticket", "ticket-id: 318240"}, true, "dci get-ticket 318240"},
-		{"malformed with dry run", []string{"dci", "get-ticket", "ticket-id: 318240", "--dry-run"}, true, "dci get-ticket 318240 --dry-run"},
-		{"valid", []string{"dci", "get-ticket", "318240"}, false, ""},
+		{"malformed", []string{"dci", "get-ticket", "ticket-id: 123456"}, true, "dci get-ticket 123456"},
+		{"malformed with dry run", []string{"dci", "get-ticket", "ticket-id: 123456", "--dry-run"}, true, "dci get-ticket 123456 --dry-run"},
+		{"valid", []string{"dci", "get-ticket", "123456"}, false, ""},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			viper.Reset()

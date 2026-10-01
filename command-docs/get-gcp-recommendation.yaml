@@ -1,0 +1,27 @@
+command: get-gcp-recommendation
+
+arguments:
+  billing-account-id: >-
+    GCP billing account ID (format `XXXXXX-XXXXXX-XXXXXX`), as shown by
+    `dci list-gcp-billing-accounts` (`billingAccountId`).
+  gcp-service: >-
+    Product line the recommendation is for. Today only `compute` is supported.
+
+examples:
+  - description: The compute recommendation with daily eligible-spend buckets (the default granularity).
+    command: "dci get-gcp-recommendation <billing-account-id> compute"
+  - description: The same recommendation with one eligible-spend bucket per month.
+    command: "dci get-gcp-recommendation <billing-account-id> compute --granularity month"
+  - description: Hourly eligible-spend totals as JSON, for your own analysis.
+    command: "dci get-gcp-recommendation <billing-account-id> compute --granularity hour --output json"
+
+notes: |
+  `--granularity` accepts `hour`, `day` (default), `week` or `month`. Coarser buckets report
+  `minUsage`, `medianUsage` and `maxUsage` per bucket; `hour` reports `totalUsage` per hour.
+  `--region` defaults to `global`, the only value supported today. When no stored
+  recommendation matches, `recommendation` is omitted and
+  `estimatedEquivalentRecommendedCommitment` is `0`. `list-gcp-recommendations` returns the
+  recommendation without the eligible-usage series.
+
+related:
+  [list-gcp-recommendations, list-gcp-planned-purchases, get-gcp-billing-account, list-gcp-billing-accounts-settings]

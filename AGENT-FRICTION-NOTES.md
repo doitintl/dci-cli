@@ -1,6 +1,6 @@
 # Agent Friction Notes — "token spend per AI model" task (2026-08-19)
 
-Notes from an agent-driven session answering "how much does DoiT spend on tokens per AI model" using only the CLI (customer context `RSTDkHhaoGWwOEvlYlHyBUhm`). Each item is a candidate CLI or agent-guidance improvement.
+Notes from an agent-driven session answering "how much does DoiT spend on tokens per AI model" using only the CLI. Each item is a candidate CLI or agent-guidance improvement.
 
 > **Superseded by [FRICTION-SPEC.md](FRICTION-SPEC.md)** (2026-08-19), which audits each item against the code, corrects two errors in item 1 (the server honors `--max-results` up to 500 — 501+ silently resets to the default 50; and agent-mode TOON *does* carry `pageToken` — only csv/table drop it), and turns the list into a phased plan.
 

@@ -353,7 +353,7 @@ Taken here, open for the maintainer's confirmation:
   `dci commands --json`. Only a *leading* `@file` is whole-body input now;
   the catalog shows `{"file": "@events.csv", "provider": "litellm-usage"}`.
 - **Live response shape.** Verified 2026-09-04 against the production API
-  (tenant `omni.engineer`, throwaway dataset `dci-cli-upload-test`): both a
+  (throwaway dataset `dci-cli-upload-test`): both a
   plain `.csv` and a `.csv.gz` upload returned `201` in about five seconds
   with `ingestedRows` matching the file, and the batch id
   `csv_<filename>_<millis>` confirms the filename is preserved. The response

@@ -1,0 +1,17 @@
+command: delete-customer-group
+
+arguments:
+  customer-group-id: >-
+    Customer group ID as shown by `dci list-customer-groups` (the `id` field).
+
+examples:
+  - description: Preview what would be deleted without sending a request.
+    command: "dci delete-customer-group <customer-group-id> --dry-run"
+  - description: Delete the group without an interactive prompt, for scripts.
+    command: "dci delete-customer-group <customer-group-id> --yes"
+
+notes: |
+  A group that still has users assigned cannot be deleted (`409`): unassign them first with
+  `dci unassign-customer-group-user`. Requires the users-manager permission.
+
+related: [unassign-customer-group-user, list-customer-groups, get-customer-group, create-customer-group]

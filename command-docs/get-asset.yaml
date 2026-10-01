@@ -3,7 +3,7 @@ command: get-asset
 arguments:
   id: >-
     Asset ID as shown by `dci list-assets -C id,name,type` (the default table
-    does not show the ID), for example `g-suite-2319621428`. Asset IDs are
+    does not show the ID), for example `g-suite-1234567890`. Asset IDs are
     passed to the API verbatim.
 
 examples:

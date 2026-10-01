@@ -1,0 +1,25 @@
+command: list-gcp-resource-cuds
+
+arguments:
+  billing-account-id: >-
+    GCP billing account ID (format `XXXXXX-XXXXXX-XXXXXX`), as shown by
+    `dci list-gcp-billing-accounts` (`billingAccountId`).
+
+examples:
+  - description: Resource-based (vCPU and memory) CUDs on the billing account, with the owning project, term, and last-month coverage, utilization and savings.
+    command: "dci list-gcp-resource-cuds <billing-account-id>"
+  - description: Active CUDs only.
+    command: "dci list-gcp-resource-cuds <billing-account-id> --status active"
+  - description: Purchased commitments whose term has not started yet.
+    command: "dci list-gcp-resource-cuds <billing-account-id> --status not_yet_active"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-gcp-resource-cuds <billing-account-id> --all --output json"
+
+notes: |
+  `--status` accepts `active`, `expired`, `creating`, `cancelled` or `not_yet_active`. Omit it
+  to return CUDs in every state. Resource-based CUDs are bought per project and region for a
+  machine family; `hostProjectId` and `billingProjectNumber` identify where the commitment
+  lives, and `autoRenew` tells you whether it renews at the end of its term. For spend
+  commitments use `list-gcp-spend-cuds`.
+
+related: [list-gcp-spend-cuds, list-gcp-billing-accounts, get-gcp-billing-account, list-gcp-recommendations]

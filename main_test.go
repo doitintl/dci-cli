@@ -1764,7 +1764,7 @@ func mockAlertRows() ([]map[string]interface{}, []string) {
 	rows := []map[string]interface{}{
 		{
 			"createTime":  1.709550521e+12,
-			"id":          "JkKD7J8jmgcL52Lgj4uy",
+			"id":          "ExampleAlert20000000",
 			"lastAlerted": 1.710936037e+12,
 			"name":        "bookreviews staging test",
 			"owner":       "alice@example.com",
@@ -1773,7 +1773,7 @@ func mockAlertRows() ([]map[string]interface{}, []string) {
 		},
 		{
 			"createTime":  1.667139587394e+12,
-			"id":          "Ns8B2zIs07qJjDVByCIz",
+			"id":          "ExampleAlert30000000",
 			"lastAlerted": 1.736672435e+12,
 			"name":        "Cloud analytics reports cost by user",
 			"owner":       "bob@example.com",
@@ -1791,23 +1791,23 @@ func mockReportRows() ([]map[string]interface{}, []string) {
 	rows := []map[string]interface{}{
 		{
 			"createTime": 1.774010451448e+12,
-			"id":         "ApLLbhKaGNVlXqNlFh1u",
+			"id":         "ExampleReport2000000",
 			"labels":     []interface{}{},
 			"owner":      "alice@example.com",
 			"reportName": "Monthly cost breakdown",
 			"type":       "custom",
 			"updateTime": 1.77401059984e+12,
-			"urlUI":      "https://console.example.com/customers/abc123/analytics/reports/ApLLbhKaGNVlXqNlFh1u",
+			"urlUI":      "https://console.example.com/customers/abc123/analytics/reports/ExampleReport2000000",
 		},
 		{
 			"createTime": 1.709000000e+12,
-			"id":         "kyYAeFUM3hD8moWxyz12",
-			"labels":     []interface{}{map[string]interface{}{"id": "il6vOdNiBDGw", "name": "team-alpha"}},
+			"id":         "ExampleReport3000000",
+			"labels":     []interface{}{map[string]interface{}{"id": "ExampleLabel", "name": "team-alpha"}},
 			"owner":      "bob@example.com",
 			"reportName": "Account overview Q1",
 			"type":       "custom",
 			"updateTime": 1.709100000e+12,
-			"urlUI":      "https://console.example.com/customers/abc123/analytics/reports/kyYAeFUM3hD8moWxyz12",
+			"urlUI":      "https://console.example.com/customers/abc123/analytics/reports/ExampleReport3000000",
 		},
 	}
 	allKeys := []string{"createTime", "id", "labels", "owner", "reportName", "type", "updateTime", "urlUI"}
@@ -4103,8 +4103,8 @@ func TestJSONApplicationError(t *testing.T) {
 		{
 			name: "2xx failed flow-run resource passes through",
 			resp: cli.Response{Status: 200, Body: map[string]interface{}{
-				"id":     "eqbE2PDt8x462CvXIFmN",
-				"flowId": "UDn1SIGaaN8uHZM80N58",
+				"id":     "ExampleFlowRun000000",
+				"flowId": "ExampleFlow300000000",
 				"status": "error",
 				"error":  "An internal error occurred and the request could not be completed.",
 				"nodes":  []interface{}{map[string]interface{}{"name": "Fetch report"}},

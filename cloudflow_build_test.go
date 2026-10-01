@@ -8,10 +8,10 @@ import (
 // A trimmed capture of a real build-cloud-flow event stream (2026-08-26):
 // header event, tool lifecycle, token-by-token answer text, and the
 // cloudflow_created custom event.
-const builderStreamFixture = "data: {\"answerId\":\"9Cvpb58zMtQfLUzC5JAQ\",\"conversationId\":\"0uTcI08iexsmKLlx73qM\"}\n\n" +
+const builderStreamFixture = "data: {\"answerId\":\"ExampleAnswer0000000\",\"conversationId\":\"ExampleConversation0\"}\n\n" +
 	"data: {\"answer\":\"{\\\"toolStart\\\":\\\"Creating a new CloudFlow\\\",\\\"toolId\\\":\\\"t1\\\",\\\"toolStatus\\\":\\\"running\\\",\\\"input\\\":\\\"{}\\\"}\"}\n\n" +
 	"data: {\"answer\":\"{\\\"toolEnd\\\":\\\"Creating a new CloudFlow\\\",\\\"toolId\\\":\\\"t1\\\",\\\"toolStatus\\\":\\\"completed\\\"}\"}\n\n" +
-	"data: {\"answer\":\"{\\\"customEvent\\\":{\\\"messageId\\\":\\\"cloudflow_created\\\",\\\"data\\\":{\\\"flowId\\\":\\\"wulTlJNxkGwTpe7T2DxT\\\"}}}\"}\n\n" +
+	"data: {\"answer\":\"{\\\"customEvent\\\":{\\\"messageId\\\":\\\"cloudflow_created\\\",\\\"data\\\":{\\\"flowId\\\":\\\"ExampleFlow100000000\\\"}}}\"}\n\n" +
 	"data: {\"answer\":\"{\\\"toolStart\\\":\\\"Getting operation input parameters\\\",\\\"toolId\\\":\\\"t2\\\",\\\"toolStatus\\\":\\\"running\\\",\\\"input\\\":\\\"{\\\\\\\"provider\\\\\\\":\\\\\\\"DoiT\\\\\\\"}\\\"}\"}\n\n" +
 	"data: {\"answer\":\"{\\\"llmStart\\\":\\\"ChatOpenAI\\\",\\\"value\\\":\\\"Thinking\\\"}\"}\n\n" +
 	"data: {\"answer\":\"Which\"}\n\n" +
@@ -29,10 +29,10 @@ func TestTransformCloudflowBuildStream(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a structured result map")
 	}
-	if result["conversationId"] != "0uTcI08iexsmKLlx73qM" {
+	if result["conversationId"] != "ExampleConversation0" {
 		t.Errorf("conversationId = %v", result["conversationId"])
 	}
-	if result["flowId"] != "wulTlJNxkGwTpe7T2DxT" {
+	if result["flowId"] != "ExampleFlow100000000" {
 		t.Errorf("flowId = %v", result["flowId"])
 	}
 	if result["answer"] != "Which DataHub dataset?" {

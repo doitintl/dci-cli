@@ -10,7 +10,7 @@ examples:
   - description: Limit a user to one country (ISO 3166-1 alpha-2 code from `dci list-geographic-access-countries`).
     command: "dci update-user-geographic-access-scope <target-customer-id> <user-id> type: country, countryCode: DE"
   - description: Limit the user to a custom region (ID from `dci list-geographic-access-custom-regions`).
-    command: "dci update-user-geographic-access-scope <target-customer-id> <user-id> type: customRegion, customRegionId: cr_01J6M8Q9H3Y7T2K5V4N1P0X8ZA"
+    command: "dci update-user-geographic-access-scope <target-customer-id> <user-id> type: customRegion, customRegionId: <custom-region-id>"
   - description: Allow the user every country and custom region.
     command: "dci update-user-geographic-access-scope <target-customer-id> <user-id> type: global"
     output: The updated scope is returned; `type` tells you which shape applied.

@@ -823,15 +823,15 @@ func TestParseTokenClaims(t *testing.T) {
 
 func TestAIContextLabelWithResolvedName(t *testing.T) {
 	m := aiTestModel(t)
-	if err := os.WriteFile(customerContextPath(m.configDir), []byte("RSTDkHhaoGWwOEvlYlHyBUhm\n"), 0o600); err != nil {
+	if err := os.WriteFile(customerContextPath(m.configDir), []byte("ExampleCustomerID0000001\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.contextLabel(); got != "RSTDkHhaoGWwOEvlYlHyBUhm" {
+	if got := m.contextLabel(); got != "ExampleCustomerID0000001" {
 		t.Fatalf("label before lookup = %q", got)
 	}
-	updated, _ := m.Update(aiCustomerNameMsg{context: "RSTDkHhaoGWwOEvlYlHyBUhm", name: "Acme Corp"})
+	updated, _ := m.Update(aiCustomerNameMsg{context: "ExampleCustomerID0000001", name: "Acme Corp"})
 	m = updated.(aiModel)
-	if got := m.identity; got != "Acme Corp (RSTDkHhaoGWwOEvlYlHyBUhm)" {
+	if got := m.identity; got != "Acme Corp (ExampleCustomerID0000001)" {
 		t.Fatalf("label after lookup = %q", got)
 	}
 	if !strings.Contains(m.transcript[0], "Acme Corp") {
@@ -1027,7 +1027,7 @@ func TestAIFrameMatchesTerminalGrid(t *testing.T) {
 			m.turnActivity = "thinking · " + strings.Repeat("narration ", 12)
 		},
 		"long identity": func(m *aiModel) {
-			m.identity = "A Very Long Customer Display Name Ltd (RSTDkHhaoGWwOEvlYlHyBUhm)"
+			m.identity = "A Very Long Customer Display Name Ltd (ExampleCustomerID0000001)"
 		},
 		"completion popup": func(m *aiModel) {
 			m.completions = []aiCompletion{
@@ -1038,7 +1038,7 @@ func TestAIFrameMatchesTerminalGrid(t *testing.T) {
 		"scrolled up": func(m *aiModel) { m.follow = false },
 		"picker": func(m *aiModel) {
 			m.picker = &aiNameSelection{resource: "customer", candidates: []nameCacheEntry{
-				{Name: strings.Repeat("Long Customer Name ", 4), ID: "RSTDkHhaoGWwOEvlYlHyBUhm"},
+				{Name: strings.Repeat("Long Customer Name ", 4), ID: "ExampleCustomerID0000001"},
 			}}
 		},
 		"wide transcript block": func(m *aiModel) { m.append(strings.Repeat("x", 400)) },

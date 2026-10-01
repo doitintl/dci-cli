@@ -69,6 +69,7 @@ This is intentional. The CLI has no external package consumers, so sub-packages 
 
 ### Project Conventions
 
+- Use synthetic customer and resource IDs in source, tests, documentation, and bundled guidance. Replace identifiers from captured API responses before committing them.
 - README and DISTRIBUTION.md are user-facing — no internal jargon, no restish references
 - README targets end users; DISTRIBUTION.md targets developers/contributors
 - Homebrew tap works via GitHub redirect (`doitintl/homebrew-dci-cli` → `doitintl/dci-cli`)
