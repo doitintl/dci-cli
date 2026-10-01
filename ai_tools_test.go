@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"io"
+	"math/rand"
 	"strings"
 	"sync"
 	"testing"
@@ -76,6 +78,8 @@ func TestAIRunCommandRefusesCredentialExposingFlags(t *testing.T) {
 		{"list-budgets", "-v=true"},
 		{"list-budgets", "-rv"},
 		{"list-budgets", "-Dv"},
+		{"list-budgets", "-=v"},
+		{"list-budgets", "-=xv"},
 		{"list-budgets", "--fields", "-v"},
 		{"list-budgets", "--", "-v"},
 		{"-v", "list-budgets"},
@@ -102,7 +106,10 @@ func TestAIRunCommandRefusesCredentialExposingFlags(t *testing.T) {
 }
 
 func TestGuardAISessionChild(t *testing.T) {
-	t.Cleanup(func() { viper.Set("rsh-verbose", false) })
+	t.Cleanup(func() {
+		viper.Set("rsh-verbose", false)
+		viper.Set("rsh-server", "")
+	})
 
 	t.Setenv(aiSessionChildEnvName, "")
 	viper.Set("rsh-verbose", true)
@@ -119,6 +126,8 @@ func TestGuardAISessionChild(t *testing.T) {
 	t.Cleanup(func() { cli.GlobalFlags = saved })
 	cli.GlobalFlags = pflag.NewFlagSet("eager-flags", pflag.ContinueOnError)
 	cli.GlobalFlags.BoolP("rsh-verbose", "v", true, "")
+	cli.GlobalFlags.StringP("rsh-server", "s", "https://elsewhere.example", "")
+	viper.Set("rsh-server", "https://elsewhere.example")
 
 	t.Setenv(aiSessionChildEnvName, "1")
 	if err := guardAISessionChild([]string{"dci", "list-budgets"}); err != nil {
@@ -130,20 +139,94 @@ func TestGuardAISessionChild(t *testing.T) {
 	if verbose, _ := cli.GlobalFlags.GetBool("rsh-verbose"); verbose {
 		t.Fatal("session child left the eager rsh-verbose flag on")
 	}
+	if server, _ := cli.GlobalFlags.GetString("rsh-server"); server != "" || viper.GetString("rsh-server") != "" {
+		t.Fatal("session child left a server override (RSH_SERVER / config file) in place")
+	}
 	err := guardAISessionChild([]string{"dci", "list-budgets", "--rsh-verbose"})
 	if err == nil || !strings.HasPrefix(err.Error(), "invalid argument:") {
 		t.Fatalf("session child accepted --rsh-verbose: %v", err)
 	}
 }
 
-func TestAISessionChildrenCarryMarker(t *testing.T) {
-	want := aiSessionChildEnvName + "=1"
-	for _, entry := range aiDispatchEnv(132, 40, "") {
-		if entry == want {
-			return
+// restishEagerFlags mirrors the eager GlobalFlags set restish v0.21.2's
+// cli.Init builds (cli.go AddGlobalFlag calls), parse settings included.
+func restishEagerFlags() *pflag.FlagSet {
+	flags := pflag.NewFlagSet("eager-flags", pflag.ContinueOnError)
+	flags.ParseErrorsWhitelist.UnknownFlags = true
+	flags.Usage = func() {}
+	flags.SetOutput(io.Discard)
+	flags.BoolP("help", "h", false, "")
+	flags.BoolP("rsh-verbose", "v", false, "")
+	flags.StringP("rsh-output-format", "o", "auto", "")
+	flags.StringP("rsh-filter", "f", "", "")
+	flags.BoolP("rsh-raw", "r", false, "")
+	flags.StringP("rsh-server", "s", "", "")
+	flags.StringArrayP("rsh-header", "H", nil, "")
+	flags.StringArrayP("rsh-query", "q", nil, "")
+	flags.Bool("rsh-no-paginate", false, "")
+	flags.StringP("rsh-profile", "p", "default", "")
+	flags.Bool("rsh-no-cache", false, "")
+	flags.Bool("rsh-insecure", false, "")
+	flags.Int("rsh-retry", 2, "")
+	flags.DurationP("rsh-timeout", "t", 0, "")
+	return flags
+}
+
+// Differential check against pflag itself: every argv the eager parse reads
+// as verbose (or a server override) must be refused — with restish's flag set
+// loaded (the real binary) and without it (the most conservative scan).
+func TestAICredentialExposingFlagCoversEagerParse(t *testing.T) {
+	saved := cli.GlobalFlags
+	t.Cleanup(func() { cli.GlobalFlags = saved })
+
+	alphabet := []byte("vsrfoDCx=-h1")
+	random := rand.New(rand.NewSource(1))
+	word := func() string {
+		length := 1 + random.Intn(5)
+		out := make([]byte, length)
+		for i := range out {
+			out[i] = alphabet[random.Intn(len(alphabet))]
+		}
+		return "-" + string(out)
+	}
+	for i := 0; i < 50000; i++ {
+		args := []string{"list-budgets", word()}
+		if random.Intn(2) == 0 {
+			args = append(args, word())
+		}
+		eager := restishEagerFlags()
+		if eager.Parse(args) != nil {
+			continue // restish panics on a parse error; no request is made
+		}
+		verbose, _ := eager.GetBool("rsh-verbose")
+		if !verbose && !eager.Changed("rsh-server") {
+			continue
+		}
+		for _, loaded := range []*pflag.FlagSet{restishEagerFlags(), nil} {
+			cli.GlobalFlags = loaded
+			if _, found := aiCredentialExposingFlag(args); !found {
+				t.Fatalf("%q enables verbose/server in the eager parse but was not refused (flag set loaded: %v)", args, loaded != nil)
+			}
 		}
 	}
-	t.Fatalf("dispatch env missing %s", want)
+}
+
+func TestAISessionChildrenCarryMarker(t *testing.T) {
+	want := aiSessionChildEnvName + "=1"
+	for name, env := range map[string][]string{
+		"tool call": aiAgentModeEnv(nil),
+		"dispatch":  aiDispatchEnv(132, 40, ""),
+	} {
+		found := false
+		for _, entry := range env {
+			if entry == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s env missing %s", name, want)
+		}
+	}
 }
 
 func TestAIRunCommandDestructiveApprovalProtocol(t *testing.T) {

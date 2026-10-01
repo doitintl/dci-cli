@@ -96,14 +96,18 @@ func aiCredentialExposingFlag(args []string) (string, bool) {
 			}
 			continue
 		}
-		// Everything after a cluster's first `=` is a value.
-		shorts, _, _ := strings.Cut(arg[1:], "=")
-		for i := 0; i < len(shorts); i++ {
-			short := shorts[i : i+1]
+		// Walk the cluster the way pflag's parseSingleShortArg does: a
+		// shorthand followed by `=` and more ends it (the rest is a value),
+		// but a leading `=` is just an unknown shorthand and reading goes on.
+		for shorts := arg[1:]; len(shorts) > 0; shorts = shorts[1:] {
+			short := shorts[:1]
 			for _, exposing := range aiCredentialExposingFlags {
 				if short == exposing {
 					return arg, true
 				}
+			}
+			if len(shorts) > 2 && shorts[1] == '=' {
+				break
 			}
 			if cli.GlobalFlags != nil {
 				if flag := cli.GlobalFlags.ShorthandLookup(short); flag != nil && flag.NoOptDefVal == "" {
@@ -123,18 +127,23 @@ func guardAISessionChild(args []string) error {
 	if os.Getenv(aiSessionChildEnvName) != "1" {
 		return nil
 	}
-	// cli.Init seeded both flag sets' defaults from viper (RSH_VERBOSE, the
-	// config file), and cli.Run copies the eager set's value back into viper
-	// before deciding — so reset the flags, not just the setting.
+	// cli.Init seeded both flag sets' defaults from viper (RSH_VERBOSE,
+	// RSH_SERVER, the config file), and cli.Run copies the eager set's
+	// verbose value back into viper before deciding — so reset the flags,
+	// not just the settings.
+	off := map[string]string{"rsh-verbose": "false", "rsh-server": ""}
 	for _, flags := range []*pflag.FlagSet{cli.GlobalFlags, aiRootPersistentFlags()} {
 		if flags == nil {
 			continue
 		}
-		if flag := flags.Lookup("rsh-verbose"); flag != nil {
-			_ = flag.Value.Set("false")
+		for name, value := range off {
+			if flag := flags.Lookup(name); flag != nil {
+				_ = flag.Value.Set(value)
+			}
 		}
 	}
 	viper.Set("rsh-verbose", false)
+	viper.Set("rsh-server", "")
 	if arg, found := aiCredentialExposingFlag(args[1:]); found {
 		return fmt.Errorf("invalid argument: %s is not available inside dci ai — it would expose your credentials to the model", arg)
 	}
@@ -245,13 +254,17 @@ func aiChildEnv(extras []string) []string {
 	return append(env, extras...)
 }
 
+func aiAgentModeEnv(extraEnv []string) []string {
+	return aiChildEnv(append([]string{"DCI_AGENT_MODE=1", "DCI_NO_TUI=1", aiSessionChildEnvName + "=1"}, extraEnv...))
+}
+
 // aiAgentModeRunner re-execs this binary with DCI_AGENT_MODE=1: compact
 // deterministic output, structured errors on stderr, the documented exit
 // taxonomy. Combined output keeps the structured error envelope adjacent to
 // any partial stdout, which is exactly what the model needs to self-correct.
 func aiAgentModeRunner(ctx context.Context, argv, extraEnv []string) ([]byte, int, error) {
 	command := exec.CommandContext(ctx, aiExecutablePath(), argv...)
-	command.Env = aiChildEnv(append([]string{"DCI_AGENT_MODE=1", "DCI_NO_TUI=1", aiSessionChildEnvName + "=1"}, extraEnv...))
+	command.Env = aiAgentModeEnv(extraEnv)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
