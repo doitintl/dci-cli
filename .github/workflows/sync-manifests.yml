@@ -48,7 +48,7 @@ jobs:
           else
             tag="$RELEASE_TAG"
           fi
-          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
             echo "::error::Invalid release tag; expected vMAJOR.MINOR.PATCH[-PRERELEASE]."
             exit 1
           fi
@@ -119,8 +119,11 @@ jobs:
           git commit -m "Update Homebrew formula and Scoop manifest for ${TAG}"
           auth="$(printf 'x-access-token:%s' "$CI_PUSH_TOKEN" | base64 -w0)"
           echo "::add-mask::${auth}"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
-            push origin HEAD:main
+          # Pass the auth header via env, not argv, so it isn't on the command line.
+          GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${auth}" \
+            git push origin HEAD:main
 
       - name: Submit WinGet manifests to winget-pkgs
         env:
@@ -153,8 +156,19 @@ jobs:
             exit 1
           fi
 
-          git clone --depth 1 \
-            "https://x-access-token:${WINGET_GH_PAT}@github.com/${WINGET_FORK}.git" \
+          # Supply the PAT as a per-command auth header so it is neither on the
+          # command line nor persisted in /tmp/winget-pkgs/.git/config.
+          winget_auth="$(printf 'x-access-token:%s' "$WINGET_GH_PAT" | base64 -w0)"
+          echo "::add-mask::${winget_auth}"
+          with_winget_auth() {
+            GIT_CONFIG_COUNT=1 \
+              GIT_CONFIG_KEY_0="http.https://github.com/${WINGET_FORK}.git.extraheader" \
+              GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${winget_auth}" \
+              "$@"
+          }
+
+          with_winget_auth git clone --depth 1 \
+            "https://github.com/${WINGET_FORK}.git" \
             /tmp/winget-pkgs
 
           cd /tmp/winget-pkgs
@@ -171,7 +185,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -m "New version: DoiT.dci version ${version}"
-          git push -u origin "DoiT.dci-${version}" --force
+          with_winget_auth git push -u origin "DoiT.dci-${version}" --force
 
           # Create PR to microsoft/winget-pkgs
           fork_owner="${WINGET_FORK%%/*}"
