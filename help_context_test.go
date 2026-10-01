@@ -199,4 +199,3 @@ func TestDeprecatedCommandHelpShowsNotice(t *testing.T) {
 		t.Fatalf("expected deprecation notice in --help output, got:\n%s", got)
 	}
 }
-
