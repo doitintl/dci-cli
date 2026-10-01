@@ -16,7 +16,7 @@ output="$5"
 
 # The values below are spliced into a sed program and into Ruby/JSON/YAML
 # manifests, so restrict them to characters that are inert in all of those.
-if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
   echo "ERROR: invalid version: expected MAJOR.MINOR.PATCH[-PRERELEASE]" >&2
   exit 1
 fi
