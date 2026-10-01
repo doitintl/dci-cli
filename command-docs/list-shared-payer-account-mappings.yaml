@@ -1,0 +1,24 @@
+command: list-shared-payer-account-mappings
+
+arguments:
+  customer-id: >-
+    ID of the reseller customer your credentials belong to — the same ID that appears in the Console URL
+    of your account. It must match the customer resolved from the bearer token; a token scoped
+    to a different customer gets `403`.
+
+examples:
+  - description: Every AWS account under the reseller's shared payers and the customer it is currently mapped to.
+    command: "dci list-shared-payer-account-mappings <customer-id>"
+  - description: Only the accounts under one management (payer) account.
+    command: "dci list-shared-payer-account-mappings <customer-id> --management-account <payer-account-id>"
+  - description: The asset IDs and mapped customers, for picking an account to reassign.
+    command: "dci list-shared-payer-account-mappings <customer-id> --fields assetId,accountId,accountName,customerId,customerName"
+
+notes: |
+  When an account's `customerId` equals the `<customer-id>` you passed (the reseller itself), the
+  account has not yet been reassigned to an end customer. Each payer's own management account is
+  listed alongside its member accounts. Pass the `assetId` to `dci reassign-shared-payer-account`.
+  Requires the `SharedPayersAdmin` permission and DoiT API access (`platform:externalApi`); user API
+  tokens must include the permission in their scope.
+
+related: [list-shared-payers, list-shared-payer-management-accounts, reassign-shared-payer-account]

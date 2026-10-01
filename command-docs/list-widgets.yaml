@@ -1,0 +1,16 @@
+command: list-widgets
+
+examples:
+  - description: The catalogue of preset widgets you can read, with their IDs and stable aliases.
+    command: "dci list-widgets"
+  - description: Just the aliases and names.
+    command: "dci list-widgets --fields alias,name,description --output json"
+
+notes: |
+  Each entry has a customer-specific `id` and a stable `alias`; either can be passed to
+  `dci get-widget`. An `id` can vary by customer or service tier, while an `alias` stays the same.
+  The whole catalogue comes back in one response, so there is no paging. A `403` means the caller or
+  the selected customer is not authorized or entitled to use this API. If your credential can act on
+  more than one customer, select one with `--x-tenant-id <customer-id>`.
+
+related: [get-widget]

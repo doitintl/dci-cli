@@ -1,0 +1,26 @@
+command: update-role
+
+arguments:
+  id: >-
+    Role ID or name as shown by `dci list-roles`. Names resolve (exact, unique substring, or
+    close typo); pass `--id` to force a literal ID.
+
+examples:
+  - description: Rename a custom role.
+    command: 'dci update-role "FinOps Analyst" name: "FinOps Reader"'
+  - description: Replace the role's permissions (the list you send is the whole new list, not an addition).
+    command: "dci update-role <role-id> permissions: [<permission-id>, <permission-id>, <permission-id>]"
+  - description: Change several fields from a JSON file.
+    command: "dci update-role <role-id> < role.json"
+    output: |
+      # role.json
+      {"name": "FinOps Reader", "description": "Read-only access to cost reports",
+       "permissions": ["<permission-id>", "<permission-id>"]}
+
+notes: |
+  Send `name`, `description`, `permissions`, or any combination (at least one); fields you
+  leave out keep their value. `permissions` replaces the whole list and an empty list clears
+  it; an empty `description` clears the description. Preset roles cannot be modified (`400`),
+  and a new `name` must be unique among the customer's roles, preset roles included (`409`).
+
+related: [get-role, list-roles, create-role, delete-role]

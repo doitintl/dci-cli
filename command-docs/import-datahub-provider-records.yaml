@@ -1,0 +1,44 @@
+command: import-datahub-provider-records
+
+examples:
+  - description: Import one day of provider-native records from a JSON file (the usual way, since `records` is an array of objects).
+    command: "dci import-datahub-provider-records < records.json"
+    output: |
+      # records.json
+      {"provider": "Anthropic Team",
+       "schemaTemplate": "anthropic-spend-report@1",
+       "periodStart": "2026-09-10",
+       "periodEnd": "2026-09-10",
+       "records": [
+         {"user_email": "user@example.com", "account_uuid": "<account-uuid>",
+          "product": "Claude Code", "model": "claude-sonnet-4-6",
+          "total_requests": 1, "total_prompt_tokens": 100, "total_completion_tokens": 20,
+          "total_net_spend_usd": "1.20", "total_gross_spend_usd": "1.50",
+          "total_uncached_input_tokens": 60, "total_cache_read_tokens": 20,
+          "total_cache_write_5m_tokens": 10, "total_cache_write_1h_tokens": 10,
+          "total_web_search_count": 0}]}
+  - description: Re-import a period, replacing the batch already loaded for it.
+    command: "dci import-datahub-provider-records replace: true < records.json"
+  - description: Check the result in a script.
+    command: "dci import-datahub-provider-records < records.json --output json | jq '{batch, ingestedRows, generatedEvents}'"
+    output: "The response reports `batch`, `ingestedRows`, `sourceRecords`, `generatedEvents` and any `replacedBatches`."
+
+notes: |
+  `provider`, `schemaTemplate`, `periodStart`, `periodEnd` and `records` are required. `provider` is
+  the name of an existing dataset (`dci list-datahub-datasets`). Today the only supported
+  `schemaTemplate` is `anthropic-spend-report@1`; each record uses that template's CSV column
+  names, and decimals may be strings or numbers. Records are validated, normalized and booked on
+  `periodEnd` exactly like a CSV upload, and `replace` has the same meaning as for
+  `dci ingest-datahub-events-csv`. Data can take up to 15 minutes to appear in the DoiT console.
+  A `409` means the period overlaps an active batch (upload without `replace`), the template does
+  not match the dataset, `replace` would remove data outside the period, or an overlapping batch is
+  still processing.
+
+related:
+  [
+    ingest-datahub-events-csv,
+    ingest-datahub-events,
+    create-datahub-dataset,
+    list-datahub-datasets,
+    delete-datahub-events-by-filter,
+  ]

@@ -1,0 +1,27 @@
+command: create-role
+
+examples:
+  - description: Create a custom role from permission IDs (take them from the `permissions` of `dci list-roles`).
+    command: >-
+      dci create-role name: "FinOps Analyst", description: "Read-only access to cost reports and budgets",
+      permissions: [<permission-id>, <permission-id>] --idempotency-key "$(uuidgen)"
+  - description: Create it from a JSON file.
+    command: 'dci create-role --idempotency-key "$(uuidgen)" < role.json'
+    output: |
+      # role.json
+      {"name": "FinOps Analyst", "description": "Read-only access to cost reports and budgets",
+       "permissions": ["<permission-id>", "<permission-id>"]}
+  - description: Capture the new role's ID for a script, for example to assign it to a user.
+    command: 'dci create-role name: "FinOps Analyst", permissions: [<permission-id>] --idempotency-key "$(uuidgen)" --output json | jq -r .id'
+
+notes: |
+  Only `name` is required; omit `permissions` (or send an empty list) to create a role without
+  any. The name must be nonblank, free of leading or trailing whitespace, and unique among the
+  customer's roles, preset roles included (`409` otherwise). Duplicate permission IDs, or IDs
+  that do not exist or are not available to the customer, return `400`.
+
+  The API requires an `Idempotency-Key` on every call: retrying with the same key and body
+  returns the original response instead of creating a second role, while the same key with a
+  different body returns `422`.
+
+related: [list-roles, get-role, update-role, delete-role]

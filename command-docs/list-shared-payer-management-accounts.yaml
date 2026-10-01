@@ -1,0 +1,20 @@
+command: list-shared-payer-management-accounts
+
+arguments:
+  customer-id: >-
+    ID of the reseller customer your credentials belong to — the same ID that appears in the Console URL
+    of your account. It must match the customer resolved from the bearer token; a token scoped
+    to a different customer gets `403`.
+
+examples:
+  - description: The reseller's shared-payer management accounts that have finished onboarding.
+    command: "dci list-shared-payer-management-accounts <customer-id>"
+  - description: As JSON, to pick a payer ID for `--management-account`.
+    command: "dci list-shared-payer-management-accounts <customer-id> --output json"
+
+notes: |
+  Only payers that have completed onboarding are listed; use `dci list-shared-payers` to see
+  payers that are still onboarding. Requires the `SharedPayersAdmin` permission and DoiT API access
+  (`platform:externalApi`); user API tokens must include the permission in their scope.
+
+related: [list-shared-payers, list-shared-payer-account-mappings, reassign-shared-payer-account]
