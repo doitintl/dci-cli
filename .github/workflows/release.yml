@@ -18,6 +18,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Git allows `"`, `$` and other shell/JSON metacharacters in tag names,
+      # and the tag flows into the downstream workflow dispatches and the
+      # scribe payload. Same pattern as sync-manifests.yml and
+      # post-release-verify.yml; later steps read the checked $RELEASE_TAG.
+      - name: Validate release tag
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "::error::Invalid release tag; expected vMAJOR.MINOR.PATCH[-PRERELEASE]."
+            exit 1
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -27,7 +40,7 @@ jobs:
       # or a dead help.doit.com link/anchor in it, stops the release before
       # anything is built. Fix CHANGELOG.md, delete the tag, re-tag.
       - name: Check changelog entry for this tag
-        run: ./.github/changelog/check-changelog.sh --gate "${GITHUB_REF#refs/tags/}"
+        run: ./.github/changelog/check-changelog.sh --gate "$RELEASE_TAG"
 
       # Command docs release gate (COMMAND-DOCS-SPEC.md D5): every GA
       # operation in the production spec must have a curated (non-draft)
@@ -60,9 +73,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          gh workflow run "Sync Package Manifests" --field tag="$tag"
-          gh workflow run "Post-release Verify" --field tag="$tag"
+          gh workflow run "Sync Package Manifests" --field tag="$RELEASE_TAG"
+          gh workflow run "Post-release Verify" --field tag="$RELEASE_TAG"
 
       # Help Center changelog delivery (CHANGELOG-SPEC.md §7): hand the tag to
       # doiteng/scribe, whose deterministic job renders CHANGELOG.md into the
@@ -73,9 +85,8 @@ jobs:
         env:
           SCRIBE_DISPATCH_TOKEN: ${{ secrets.SCRIBE_DISPATCH_TOKEN }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
           if [ -z "$SCRIBE_DISPATCH_TOKEN" ]; then
-            echo "::notice::SCRIBE_DISPATCH_TOKEN not set — skipping Help Center changelog delivery for $tag"
+            echo "::notice::SCRIBE_DISPATCH_TOKEN not set — skipping Help Center changelog delivery for $RELEASE_TAG"
             exit 0
           fi
           curl -sS --fail-with-body \
@@ -83,4 +94,4 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $SCRIBE_DISPATCH_TOKEN" \
             https://api.github.com/repos/doiteng/scribe/dispatches \
-            -d "{\"event_type\":\"dci-cli-changelog\",\"client_payload\":{\"tag\":\"$tag\"}}"
+            -d "$(jq -cn --arg tag "$RELEASE_TAG" '{event_type: "dci-cli-changelog", client_payload: {tag: $tag}}')"
