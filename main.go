@@ -765,6 +765,9 @@ func run() (exitCode int) {
 	if err := rejectProfileFlags(os.Args); err != nil {
 		return reportExecutionError(err, 0, configDir)
 	}
+	if err := guardAISessionChild(os.Args); err != nil {
+		return reportExecutionError(err, 0, configDir)
+	}
 	// Keep profile fixed until we support multi-profile UX.
 	os.Setenv("RSH_PROFILE", "default")
 	viper.Set("rsh-profile", "default")

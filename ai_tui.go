@@ -1945,11 +1945,12 @@ func (m aiModel) modelInfoText() string {
 // child cannot measure the terminal, so it inherits the session's width and,
 // for the scroll-overflow hint, its height — 0 height, before the first
 // window-size message, stays unexported so the child skips the hint rather
-// than trusting a guess), and DCI_NO_TUI (no interactive prompt from a child
-// that has no terminal to ask on).
+// than trusting a guess), DCI_NO_TUI (no interactive prompt from a child
+// that has no terminal to ask on), and the session-child marker (its output
+// joins the conversation, so it must never print credentials).
 func aiDispatchEnv(width, height int, customer string) []string {
 	extras := []string{
-		"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "DCI_SESSION_RENDER=1",
+		"DCI_NO_TUI=1", "DCI_AGENT_MODE=0", "DCI_SESSION_RENDER=1", aiSessionChildEnvName + "=1",
 		"COLOR=1", "CLICOLOR_FORCE=1",
 		fmt.Sprintf("COLUMNS=%d", width),
 	}

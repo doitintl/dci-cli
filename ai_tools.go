@@ -18,6 +18,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -55,6 +59,93 @@ var aiDeniedCommands = map[string]string{
 	"logout":     "logout drops the user's credentials — ask the user to run it themselves",
 	"update":     "self-update replaces the binary — ask the user to run dci update themselves",
 	"completion": "shell completion scripts are not useful to you",
+}
+
+// aiSessionChildEnvName marks a child the AI session spawned (a model tool
+// call or a user slash dispatch). Its combined output enters model context,
+// so the child refuses anything that would print or redirect credentials.
+const aiSessionChildEnvName = "DCI_AI_SESSION_CHILD"
+
+// aiCredentialExposingFlags are restish persistent flags a session child must
+// not honor, long name → shorthand: -v/--rsh-verbose dumps every outgoing
+// request, Authorization bearer and X-Tenant-Id included, onto the stderr the
+// session captures; -s/--rsh-server sends that bearer to a host of the
+// caller's choosing, whose response lands in the same place.
+var aiCredentialExposingFlags = map[string]string{
+	"rsh-verbose": "v",
+	"rsh-server":  "s",
+}
+
+// aiCredentialExposingFlag returns the first word of args that would turn on
+// one of aiCredentialExposingFlags. The scan is deliberately broader than any
+// single parser: restish's eager GlobalFlags pass reads os.Args before cobra
+// does, skips an unknown shorthand and keeps reading its cluster (`-Dv` turns
+// on verbose though cobra reads it as `-D v`), and never takes a dash-prefixed
+// word as an unknown flag's value — so every word is checked, `--` included.
+// Within a cluster only a shorthand restish itself parses as value-taking
+// ends the scan; without restish's flag set loaded, nothing does.
+func aiCredentialExposingFlag(args []string) (string, bool) {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") || arg == "-" || arg == "--" {
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			name, _, _ := strings.Cut(arg[2:], "=")
+			if _, found := aiCredentialExposingFlags[name]; found {
+				return arg, true
+			}
+			continue
+		}
+		// Everything after a cluster's first `=` is a value.
+		shorts, _, _ := strings.Cut(arg[1:], "=")
+		for i := 0; i < len(shorts); i++ {
+			short := shorts[i : i+1]
+			for _, exposing := range aiCredentialExposingFlags {
+				if short == exposing {
+					return arg, true
+				}
+			}
+			if cli.GlobalFlags != nil {
+				if flag := cli.GlobalFlags.ShorthandLookup(short); flag != nil && flag.NoOptDefVal == "" {
+					// The rest of the cluster is this flag's value.
+					break
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// guardAISessionChild runs in every child the session spawns, before cli.Run:
+// verbose stays off even when RSH_VERBOSE or a config file asks for it, and
+// a credential-exposing flag is refused outright.
+func guardAISessionChild(args []string) error {
+	if os.Getenv(aiSessionChildEnvName) != "1" {
+		return nil
+	}
+	// cli.Init seeded both flag sets' defaults from viper (RSH_VERBOSE, the
+	// config file), and cli.Run copies the eager set's value back into viper
+	// before deciding — so reset the flags, not just the setting.
+	for _, flags := range []*pflag.FlagSet{cli.GlobalFlags, aiRootPersistentFlags()} {
+		if flags == nil {
+			continue
+		}
+		if flag := flags.Lookup("rsh-verbose"); flag != nil {
+			_ = flag.Value.Set("false")
+		}
+	}
+	viper.Set("rsh-verbose", false)
+	if arg, found := aiCredentialExposingFlag(args[1:]); found {
+		return fmt.Errorf("invalid argument: %s is not available inside dci ai — it would expose your credentials to the model", arg)
+	}
+	return nil
+}
+
+func aiRootPersistentFlags() *pflag.FlagSet {
+	if cli.Root == nil {
+		return nil
+	}
+	return cli.Root.PersistentFlags()
 }
 
 // aiToolOutcome is what one tool execution produced, before shaping into a
@@ -160,7 +251,7 @@ func aiChildEnv(extras []string) []string {
 // any partial stdout, which is exactly what the model needs to self-correct.
 func aiAgentModeRunner(ctx context.Context, argv, extraEnv []string) ([]byte, int, error) {
 	command := exec.CommandContext(ctx, aiExecutablePath(), argv...)
-	command.Env = aiChildEnv(append([]string{"DCI_AGENT_MODE=1", "DCI_NO_TUI=1"}, extraEnv...))
+	command.Env = aiChildEnv(append([]string{"DCI_AGENT_MODE=1", "DCI_NO_TUI=1", aiSessionChildEnvName + "=1"}, extraEnv...))
 	output, err := command.CombinedOutput()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -181,6 +272,9 @@ func (e *aiToolExecutor) RunCommand(ctx context.Context, input aiRunCommandInput
 	}
 	if reason, denied := aiDeniedCommands[input.Argv[0]]; denied {
 		return aiToolOutcome{Data: aiToolError("COMMAND_NOT_ALLOWED", "dci "+input.Argv[0]+" is not available to the agent", reason), IsError: true}
+	}
+	if arg, found := aiCredentialExposingFlag(input.Argv); found {
+		return aiToolOutcome{Data: aiToolError("FLAG_NOT_ALLOWED", arg+" is not available to the agent", "it would expose the user's credentials — drop it and run the command without it"), IsError: true}
 	}
 	argv := input.Argv
 	if approved && !aiArgvHasYes(argv) {
