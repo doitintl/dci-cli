@@ -49,6 +49,66 @@ func registerQuestionCommands() {
 	dciCommand.AddCommand(newAnomaliesRecentCommand())
 }
 
+// adoptQuestionCommandGroups gives each question command under parent the
+// cobra group of the operation it wraps, so root help lists anomalies-recent
+// under "Anomalies Commands" beside list-anomalies rather than in the
+// ungrouped "Additional Commands" tail. Restish assigns the groups from the
+// spec's tags while hydrating the API subtree, so this runs once that has
+// happened (the root help path); a wrapped operation missing from the
+// loaded spec leaves its question command ungrouped, as before.
+func adoptQuestionCommandGroups(parent *cobra.Command) {
+	if parent == nil {
+		return
+	}
+	byName := make(map[string]*cobra.Command, len(parent.Commands()))
+	for _, command := range parent.Commands() {
+		byName[command.Name()] = command
+	}
+	for name, wrapped := range questionCommandWrappedOperation {
+		question, operation := byName[name], byName[wrapped]
+		if question == nil || operation == nil || operation.GroupID == "" || !parent.ContainsGroup(operation.GroupID) {
+			continue
+		}
+		question.GroupID = operation.GroupID
+	}
+}
+
+// orderedGroupCommands returns the help-visible commands of one group in
+// the order the usage template lists them: cobra's alphabetical order,
+// except that a question command follows the operation it wraps
+// (budgets-at-risk right after list-budgets) instead of sorting to the top
+// of the group by name. A question command whose wrapped operation is not
+// in the group keeps its alphabetical slot.
+func orderedGroupCommands(commands []*cobra.Command, groupID string) []*cobra.Command {
+	visible := func(command *cobra.Command) bool {
+		return command.GroupID == groupID && (command.IsAvailableCommand() || command.Name() == "help")
+	}
+	visibleNames := map[string]bool{}
+	for _, command := range commands {
+		if visible(command) {
+			visibleNames[command.Name()] = true
+		}
+	}
+	followers := map[string][]*cobra.Command{}
+	for _, command := range commands {
+		if wrapped, ok := questionCommandWrappedOperation[command.Name()]; ok && visible(command) && visibleNames[wrapped] {
+			followers[wrapped] = append(followers[wrapped], command)
+		}
+	}
+	ordered := make([]*cobra.Command, 0, len(commands))
+	for _, command := range commands {
+		if !visible(command) {
+			continue
+		}
+		if wrapped, ok := questionCommandWrappedOperation[command.Name()]; ok && visibleNames[wrapped] {
+			continue // emitted right after the operation it wraps
+		}
+		ordered = append(ordered, command)
+		ordered = append(ordered, followers[command.Name()]...)
+	}
+	return ordered
+}
+
 func newBudgetsAtRiskCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "budgets-at-risk",

@@ -72,7 +72,7 @@ Use `--fields id,name` to project list or detail responses before output, and us
 
 1. Confirm the CLI exists and is runnable: `dci --version`
 2. Check session and active context: `dci status`; confirm identity and permissions with `dci validate`
-3. Discover command shape before drafting or running commands: `dci --help` and `dci <command> --help` (terse; add `--help-full` when you need the request/response schemas)
+3. Discover command shape before drafting or running commands: `dci --help` and `dci <command> --help` (terse: a command lists only the flags that can act on it, with the table flags folded into one line; add `--help-full` for every flag and the request/response schemas)
 4. Prefer `list-*`, `get-*`, `get-report`, and `query` before `create-*`, `update-*`, or `delete-*`
 
 Use `dci skill list` to inspect the files embedded in the installed CLI. Use `dci skill update <agent>` to refresh one installed copy, or omit the agent to update every detected installation; locally edited managed files require an explicit `--force` overwrite and are saved in a uniquely named sibling backup directory first.
@@ -115,7 +115,7 @@ anatomy, and the flow archetypes.
 - CLI guide: https://help.doit.com/docs/cli (append `.md` to any Help Center URL for plain Markdown, e.g. https://help.doit.com/docs/cli.md)
 - Machine-readable Help Center index: https://help.doit.com/llms.txt (full corpus: https://help.doit.com/llms-full.txt)
 - API reference: https://developer.doit.com/
-- From the terminal: `dci docs` prints these entry points; `dci commands --search "<task>"` finds the command for a task; `dci <command> --help` is terse by default (`--help-full` adds the complete request/response schemas); `dci commands --json` is the machine-readable catalog.
+- From the terminal: `dci docs` prints these entry points; `dci commands --search "<task>"` finds the command for a task; `dci <command> --help` is terse by default — only the flags that act on that command (`--help-full` lists every flag and the complete request/response schemas); `dci commands --json` is the machine-readable catalog.
 
 ## Reference Map
 

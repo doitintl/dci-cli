@@ -1436,15 +1436,17 @@ Examples:
 Available Commands:{{range $cmds}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
   {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{else}}{{range $group := .Groups}}{{if hasVisibleCommandsInGroup $cmds $group.ID}}
 
-{{.Title}}{{range $cmds}}{{if (and (eq .GroupID $group.ID) (or .IsAvailableCommand (eq .Name "help")))}}
-  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
+{{.Title}}{{range commandsInGroup $cmds $group.ID}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
 
 Additional Commands:{{range $cmds}}{{if (and (eq .GroupID "") (or .IsAvailableCommand (eq .Name "help")))}}
   {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{if or .HasAvailableLocalFlags .HasAvailableInheritedFlags}}
 
 Flags:
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{if .HasAvailableInheritedFlags}}
-{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{end}}{{if .HasHelpSubCommands}}
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{end}}{{with helpCollapsedFlagsNote .}}
+
+{{.}}{{end}}{{if .HasHelpSubCommands}}
 
 Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
   {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}
@@ -1456,7 +1458,18 @@ const dciLongDescription = "Command-line interface for the Cloud Intelligence™
 	"In pipes, scripts, and CI, bare `dci` prints this help.\n\n" +
 	"Documentation: https://help.doit.com/docs/cli or run `dci docs` for every entry point.\n" +
 	"AI agents: `dci commands --search \"<task>\"` finds the command for a task described in plain words;\n" +
-	"`dci skill <agent>` installs usage guidance; `dci commands --json` prints the machine-readable catalog."
+	"`dci skill <agent>` installs usage guidance; `dci commands --json` prints the machine-readable catalog.\n\n" +
+	dciExitCodesParagraph
+
+// dciExitCodesParagraph states the exit-code and error contract from
+// error_contract.go in the root help, so an agent reading --help once
+// knows what a failure looks like before hitting one. The full table lives
+// in the embedded skill and the Help Center; keep this to a few lines and
+// keep the three in step.
+const dciExitCodesParagraph = "Exit codes: 0 success, 1 failure, 2 usage, 10 authentication, 11 permission, 20 not found,\n" +
+	"21 conflict, 30 validation (or an unconfirmed destructive command), 40 server, 41 network, 50 rate limited.\n" +
+	"Errors go to stderr; in agent mode as one JSON line: {\"error\":{\"code\",\"message\",\"hint\",\"retryable\"}}.\n" +
+	"Full table: https://help.doit.com/docs/cli#exit-codes"
 
 var rootExamples = []string{
 	"  dci        (interactive AI session)",
@@ -1485,13 +1498,14 @@ func customizeDCIUsage() {
 	// Arguments: block from the curated command docs (command_docs.go).
 	cobra.AddTemplateFunc("commandDocArguments", renderCommandDocArguments)
 	cobra.AddTemplateFunc("hasVisibleCommandsInGroup", func(cmds []*cobra.Command, groupID string) bool {
-		for _, cmd := range cmds {
-			if cmd.GroupID == groupID && (cmd.IsAvailableCommand() || cmd.Name() == "help") {
-				return true
-			}
-		}
-		return false
+		return len(orderedGroupCommands(cmds, groupID)) > 0
 	})
+	// A group's commands in help order: alphabetical, with each question
+	// command right after the operation it wraps (question_commands.go).
+	cobra.AddTemplateFunc("commandsInGroup", orderedGroupCommands)
+	// The pointer line standing in for the folded presentation flags
+	// (help_flags.go).
+	cobra.AddTemplateFunc("helpCollapsedFlagsNote", helpCollapsedFlagsNote)
 
 	dciCmd := findDCICommand()
 	if dciCmd == nil {
@@ -1665,6 +1679,10 @@ func setupCompletion() {
 		if cmd == cli.Root {
 			loadAPI()
 			hasAPICommands = len(dciCmd.Commands()) > 0
+			// A question command lists with the resource it answers about
+			// (anomalies-recent beside list-anomalies), not under
+			// "Additional Commands".
+			adoptQuestionCommandGroups(dciCmd)
 			// Copy command groups from the API subcommand to root so the
 			// usage template can render grouped commands.
 			for _, g := range dciCmd.Groups() {
@@ -1693,6 +1711,10 @@ func setupCompletion() {
 		// Curated examples (command_docs.go) replace restish's schema-
 		// synthesized one; a missing or draft doc leaves it in place.
 		defer applyCommandDocHelp(cmd)()
+		// Only the dci persistent flags that can act on this command stay
+		// in its Flags block (help_flags.go); restored right after the
+		// render, since the flags are shared with every other command.
+		defer applyHelpFlagVisibility(cmd)()
 		defaultHelp(cmd, args)
 		if cmd == cli.Root && !hasAPICommands {
 			hint := "\n! To get started, authenticate with: dci login (or set DCI_API_KEY)\n\n"

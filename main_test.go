@@ -1796,6 +1796,10 @@ func seedExpiredOAuthSession(t *testing.T, cacheDir string, staleSpec bool) {
 	}
 }
 
+// helpWithoutCredentialsSpec is the hermetic description behind the help
+// tests: one operation of every shape the help surface treats differently
+// — a paged list (and the question commands wrapping two of them), a
+// create with a body, the report-shaped query, and the file-shaped export.
 const helpWithoutCredentialsSpec = `{
 	"openapi": "3.0.0",
 	"info": {"title": "DCI test", "version": "1.0.0"},
@@ -1805,9 +1809,63 @@ const helpWithoutCredentialsSpec = `{
 				"operationId": "list-budgets",
 				"summary": "List budgets",
 				"description": "Returns the budgets your account can see.",
-				"tags": ["budgets"],
-				"parameters": [{"name": "maxResults", "in": "query", "schema": {"type": "integer"}}],
+				"tags": ["Budgets"],
+				"parameters": [
+					{"name": "maxResults", "in": "query", "schema": {"type": "integer"}},
+					{"name": "pageToken", "in": "query", "schema": {"type": "string"}}
+				],
 				"responses": {"200": {"description": "OK"}}
+			}
+		},
+		"/anomalies": {
+			"get": {
+				"operationId": "list-anomalies",
+				"summary": "List anomalies",
+				"tags": ["Anomalies"],
+				"parameters": [
+					{"name": "maxResults", "in": "query", "schema": {"type": "integer"}},
+					{"name": "pageToken", "in": "query", "schema": {"type": "string"}}
+				],
+				"responses": {"200": {"description": "OK"}}
+			}
+		},
+		"/anomalies/{id}": {
+			"get": {
+				"operationId": "get-anomaly",
+				"summary": "Retrieve an anomaly",
+				"tags": ["Anomalies"],
+				"parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+				"responses": {"200": {"description": "OK"}}
+			}
+		},
+		"/users/invite": {
+			"post": {
+				"operationId": "invite-user",
+				"summary": "Invite a user",
+				"tags": ["Users"],
+				"requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}}},
+				"responses": {"200": {"description": "OK"}}
+			}
+		},
+		"/query": {
+			"post": {
+				"operationId": "query",
+				"summary": "Run a query",
+				"tags": ["Reports"],
+				"requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}},
+				"responses": {"200": {"description": "OK"}}
+			}
+		},
+		"/datahub/datasets/{name}/records": {
+			"get": {
+				"operationId": "export-datahub-dataset-records",
+				"summary": "Export dataset records",
+				"tags": ["DataHub"],
+				"parameters": [
+					{"name": "name", "in": "path", "required": true, "schema": {"type": "string"}},
+					{"name": "pageToken", "in": "query", "schema": {"type": "string"}}
+				],
+				"responses": {"200": {"description": "OK", "content": {"text/csv": {"schema": {"type": "string"}}}}}
 			}
 		}
 	}
@@ -1880,6 +1938,122 @@ func TestHelpRendersWithoutCredentials(t *testing.T) {
 		environment, server := freshInstall(t, "CLAUDECODE=1")
 		res := run(t, environment, "budgets-at-risk", "--help")
 		assertHelpRendered(t, res, server)
+	})
+
+	// Per-command help lists only the dci persistent flags that can act on
+	// the command (help_flags.go); the ones that apply everywhere fold into
+	// one pointer line, and --help-full lists all of them.
+	t.Run("per-command help hides the flags that cannot act on the command", func(t *testing.T) {
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		cases := []struct {
+			command string
+			listed  []string
+			absent  []string
+		}{
+			{
+				command: "invite-user",
+				listed:  []string{"output", "fields", "exclude", "dry-run", "yes", "agent", "no-agent", "customer-context"},
+				absent:  []string{"chart", "pivot", "flat", "rollup", "max-rows", "rows", "include-empty-rows", "for-reimport", "output-file", "all", "search", "include-dismissed", "id", "name", "table-mode", "table-columns", "utc"},
+			},
+			{
+				command: "anomalies-recent",
+				listed:  []string{"window", "severity", "max-results", "page-token", "all", "search", "output"},
+				absent:  []string{"chart", "pivot", "max-rows", "for-reimport", "output-file", "include-dismissed", "id", "table-mode"},
+			},
+			{
+				command: "query",
+				listed:  []string{"chart", "pivot", "flat", "rollup", "max-rows", "rows", "output"},
+				absent:  []string{"all", "search", "for-reimport", "include-dismissed", "id", "table-mode"},
+			},
+			{
+				command: "export-datahub-dataset-records",
+				listed:  []string{"all", "for-reimport", "output-file", "id", "name", "page-token"},
+				absent:  []string{"search", "chart", "max-rows", "include-dismissed"},
+			},
+		}
+		for _, testCase := range cases {
+			res := run(t, environment, testCase.command, "--help")
+			assertHelpRendered(t, res, server)
+			for _, flag := range testCase.listed {
+				if !helpListsFlag(res.output, flag) {
+					t.Errorf("%s --help does not list --%s:\n%s", testCase.command, flag, res.output)
+				}
+			}
+			for _, flag := range testCase.absent {
+				if helpListsFlag(res.output, flag) {
+					t.Errorf("%s --help lists --%s, which cannot act on it:\n%s", testCase.command, flag, res.output)
+				}
+			}
+			if !strings.Contains(res.output, "Output flags (apply to every command; add --help-full to list them):") {
+				t.Errorf("%s --help lacks the folded-flags pointer:\n%s", testCase.command, res.output)
+			}
+		}
+
+		full := run(t, environment, "invite-user", "--help-full")
+		assertHelpRendered(t, full, server)
+		for _, flag := range []string{"chart", "for-reimport", "all", "table-mode", "output-file"} {
+			if !helpListsFlag(full.output, flag) {
+				t.Errorf("invite-user --help-full does not list --%s:\n%s", flag, full.output)
+			}
+		}
+		if strings.Contains(full.output, "Output flags (apply to every command") {
+			t.Fatalf("--help-full still folds flags:\n%s", full.output)
+		}
+	})
+
+	// Question commands list under the resource they answer about, right
+	// after the operation they wrap, not in the ungrouped tail.
+	t.Run("root help groups question commands with their resource", func(t *testing.T) {
+		// Root help lists API commands only once a spec cache exists (a
+		// fresh install stays offline), so seed the post-login state. The
+		// hermetic server stays the API base through apis.json alone: a
+		// DCI_API_BASE_URL override redirects the CLI to an isolated cache
+		// dir that never holds a description, and root help would stay
+		// offline.
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		seedExpiredOAuthSession(t, filepath.Join(strings.TrimPrefix(environment[0], "HOME="), "cache"), true)
+		environment = slices.DeleteFunc(environment, func(entry string) bool { return strings.HasPrefix(entry, "DCI_API_BASE_URL=") })
+		res := run(t, environment, "--help")
+		assertHelpRendered(t, res, server)
+		lines := strings.Split(res.output, "\n")
+		follows := func(operation, question string) {
+			t.Helper()
+			for index, line := range lines {
+				if strings.HasPrefix(line, "  "+operation+" ") && index+1 < len(lines) {
+					if !strings.HasPrefix(lines[index+1], "  "+question+" ") {
+						t.Errorf("%s is not listed right after %s:\n%s\n%s", question, operation, line, lines[index+1])
+					}
+					return
+				}
+			}
+			t.Errorf("%s not listed in root help:\n%s", operation, res.output)
+		}
+		follows("list-budgets", "budgets-at-risk")
+		follows("list-anomalies", "anomalies-recent")
+		if tail := rootHelpSection(res.output, "Additional Commands:"); strings.Contains(tail, "anomalies-recent") || strings.Contains(tail, "budgets-at-risk") {
+			t.Fatalf("question commands still listed under Additional Commands:\n%s", tail)
+		}
+		if anomalies := rootHelpSection(res.output, "Anomalies Commands"); !strings.Contains(anomalies, "anomalies-recent") {
+			t.Fatalf("anomalies-recent missing from the Anomalies group:\n%s", anomalies)
+		}
+	})
+
+	// The exit-code and error-envelope contract is readable from --help
+	// alone, before the first failure.
+	t.Run("root help states the exit-code contract", func(t *testing.T) {
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		res := run(t, environment, "--help")
+		assertHelpRendered(t, res, server)
+		for _, expected := range []string{
+			"Exit codes: 0 success, 1 failure, 2 usage, 10 authentication, 11 permission, 20 not found,",
+			"21 conflict, 30 validation (or an unconfirmed destructive command), 40 server, 41 network, 50 rate limited.",
+			`{"error":{"code","message","hint","retryable"}}`,
+			"https://help.doit.com/docs/cli#exit-codes",
+		} {
+			if !strings.Contains(res.output, expected) {
+				t.Errorf("root help missing %q:\n%s", expected, res.output)
+			}
+		}
 	})
 
 	t.Run("API command help with an expired session, agent mode", func(t *testing.T) {
@@ -2009,6 +2183,23 @@ func assertRootHelpBranded(t *testing.T, out string) {
 	if !strings.Contains(out, "Command-line interface for the Cloud Intelligence™ API.") {
 		t.Fatalf("missing DCI root branding in help output:\n%s", out)
 	}
+}
+
+// rootHelpSection returns the block of root help that starts at the line
+// containing header and runs to the next blank line; empty when absent.
+func rootHelpSection(output, header string) string {
+	lines := strings.Split(output, "\n")
+	for index, line := range lines {
+		if !strings.Contains(line, header) {
+			continue
+		}
+		end := index + 1
+		for end < len(lines) && strings.TrimSpace(lines[end]) != "" {
+			end++
+		}
+		return strings.Join(lines[index:end], "\n")
+	}
+	return ""
 }
 
 func assertPrivateFilePerms(t *testing.T, path string) {
