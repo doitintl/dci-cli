@@ -1,0 +1,13 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: verify-signup-request
+draft: true
+
+arguments:
+  signup-request-id: "Public signup request id (sr_ prefix)."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: 'dci verify-signup-request <signup-request-id> code: "749667"'
+
+related: [create-signup-request, get-signup-request, resend-signup-verification]

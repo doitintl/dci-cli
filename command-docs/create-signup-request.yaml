@@ -1,0 +1,10 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: create-signup-request
+draft: true
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci create-signup-request < body.json"
+
+related: [get-signup-request, resend-signup-verification, verify-signup-request]

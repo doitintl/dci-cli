@@ -1,0 +1,17 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: import-datahub-provider-records
+draft: true
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci import-datahub-provider-records < body.json"
+
+related:
+  [
+    create-datahub-dataset,
+    delete-datahub-dataset,
+    delete-datahub-datasets,
+    delete-datahub-events-by-filter,
+    export-datahub-dataset-records,
+  ]

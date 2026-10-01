@@ -1,0 +1,20 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: assign-contract-template
+draft: true
+
+arguments:
+  template-id: "Identifier of the contract template to apply."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci assign-contract-template <template-id> customerIds: [string]"
+
+related:
+  [
+    archive-contract-template,
+    create-contract-template,
+    get-contract-template,
+    list-contract-templates,
+    update-contract-template,
+  ]

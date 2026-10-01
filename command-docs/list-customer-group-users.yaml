@@ -1,0 +1,14 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: list-customer-group-users
+draft: true
+
+arguments:
+  customer-group-id: "Stable service-generated customer-group ID."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci list-customer-group-users <customer-group-id>"
+
+related:
+  [assign-customer-group-user, create-customer-group, delete-customer-group, get-customer-group, list-customer-groups]
