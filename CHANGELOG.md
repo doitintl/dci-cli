@@ -59,6 +59,11 @@ the CLI guide.
 
 ### Fixed
 
+- `dci ai` no longer lets the assistant turn on request logging or point the
+  CLI at another server. The assistant's commands refuse `-v` /
+  `--rsh-verbose` and `-s` / `--rsh-server`, so your credentials can never be
+  printed into the conversation or sent to a host the assistant picked. The
+  commands fail with `FLAG_NOT_ALLOWED`.
 - `dci <command> --help` and `dci --help` work without a session. They used
   to fail with "no credentials available" when you were signed out or your
   cache was stale — or open a browser login just to print usage.
