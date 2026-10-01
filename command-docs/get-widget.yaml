@@ -1,0 +1,25 @@
+command: get-widget
+
+arguments:
+  widget-id: >-
+    Widget alias or customer-specific widget ID as shown by `dci list-widgets`. The aliases
+    `current-month-cloud-spend` and `current-month-cloud-forecast` give the current month's
+    accumulated spend and its forecast.
+
+examples:
+  - description: Cloud spend accumulated so far this calendar month.
+    command: "dci get-widget current-month-cloud-spend"
+  - description: Forecast of total cloud spend for the current calendar month.
+    command: "dci get-widget current-month-cloud-forecast"
+  - description: Read the amount from a script.
+    command: "dci get-widget current-month-cloud-spend --output json | jq -r .result.monetaryMetric.value.amount"
+
+notes: |
+  This returns the latest precomputed cached result (`generateTime` says when it was computed); it does
+  not recompute the widget. `amount` is a decimal string and `currency` an ISO 4217 code, and
+  `period.endTime` is exclusive. `monthToMonthGrowthPercentage` and `monthToMonthGrowthAmount` are
+  both `null` when there is no comparable prior-period value. A `404` means the widget is unknown, no
+  cached result is available yet, or the customer has no billing data; `503` means the last background
+  computation failed and is safe to retry later.
+
+related: [list-widgets]

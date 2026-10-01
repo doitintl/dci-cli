@@ -1,0 +1,20 @@
+command: list-commitment-policies
+
+examples:
+  - description: Every commitment policy available to your account, built-in policies first.
+    command: "dci list-commitment-policies"
+  - description: Compare the policies by target coverage and laddering.
+    command: "dci list-commitment-policies --fields id,name,targetCoverage,lookbackDays,ladderStepPercent,ladderIntervalDays"
+  - description: Everything as JSON, for scripts.
+    command: "dci list-commitment-policies --output json"
+  - description: Fetch every page when you have many custom policies.
+    command: "dci list-commitment-policies --all --output json"
+
+notes: |
+  The three built-in policies (`conservative`, `balanced`, `max_savings`) come first, ordered from least
+  to most aggressive target coverage, followed by your custom policies in creation order. One catalog
+  is shared by AWS and GCP. Percentages are `1` to `100`, unlike the 0 to 1 fractions on
+  recommendations and inventory. This command is read-only: custom policies are created, edited and
+  deleted in the DoiT Console on the Commitment Policies page.
+
+related: [get-commitment-policy]

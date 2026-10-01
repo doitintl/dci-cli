@@ -1,0 +1,24 @@
+command: verify-signup-request
+
+arguments:
+  signup-request-id: >-
+    Signup request ID (sr_ prefix), the `id` returned by `dci create-signup-request`.
+
+examples:
+  - description: Verify the request with the 6-digit code that was emailed to the admin.
+    command: 'dci verify-signup-request <signup-request-id> code: "123456"'
+    output: >-
+      The request moves to `consented` and then `completed`. The response carries the one-time
+      `activationToken` for `dci create-signup-session`.
+  - description: Capture the activation token for the next step.
+    command: 'dci verify-signup-request <signup-request-id> code: "123456" --output json | jq -r .activationToken'
+
+notes: |
+  Entering the code confirms ownership of the admin email, records consent and starts provisioning.
+  The `activationToken` is returned once, by the call that performed the verification. Five wrong
+  codes lock the current code (`429`, `verification_locked`); request a new one with
+  `dci resend-signup-verification`. An expired or wrong code returns `400`
+  (`verification_code_expired`, `verification_code_invalid`), and a request that is not awaiting
+  verification returns `409`. No authentication is needed.
+
+related: [create-signup-request, resend-signup-verification, get-signup-request, create-signup-session]

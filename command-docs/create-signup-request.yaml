@@ -1,0 +1,34 @@
+command: create-signup-request
+
+examples:
+  - description: Start a trial signup for the organization that owns the admin's work email domain.
+    command: >-
+      dci create-signup-request --idempotency-key "$(uuidgen)"
+      email: admin@example.com, companyName: "Example Corp"
+    output: >-
+      Returns the signup request with its `id` (sr_ prefix), `status: pending_consent` and a `consentUrl`.
+      The admin receives a 6-digit verification code by email.
+  - description: Identify the calling agent for attribution.
+    command: >-
+      dci create-signup-request --idempotency-key <request-key>
+      email: admin@example.com, companyName: "Example Corp", source{channel: agent, agentClient: "my-agent 1.0"}
+  - description: Create it from a JSON file, and capture the request ID for the follow-up calls.
+    command: "dci create-signup-request --idempotency-key <request-key> --output json < signup.json | jq -r .id"
+    output: |
+      # signup.json
+      {"email": "admin@example.com", "companyName": "Example Corp"}
+
+notes: |
+  `email` (the organization admin's work email; free-mail and disposable addresses are rejected) and
+  `companyName` are required, and so is `--idempotency-key` (1 to 256 characters). Retrying with the
+  same key returns the same request instead of creating a second one. No authentication is needed.
+
+  Nothing is provisioned until the admin verifies the request. Present the returned `consentUrl` to the
+  organization's admin, or enter the emailed code yourself with `dci verify-signup-request`, and poll
+  `dci get-signup-request` until the request is `completed`. The human channels (`console`, `web`) also
+  require a `turnstileToken` and `termsConsent{version, accepted}`; the default `agent` channel does not.
+
+  Conflicts return `409`: the email or domain is already registered (the response carries `signInUrl`), a
+  signup is already pending for it (the response carries `signupRequestId`), or the trial was already used.
+
+related: [verify-signup-request, get-signup-request, resend-signup-verification, create-signup-session]

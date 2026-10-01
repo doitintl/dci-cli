@@ -1,0 +1,19 @@
+command: delete-role
+
+arguments:
+  id: >-
+    Role ID or name as shown by `dci list-roles`. Names resolve (exact, unique substring, or
+    close typo); the confirmation shows the resolved target.
+
+examples:
+  - description: Preview what would be deleted without sending a request.
+    command: "dci delete-role <role-id> --dry-run"
+  - description: Delete the role without an interactive prompt, for scripts.
+    command: "dci delete-role <role-id> --yes"
+
+notes: |
+  Only custom roles can be deleted; a preset role returns `400`. A role that is still assigned
+  to users or groups, or held as a child tenant role, cannot be deleted (`409`): unassign it
+  first. A `503` means role cleanup is temporarily unavailable, so retry the deletion.
+
+related: [list-roles, get-role, create-role, update-role]

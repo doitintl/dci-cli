@@ -1,0 +1,37 @@
+command: trigger-cloudflow-flow
+
+arguments:
+  flow-id: >-
+    ID of a published flow whose first node is a webhook, scheduled, or manual trigger — the `id`
+    column of `dci list-cloudflows`.
+
+examples:
+  - description: Start a run of a flow that needs no input.
+    command: "dci trigger-cloudflow-flow <flow-id>"
+    output: The run summary, with `status` always `pending` because it is a snapshot taken at dispatch.
+  - description: Start a run and pass a payload to the trigger node.
+    command: "dci trigger-cloudflow-flow <flow-id> event: deploy, environment: production"
+  - description: Send a longer payload from a file.
+    command: "dci trigger-cloudflow-flow <flow-id> < payload.json"
+    output: |
+      # payload.json — any JSON object; it is forwarded to the trigger node
+      {"event": "deploy", "environment": "production", "service": "checkout"}
+  - description: Start a run, then follow it using the run ID from the response.
+    command: "dci trigger-cloudflow-flow <flow-id> --output json | jq -r .id"
+    output: "Pass the ID to `dci get-cloudflow-flow-run <flow-id> <run-id>` to follow its progress."
+
+notes: |
+  The flow must be published; a draft is rejected with `422` (`flow_not_published`), as is a flow
+  whose first node is not a startable trigger (`invalid_trigger_type`). To exercise a draft, use
+  `dci test-run-cloudflow-flow <flow-id>`. A flow holds a concurrency lock while it runs, so
+  triggering one that is already running returns `409` with the active run in the error body.
+  The payload is optional; omit it for flows that need no input.
+
+related:
+  [
+    trigger-cloudflow-webhook,
+    stop-cloudflow-flow,
+    test-run-cloudflow-flow,
+    get-cloudflow-flow-run,
+    list-cloudflow-flow-runs,
+  ]

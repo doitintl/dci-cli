@@ -1,0 +1,23 @@
+command: stop-cloudflow-flow
+
+arguments:
+  flow-id: >-
+    ID of the flow whose in-progress run should be stopped — the `id` column of `dci list-cloudflows`.
+    No run ID is needed.
+
+examples:
+  - description: Stop the run currently in progress for a flow.
+    command: "dci stop-cloudflow-flow <flow-id>"
+    output: The run as it stands after stopping, with its `status`.
+  - description: Stop it and print only the resulting status.
+    command: "dci stop-cloudflow-flow <flow-id> --output json | jq -r .status"
+  - description: Stop it and print the run ID, to look it up afterwards with `dci get-cloudflow-flow-run`.
+    command: "dci stop-cloudflow-flow <flow-id> --output json | jq -r .id"
+
+notes: |
+  A flow can have only one run active at a time, so the run is identified from the flow alone.
+  The API returns `409` when the flow has no run in progress, including a run that reached a
+  terminal state between your request and the stop attempt.
+
+related:
+  [trigger-cloudflow-flow, list-cloudflow-flow-runs, get-cloudflow-flow-run, list-cloudflows, test-run-cloudflow-flow]

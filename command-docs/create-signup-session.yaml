@@ -1,0 +1,26 @@
+command: create-signup-session
+
+arguments:
+  signup-request-id: >-
+    Signup request ID (sr_ prefix), the `id` returned by `dci create-signup-request`.
+
+examples:
+  - description: Exchange the activation token from verification for a sign-in session for the new tenant.
+    command: 'dci create-signup-session <signup-request-id> activationToken: "<activation-token>"'
+    output: >-
+      Returns `customToken`, `tenantId`, `customerId` and `consoleUrl`. Sign in with `signInWithCustomToken`
+      against `tenantId`, then open `consoleUrl`.
+  - description: Read the body from a file.
+    command: "dci create-signup-session <signup-request-id> < session.json"
+    output: |
+      # session.json
+      {"activationToken": "<activation-token>"}
+
+notes: |
+  The `activationToken` is the one-time value returned by `dci verify-signup-request`. The session
+  token is bound to the request, single-use, and valid for 10 minutes. Provisioning may still be
+  running: `409` with `activation_not_ready` means retry shortly, while `activation_token_used` means
+  the token was already redeemed. An expired token returns `410` (`activation_token_expired`); use
+  the sign-in link from the completion page instead. No authentication is needed.
+
+related: [create-signup-request, verify-signup-request, get-signup-request, resend-signup-verification]

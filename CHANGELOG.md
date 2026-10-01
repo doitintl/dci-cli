@@ -26,6 +26,47 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.8.0 — October 1, 2026
+
+### New
+
+- `dci commands --search "<task>"` finds the command for a task in plain
+  words — `dci commands --search "resolve an anomaly"` — and lists the best
+  matches with a one-line example each, so you or your agent no longer have
+  to scan the whole catalog. Beta commands are searchable too, marked with
+  their stage. See [Agent mode](https://help.doit.com/docs/cli#agent-mode).
+- `--help` shows curated examples for more commands, including roles,
+  service accounts and their tokens, customer group users, shared payers,
+  commitment policies, widgets, CloudFlow `trigger-cloudflow-flow` and
+  `stop-cloudflow-flow`, and the signup flow.
+
+### Improved
+
+- `dci <command> --help` lists only the flags that apply to that command.
+  Report and query flags such as `--chart`, `--pivot`, and `--rollup` show
+  up on the commands that return reports and queries, `--output-file` on
+  exports, and `--all` on commands that page; the options that apply to
+  every command fold into one line, and `--help-full` still lists
+  everything. Every flag is still accepted on every command.
+- `dci --help` states the exit codes and the error format that scripts and
+  agents can rely on. See
+  [Exit codes](https://help.doit.com/docs/cli#exit-codes).
+- `dci anomalies-recent` and `dci budgets-at-risk` are listed with the
+  anomalies and budgets commands instead of under "Additional Commands".
+- `dci status` shows when your stored session expires, whether a refresh
+  token is saved, and where the session cache lives, and no longer calls an
+  expired token a cached login.
+
+### Fixed
+
+- `dci <command> --help` and `dci --help` work without a session. They used
+  to fail with "no credentials available" when you were signed out or your
+  cache was stale — or open a browser login just to print usage.
+- A login that cannot run, such as in CI or an agent session with no
+  browser, now fails with `AUTHENTICATION_REQUIRED` and exit code 10 on
+  every path, instead of "dci encountered an internal error" on some of
+  them. See [Exit codes](https://help.doit.com/docs/cli#exit-codes).
+
 ## v2.7.6 — September 10, 2026
 
 ### Improved

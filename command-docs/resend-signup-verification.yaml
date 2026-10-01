@@ -1,0 +1,21 @@
+command: resend-signup-verification
+
+arguments:
+  signup-request-id: >-
+    Signup request ID (sr_ prefix), the `id` returned by `dci create-signup-request`.
+
+examples:
+  - description: Email the admin a fresh 6-digit verification code.
+    command: "dci resend-signup-verification <signup-request-id>"
+    output: >-
+      Returns the signup request; `verification.sendsRemaining` tells how many resends are left.
+  - description: Read how many resends remain, for a script.
+    command: "dci resend-signup-verification <signup-request-id> --fields verification --output json"
+
+notes: |
+  At most three codes are sent per request, at least 60 seconds apart. Resending too soon returns
+  `429` (`verification_resend_too_soon`, retry later); once the limit is reached the request is
+  locked (`verification_locked`). A request that is not awaiting verification returns `409`.
+  No authentication is needed.
+
+related: [create-signup-request, verify-signup-request, get-signup-request, create-signup-session]

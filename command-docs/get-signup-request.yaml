@@ -1,0 +1,22 @@
+command: get-signup-request
+
+arguments:
+  signup-request-id: >-
+    Signup request ID (sr_ prefix), the `id` returned by `dci create-signup-request`.
+
+examples:
+  - description: Check where a signup request stands.
+    command: "dci get-signup-request <signup-request-id>"
+  - description: Just the status, to poll from a script.
+    command: "dci get-signup-request <signup-request-id> --fields status,pollAfterSeconds --output json"
+  - description: Read the new customer ID and sign-in link once the request is completed.
+    command: "dci get-signup-request <signup-request-id> --fields status,customerId,consoleUrl,signInUrl"
+
+notes: |
+  `status` moves from `pending_consent` through `consented` and `provisioning` to `completed`, or ends
+  as `rejected`, `expired` or `failed`. While the request is not finished, poll at the returned
+  `pollAfterSeconds` cadence. A completed request carries `customerId`, `consoleUrl` and `signInUrl`.
+  The response never includes the admin's email or the verification code. No authentication is needed;
+  an unknown ID returns `404`.
+
+related: [create-signup-request, verify-signup-request, resend-signup-verification, create-signup-session]

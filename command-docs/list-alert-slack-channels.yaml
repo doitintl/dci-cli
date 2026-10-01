@@ -1,0 +1,22 @@
+command: list-alert-slack-channels
+
+examples:
+  - description: The Slack channels you can send alert notifications to, with the workspace connection status.
+    command: "dci list-alert-slack-channels"
+  - description: Find a channel by part of its name (case-insensitive).
+    command: "dci list-alert-slack-channels --name-contains finops"
+  - description: Every page as JSON, to copy a channel's `id` and `workspace` into an alert's `recipientsSlackChannels`.
+    command: "dci list-alert-slack-channels --all --output json"
+  - description: Page through a long list manually, 100 channels at a time.
+    command: "dci list-alert-slack-channels --max-results 100 --page-token <page-token>"
+
+notes: |
+  The response is an object: `items` holds the channels (each with `id`, `name`, `type` of `public`
+  or `private`, and `workspace` or `shared`), and `workspaceStatus` reports the integration
+  (`ok`, `inactive`, `missing_private_scope`, or `none` when no usable workspace was found, in
+  which case a shared channel may still be available). `maxResults` ranges from 1 to 500 and
+  defaults to 50. User credentials also see the private channels they can view; service accounts
+  get public and shared channels only. When paging with `--page-token`, keep `--name-contains`
+  unchanged. A `503` means Slack discovery is temporarily unavailable; retry later.
+
+related: [create-alert, update-alert, get-alert, list-alerts, delete-alert]

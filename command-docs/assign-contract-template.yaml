@@ -1,0 +1,40 @@
+command: assign-contract-template
+
+arguments:
+  template-id: >-
+    Contract template ID as shown by `dci list-contract-templates` (the `id` field). The template
+    must belong to your organization and must not be archived.
+
+examples:
+  - description: Create a draft contract from a template for two child customers.
+    command: "dci assign-contract-template <template-id> customerIds: [<customer-id>, <customer-id>]"
+    output: >-
+      The response lists `count` and one `createdContracts` entry (`customerId`, `contractId`) per draft,
+      in the order the customers were given.
+  - description: Assign the template to a longer list of customers, read from a file.
+    command: "dci assign-contract-template <template-id> < customers.json"
+    output: |
+      # customers.json
+      {"customerIds": ["<customer-id>", "<customer-id>", "<customer-id>"]}
+  - description: Capture the new draft contract IDs for a script.
+    command: >-
+      dci assign-contract-template <template-id> customerIds: [<customer-id>] --output json
+      | jq -r '.createdContracts[].contractId'
+
+notes: |
+  Each customer gets a **draft** contract, which has no billing effect until it is completed and
+  activated. `customerIds` is required and takes 1 to 250 entries; each must be a tenant one tier
+  below yours (a distributor supplies resellers, a reseller supplies end customers). Repeated IDs
+  are ignored, but a customer that already holds a contract from this template receives another
+  draft. The current date must fall within the template's eligibility window. Requires the
+  ContractTemplatesAdmin permission, DoiT API access, and the `channelops:contracts:templates`
+  entitlement.
+
+related:
+  [
+    list-contract-templates,
+    get-contract-template,
+    create-contract-template,
+    update-contract-template,
+    archive-contract-template,
+  ]

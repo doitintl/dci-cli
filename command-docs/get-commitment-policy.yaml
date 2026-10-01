@@ -1,0 +1,23 @@
+command: get-commitment-policy
+
+arguments:
+  policy-id: >-
+    Commitment policy ID as shown by `dci list-commitment-policies` (the `id` field). The built-in
+    policies use `conservative`, `balanced` and `max_savings`; custom policies have an opaque ID.
+
+examples:
+  - description: Show a built-in policy and where it is assigned.
+    command: "dci get-commitment-policy balanced"
+  - description: Show a custom policy.
+    command: "dci get-commitment-policy <policy-id>"
+  - description: The full record as JSON, including its assignments.
+    command: "dci get-commitment-policy <policy-id> --output json"
+
+notes: |
+  `assignments` lists explicit assignments across AWS and GCP only. An account whose settings have not
+  been materialized falls back to `balanced` implicitly and does not appear there. On AWS the
+  assignment is currently recorded per tenant and applied to every onboarded organization, so each
+  organization appears once per product line. The list is not paginated, and the request fails rather
+  than returning a partial list if either cloud cannot be queried.
+
+related: [list-commitment-policies]
