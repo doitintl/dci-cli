@@ -1,0 +1,13 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: get-commitment-policy
+draft: true
+
+arguments:
+  policy-id: "Commitment policy id. Built-in policies use `conservative`, `balanced` or `max_savings`; custom policies have an opaque id returned by the list endpoint."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci get-commitment-policy <policy-id>"
+
+related: [list-commitment-policies]

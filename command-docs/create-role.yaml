@@ -1,0 +1,10 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: create-role
+draft: true
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: 'dci create-role description: Read-only access to cost reports and budgets, name: FinOps Analyst, permissions: [oeuwhFPi8UTccU1nYjdl, "8zXuFyohNSiiLy2ZQ6Xu"]'
+
+related: [delete-role, get-role, list-roles, update-role]

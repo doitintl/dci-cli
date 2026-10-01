@@ -1,0 +1,13 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: delete-role
+draft: true
+
+arguments:
+  id: "The unique ID of the role to delete."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci delete-role <role-id>"
+
+related: [create-role, get-role, list-roles, update-role]

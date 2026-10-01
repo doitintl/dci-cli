@@ -1,0 +1,13 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: update-role
+draft: true
+
+arguments:
+  id: "The unique ID of the role to update."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: 'dci update-role <role-id> description: Read-only access to cost reports and budgets, name: FinOps Analyst, permissions: [oeuwhFPi8UTccU1nYjdl, "8zXuFyohNSiiLy2ZQ6Xu"]'
+
+related: [create-role, delete-role, get-role, list-roles]

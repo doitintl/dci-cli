@@ -1,0 +1,14 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: trigger-cloudflow-flow
+draft: true
+
+arguments:
+  flow-id: "The ID of the flow to trigger."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci trigger-cloudflow-flow <flow-id> "
+
+related:
+  [build-cloud-flow, export-cloudflow-flow, get-cloudflow-flow-run, import-cloudflow-flow, list-cloudflow-flow-runs]
