@@ -821,6 +821,17 @@ func run() (exitCode int) {
 	if err := preflightAPIInvocation(os.Args); err != nil {
 		return reportExecutionError(err, 0, configDir)
 	}
+	// The unauthenticated description fetches (help, `dci commands`, the
+	// help-context enrichment) trust what apis.json tells restish to trust.
+	configureSpecHTTPClientTLS(configDir)
+	// Help under the API subcommand renders from the description alone:
+	// warm restish's spec cache from the public /openapi.yaml so the load
+	// inside cli.Run never has to authenticate (help_spec.go).
+	if helpInvocationNeedsSpec(os.Args) {
+		if err := prepareSpecForHelp(); err != nil {
+			return reportExecutionError(err, 0, configDir)
+		}
+	}
 
 	executeErr := executeCLI()
 	// Chart under the table: the marshaler armed this while the table bytes
@@ -1586,19 +1597,31 @@ func setupCompletion() {
 	// cli.Run() normally does this by parsing os.Args, but --help and
 	// __complete are filtered out so we must load explicitly.
 	//
-	// To avoid triggering OAuth when no auth is cached, we only call
-	// cli.Load when restish's API cache file exists. If it doesn't, the
-	// user hasn't authenticated yet and API commands won't be shown until
-	// they run "dci login".
+	// Root help stays offline on a fresh install: we only call cli.Load
+	// when restish's API cache file exists, so API commands are not shown
+	// until the first `dci login` (or `dci commands`) has fetched the
+	// description. Once the file exists, though, cli.Load must never be
+	// the one to fetch: past the cache's 24-hour stamp it would refetch
+	// through the auth handler, and with no usable session that fails —
+	// `dci --help` with an expired session used to die on "no credentials".
+	// Refresh the stale cache from the public description instead
+	// (help_spec.go); if even that fails, render help without the API
+	// commands rather than not at all.
 	var apiLoaded bool
 	loadAPI := func() {
 		if apiLoaded {
 			return
 		}
 		apiLoaded = true
-		cacheFile := filepath.Join(restishCacheDir(), "dci.cbor")
-		if _, err := os.Stat(cacheFile); err != nil {
+		cacheDir := restishCacheDir()
+		if _, err := os.Stat(filepath.Join(cacheDir, "dci.cbor")); err != nil {
 			return
+		}
+		if !specCacheWarm(cacheDir) {
+			if err := refreshSpecCacheUnauthenticated(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not refresh the command reference (%v); API commands are omitted from this help\n", err)
+				return
+			}
 		}
 		base, err := apiBase()
 		if err != nil {
@@ -1828,13 +1851,18 @@ func registerStatusCommands(configDir string) {
 			fmt.Fprintf(os.Stdout, "API Base: %s\n", base)
 		}
 		fmt.Fprintf(os.Stdout, "Auth: %s\n", authSource())
+		session := cachedOAuthSession()
 		switch {
 		case os.Getenv("DCI_API_KEY") != "":
 			_, _ = fmt.Fprintln(os.Stdout, "Session: API key set (verify identity and permissions with: dci validate)")
-		case cli.Cache != nil && cli.Cache.GetString("dci:default.token") != "":
-			_, _ = fmt.Fprintln(os.Stdout, "Session: cached OAuth token (verify with: dci validate)")
-		default:
+		case !session.present:
 			_, _ = fmt.Fprintln(os.Stdout, "Session: not authenticated (run: dci login, or set DCI_API_KEY)")
+		case !session.expired():
+			_, _ = fmt.Fprintln(os.Stdout, "Session: cached OAuth token (verify with: dci validate)")
+		case session.refreshable:
+			fmt.Fprintf(os.Stdout, "Session: cached OAuth token expired %s; a refresh token is stored, so the next API call tries to renew it (verify with: dci validate)\n", session.expiresAt.UTC().Format(time.RFC3339))
+		default:
+			fmt.Fprintf(os.Stdout, "Session: cached OAuth token expired %s (run: dci login, or set DCI_API_KEY)\n", session.expiresAt.UTC().Format(time.RFC3339))
 		}
 		fmt.Fprintf(os.Stdout, "Default Output: %s\n", currentOutput())
 		order, orderSource, _ := resolveOutputOrder("")
@@ -1845,6 +1873,10 @@ func registerStatusCommands(configDir string) {
 			fmt.Fprintf(os.Stdout, "Agent Mode: off (%s)\n", agentModeReason)
 		}
 		fmt.Fprintf(os.Stdout, "Config Dir: %s\n", configDir)
+		// The session above lives here, not in the config dir — the one
+		// place a "cached OAuth token" can come from when DCI_CONFIG_DIR
+		// points at an empty directory.
+		fmt.Fprintf(os.Stdout, "Cache Dir: %s\n", realCacheDir())
 		if ctx != "" {
 			if os.Getenv("DCI_CUSTOMER_CONTEXT") != "" {
 				fmt.Fprintf(os.Stdout, "Customer context: %s (DCI_CUSTOMER_CONTEXT)\n", ctx)

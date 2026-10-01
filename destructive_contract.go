@@ -20,11 +20,26 @@ var (
 	destructiveCommandSet   = map[string]bool{}
 	destructiveMetadataRead bool
 	destructiveMetadataErr  error
-	loadOperationAPI        = func(base string, root *cobra.Command) (cli.API, error) {
+	loadOperationAPI        = func(base string, root *cobra.Command) (api cli.API, err error) {
 		// cli.Load dereferences cli.Cache, which only exists after cli.Init.
 		if cli.Cache == nil {
 			return cli.API{}, errors.New("restish CLI is not initialized")
 		}
+		// A cold cache makes cli.Load fetch, and restish panics rather than
+		// returns when the auth handler fails on that fetch (an expired
+		// session whose refresh is rejected, headless). Every caller here
+		// runs outside cli.Run's own recovery — the invocation preflight,
+		// completion, the session — so hand the error back the way they
+		// already expect instead of letting it become an "internal error".
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				recoveredErr, ok := recovered.(error)
+				if !ok {
+					panic(recovered)
+				}
+				api, err = cli.API{}, recoveredErr
+			}
+		}()
 		return cli.Load(base, root)
 	}
 )

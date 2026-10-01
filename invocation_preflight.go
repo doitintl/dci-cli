@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,22 +62,31 @@ func preflightAPIInvocation(args []string) error {
 		return preflightLocalDCICommand(commandName, args)
 	}
 
+	if invocationRequestsHelp(args) {
+		// Help needs the API description and nothing else — no request of
+		// its own ever carries credentials. run() warms the spec cache from
+		// the public description before restish loads it (help_spec.go), so
+		// help renders on a fresh install and with an expired session alike,
+		// and skips both the credential gate below and operation validation.
+		return nil
+	}
+
 	authenticated := invocationCredentialsAvailable()
 	interactive := invocationInteractive()
 	if !authenticated && !interactive && !invocationCachedSpecAvailable() {
 		return authenticationRequiredPreflightError()
 	}
-	if invocationRequestsHelp(args) {
-		// Help needs a loadable API description but nothing else: with a
-		// cached spec (or a way to authenticate) it renders offline, so it
-		// skips operation validation. Without one, the check above already
-		// failed fast — the description fetch would otherwise dead-end in the
-		// interactive login wait.
-		return nil
-	}
 
 	api, err := loadInvocationAPI()
 	if err != nil || len(api.Operations) == 0 {
+		var loginError headlessLoginError
+		if errors.As(err, &loginError) {
+			// The stored session could not authenticate the description
+			// fetch (expired, refresh rejected, no browser): that is the
+			// invocation's answer, in the contract's shape — retrying the
+			// same fetch inside cli.Run would only fail the same way.
+			return err
+		}
 		if !authenticated && !interactive {
 			return authenticationRequiredPreflightError()
 		}
@@ -267,11 +277,43 @@ func credentialsAvailableForInvocation() bool {
 	if os.Getenv("DCI_API_KEY") != "" {
 		return true
 	}
+	return cachedOAuthSession().usable()
+}
+
+// cachedOAuthSessionState describes the OAuth session restish has on disk
+// — in cache.json under the cache directory (DCI_CACHE_DIR, default
+// os.UserCacheDir()/dci), NOT under DCI_CONFIG_DIR. One reading shared by
+// the credential gate above and `dci status`, so the two never disagree
+// about whether a stored token counts: before this, status reported any
+// token string as a live session while the gate (correctly) discounted an
+// expired one with no refresh token.
+type cachedOAuthSessionState struct {
+	present     bool
+	expiresAt   time.Time
+	refreshable bool
+}
+
+func (session cachedOAuthSessionState) expired() bool {
+	return !session.expiresAt.IsZero() && !session.expiresAt.After(time.Now())
+}
+
+// usable reports whether the session can still authenticate a request: the
+// access token is current, or a refresh token is stored for the OAuth
+// handler to try first. A refresh the server rejects still ends in the
+// headless login error (login_page.go) — only an actual request can tell.
+func (session cachedOAuthSessionState) usable() bool {
+	return session.present && (!session.expired() || session.refreshable)
+}
+
+func cachedOAuthSession() cachedOAuthSessionState {
 	if cli.Cache == nil || cli.Cache.GetString("dci:default.token") == "" {
-		return false
+		return cachedOAuthSessionState{}
 	}
-	expiresAt := cli.Cache.GetTime("dci:default.expires")
-	return expiresAt.IsZero() || expiresAt.After(time.Now()) || cli.Cache.GetString("dci:default.refresh") != ""
+	return cachedOAuthSessionState{
+		present:     true,
+		expiresAt:   cli.Cache.GetTime("dci:default.expires"),
+		refreshable: cli.Cache.GetString("dci:default.refresh") != "",
+	}
 }
 
 // cachedSpecAvailableForInvocation reports whether a warm, unexpired
@@ -287,7 +329,13 @@ func credentialsAvailableForInvocation() bool {
 // directory here carries none of the cross-host-leak risk the temp dir
 // exists to prevent elsewhere.
 func cachedSpecAvailableForInvocation() bool {
-	cacheDir := realCacheDir()
+	return specCacheWarm(realCacheDir())
+}
+
+// specCacheWarm reports whether cacheDir holds a spec cache cli.Load will
+// accept without fetching: the CBOR document plus an unexpired dci.expires
+// stamp in that directory's cache.json.
+func specCacheWarm(cacheDir string) bool {
 	if cacheDir == "" {
 		return false
 	}
