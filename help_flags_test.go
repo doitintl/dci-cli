@@ -2,13 +2,18 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/rest-sh/restish/openapi"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
 )
 
 // newHelpFlagTestTree builds the offline command tree help renders against:
@@ -37,6 +42,12 @@ func newHelpFlagTestTree(t *testing.T) (root, dciCmd *cobra.Command) {
 	add("list-roles", "Roles") // returns its whole collection in one response
 	add("list-insights", "Insights", "page-token")
 	add("export-datahub-dataset-records name", "DataHub", "page-token", "start-time", "end-time")
+	add("create-ticket-comment customerid ticketid", "Support Requests")
+	// The beta subtree names its commands by x-cli-name; its report-results
+	// command inherits the dci flags through the beta parent.
+	beta := &cobra.Command{Use: "beta", Run: func(*cobra.Command, []string) {}}
+	beta.AddCommand(&cobra.Command{Use: "get-report-results operationid", Run: func(*cobra.Command, []string) {}})
+	dciCmd.AddCommand(beta)
 	customizeDCIUsage()
 
 	previousIndex := resolutionIndex
@@ -55,6 +66,13 @@ func findAPICommand(t *testing.T, dciCmd *cobra.Command, name string) *cobra.Com
 	for _, command := range dciCmd.Commands() {
 		if command.Name() == name {
 			return command
+		}
+		if command.Name() == "beta" {
+			for _, child := range command.Commands() {
+				if child.Name() == name {
+					return child
+				}
+			}
 		}
 	}
 	t.Fatalf("command %q not registered under dci", name)
@@ -134,6 +152,18 @@ func TestHelpFlagPlacementFollowsCommandShape(t *testing.T) {
 			command: "anomalies-recent",
 			inline:  []string{"all", "search"},
 			hidden:  []string{"chart", "max-rows"},
+		},
+		{
+			// Two path parameters: never resolvable, so --id/--name are inert.
+			command: "create-ticket-comment",
+			inline:  []string{"output", "yes"},
+			hidden:  []string{"id", "name", "all", "search", "chart"},
+		},
+		{
+			// Beta spelling of the async results operation: report-shaped.
+			command: "get-report-results",
+			inline:  []string{"chart", "pivot", "max-rows", "rollup", "id", "name"},
+			hidden:  []string{"all", "search", "for-reimport"},
 		},
 	}
 	for _, testCase := range cases {
@@ -217,8 +247,19 @@ func TestHelpFullListsEveryFlag(t *testing.T) {
 
 func TestHelpCollapsedFlagsNote(t *testing.T) {
 	root, dciCmd := newHelpFlagTestTree(t)
+	noteFor := func(command *cobra.Command) string {
+		restore := applyHelpFlagVisibility(command)
+		defer restore()
+		return helpCollapsedFlagsNote(command)
+	}
 
-	note := helpCollapsedFlagsNote(findAPICommand(t, dciCmd, "invite-user"))
+	// Cobra prints the same usage template on a flag-parse error, with
+	// nothing folded and the full inherited list below: no pointer line then.
+	if note := helpCollapsedFlagsNote(findAPICommand(t, dciCmd, "invite-user")); note != "" {
+		t.Fatalf("pointer line rendered without the flags being folded: %q", note)
+	}
+
+	note := noteFor(findAPICommand(t, dciCmd, "invite-user"))
 	for _, expected := range []string{"Output flags (apply to every command; add --help-full to list them):", "-M/--table-mode", "-C/--table-columns", "-O/--output-file", "--utc", "--output-order"} {
 		if !strings.Contains(note, expected) {
 			t.Errorf("invite-user note missing %q:\n%s", expected, note)
@@ -230,7 +271,7 @@ func TestHelpCollapsedFlagsNote(t *testing.T) {
 		}
 	}
 
-	if note := helpCollapsedFlagsNote(findAPICommand(t, dciCmd, "export-datahub-dataset-records")); strings.Contains(note, "output-file") {
+	if note := noteFor(findAPICommand(t, dciCmd, "export-datahub-dataset-records")); strings.Contains(note, "output-file") {
 		t.Fatalf("--output-file folded on a file export, where it is inline:\n%s", note)
 	}
 
@@ -238,10 +279,10 @@ func TestHelpCollapsedFlagsNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if note := helpCollapsedFlagsNote(status); note != "" {
+	if note := noteFor(status); note != "" {
 		t.Fatalf("local command status rendered the API note: %q", note)
 	}
-	if note := helpCollapsedFlagsNote(dciCmd); note != "" {
+	if note := noteFor(dciCmd); note != "" {
 		t.Fatalf("the dci command itself rendered the note: %q", note)
 	}
 }
@@ -391,8 +432,64 @@ func TestOrderedGroupCommandsPlacesQuestionAfterWrappedOperation(t *testing.T) {
 // CI fetches the production description).
 func TestHelpFlagShapeSetsMatchSpec(t *testing.T) {
 	spec := loadCommandDocsSpec(t)
-	reportShaped := map[string]bool{}
-	fileShaped := map[string]bool{}
+	reportShaped, fileShaped := specResponseShapes(spec)
+	if len(reportShaped) == 0 {
+		t.Fatal("no report-shaped operation found in the spec; the walker is wrong")
+	}
+	// The beta subtree's commands carry their own names (x-cli-name) and
+	// draw from the embedded spec.
+	betaReport, betaFile := specResponseShapes(loadEmbeddedBetaSpec(t))
+	for name := range betaReport {
+		reportShaped[name] = true
+	}
+	for name := range betaFile {
+		fileShaped[name] = true
+	}
+	assertSameNameSet(t, "report-shaped operations (reportResultOperations)", reportShaped, reportResultOperations)
+	exports := map[string]bool{}
+	for name := range fileExportOperations {
+		exports[name] = true
+	}
+	assertSameNameSet(t, "file-shaped exports (fileExportOperations)", fileShaped, exports)
+}
+
+// The beta half of the check above runs without the production spec, so a
+// renamed or newly report-shaped beta command fails offline too.
+func TestHelpFlagShapeSetsCoverBetaSpec(t *testing.T) {
+	reportShaped, _ := specResponseShapes(loadEmbeddedBetaSpec(t))
+	if !reportShaped["get-report-results"] {
+		t.Fatalf("beta spec walk found %v, want get-report-results among them", reportShaped)
+	}
+	for name := range reportShaped {
+		if !reportResultOperations[name] {
+			t.Errorf("beta command %s answers with report rows but reportResultOperations omits it", name)
+		}
+	}
+}
+
+func loadEmbeddedBetaSpec(t *testing.T) commandDocsSpec {
+	t.Helper()
+	entrypoint, _ := url.Parse(defaultAPIBase + "/")
+	specURL, _ := url.Parse(defaultAPIBase + "/openapi.beta.yaml")
+	api, err := openapi.New().Load(*entrypoint, *specURL, &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(embeddedBetaSpec)),
+	})
+	if err != nil {
+		t.Fatalf("load beta spec: %v", err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(embeddedBetaSpec, &raw); err != nil {
+		t.Fatalf("parse beta spec: %v", err)
+	}
+	return commandDocsSpec{api: api, raw: raw}
+}
+
+// specResponseShapes walks every operation's success responses and reports,
+// by command name, which answer with report rows and which with a file body.
+func specResponseShapes(spec commandDocsSpec) (reportShaped, fileShaped map[string]bool) {
+	reportShaped = map[string]bool{}
+	fileShaped = map[string]bool{}
 	for _, operation := range spec.api.Operations {
 		raw := spec.rawOperation(operation)
 		if raw == nil {
@@ -415,15 +512,7 @@ func TestHelpFlagShapeSetsMatchSpec(t *testing.T) {
 			}
 		}
 	}
-	if len(reportShaped) == 0 {
-		t.Fatal("no report-shaped operation found in the spec; the walker is wrong")
-	}
-	assertSameNameSet(t, "report-shaped operations (reportResultOperations)", reportShaped, reportResultOperations)
-	exports := map[string]bool{}
-	for name := range fileExportOperations {
-		exports[name] = true
-	}
-	assertSameNameSet(t, "file-shaped exports (fileExportOperations)", fileShaped, exports)
+	return reportShaped, fileShaped
 }
 
 // specSchemaCarriesReportRows mirrors nestedReportRows: a `result` or

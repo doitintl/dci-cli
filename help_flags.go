@@ -98,13 +98,16 @@ var helpFlagScopes = map[string]helpFlagScope{
 // rows (`result.rows`/`results.rows` beside a `schema`) — the shape
 // nestedReportRows detects at render time and every report flag acts on.
 // Help needs the answer before any response exists, so the set is spelled
-// out here; help_flags_test.go checks it against the live spec's response
-// schemas (DCI_COMMAND_DOCS_SPEC, fetched in CI). The beta
-// get-async-operation-results shares its GA namesake's shape.
+// out here, keyed by command name — the beta subtree names its commands by
+// x-cli-name, so the async results operation appears twice (GA spelling and
+// beta spelling). help_flags_test.go checks the set against the response
+// schemas of the live GA spec (DCI_COMMAND_DOCS_SPEC, fetched in CI) and
+// the embedded beta spec.
 var reportResultOperations = map[string]bool{
 	"query":                       true,
 	"get-report":                  true,
 	"get-async-operation-results": true,
+	"get-report-results":          true, // beta: getAsyncOperationResults
 }
 
 // helpFlagPlacement is where a dci persistent flag lands in one command's
@@ -203,15 +206,24 @@ func helpCommandIsList(cmd *cobra.Command) bool {
 // helpCommandResolvesNames reports whether --id/--name have a positional
 // argument to govern. The resolution index is authoritative when loaded;
 // help usually renders before any operation metadata is read, so the
-// fallback is the command's own usage line: a path parameter after the
-// name ("get-budget id") is what resolution acts on.
+// fallback is the command's own usage line: exactly one path parameter
+// after the name ("get-budget id"), the only arity buildResolutionIndex
+// ever resolves — a two-parameter command (create-ticket-comment
+// customerid ticketid) is never resolvable.
 func helpCommandResolvesNames(cmd *cobra.Command) bool {
 	if len(resolutionIndex) > 0 {
 		_, ok := resolutionIndex[cmd.Name()]
 		return ok
 	}
-	return len(strings.Fields(cmd.Use)) > 1
+	return len(strings.Fields(cmd.Use)) == 2
 }
+
+// helpFlagsFolded is true between applyHelpFlagVisibility and its restore:
+// the pointer line renders only when the flags it stands in for were
+// actually hidden. The usage template is shared with cobra's own usage dump
+// on a flag-parse error, where nothing was folded and the full inherited
+// list follows — a pointer line there would contradict it.
+var helpFlagsFolded bool
 
 // applyHelpFlagVisibility hides, for the duration of one help render, the
 // dci persistent flags that cannot act on cmd (and the presentation flags
@@ -231,7 +243,9 @@ func applyHelpFlagVisibility(cmd *cobra.Command) func() {
 		flag.Hidden = true
 		hidden = append(hidden, flag)
 	})
+	helpFlagsFolded = true
 	return func() {
+		helpFlagsFolded = false
 		for _, flag := range hidden {
 			flag.Hidden = false
 		}
@@ -240,11 +254,12 @@ func applyHelpFlagVisibility(cmd *cobra.Command) func() {
 
 // helpCollapsedFlagsNote renders the pointer line for the presentation
 // flags applyHelpFlagVisibility folded away: the usage template appends it
-// after the Flags block. Empty for commands outside the API subtree and
-// under --help-full, where nothing was folded.
+// after the Flags block. Empty whenever nothing was folded — commands
+// outside the API subtree, --help-full, and the usage dump cobra prints on
+// a flag-parse error.
 func helpCollapsedFlagsNote(cmd *cobra.Command) string {
 	dciCmd := findDCICommand()
-	if helpFullRequested || !helpCommandUnderAPI(cmd, dciCmd) {
+	if !helpFlagsFolded || helpFullRequested || !helpCommandUnderAPI(cmd, dciCmd) {
 		return ""
 	}
 	labels := make([]string, 0)
