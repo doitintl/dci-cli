@@ -17,6 +17,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1665,7 +1666,7 @@ func seedHermeticAPIConfig(t *testing.T, home, base string) []string {
 func hermeticSpecEnv(t *testing.T, home, spec string) []string {
 	t.Helper()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/openapi.json" {
+		if request.URL.Path != "/openapi.json" && request.URL.Path != "/openapi.yaml" {
 			http.NotFound(writer, request)
 			return
 		}
@@ -1674,6 +1675,303 @@ func hermeticSpecEnv(t *testing.T, home, spec string) []string {
 	}))
 	t.Cleanup(server.Close)
 	return seedHermeticAPIConfig(t, home, server.URL)
+}
+
+// recordingSpecServer is the hermetic API for the no-credentials help
+// tests: it serves the OpenAPI description at the public path the CLI
+// fetches (and restish's /openapi.json hint), answers the OAuth token
+// endpoint with the rejection a revoked refresh token earns, and records
+// every request so a test can prove help never authenticated.
+type recordingSpecServer struct {
+	*httptest.Server
+	mu         sync.Mutex
+	paths      []string
+	authorized int
+}
+
+func newRecordingSpecServer(t *testing.T, spec string) *recordingSpecServer {
+	t.Helper()
+	recorder := &recordingSpecServer{}
+	recorder.Server = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		recorder.mu.Lock()
+		recorder.paths = append(recorder.paths, request.URL.Path)
+		if request.Header.Get("Authorization") != "" {
+			recorder.authorized++
+		}
+		recorder.mu.Unlock()
+		switch request.URL.Path {
+		case "/openapi.yaml", "/openapi.json":
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer, spec)
+		case "/token":
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(writer, `{"error":"invalid_grant"}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(recorder.Close)
+	return recorder
+}
+
+func (recorder *recordingSpecServer) saw(path string) bool {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return slices.Contains(recorder.paths, path)
+}
+
+func (recorder *recordingSpecServer) authorizedRequests() int {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return recorder.authorized
+}
+
+// seedHermeticOAuthConfig is seedHermeticAPIConfig with the real OAuth
+// profile shape `dci login` writes, every endpoint pointed at base — so an
+// invocation that tries to authenticate against the hermetic server shows
+// up in its request log instead of reaching the DoiT Console.
+func seedHermeticOAuthConfig(t *testing.T, home, base string) []string {
+	t.Helper()
+	environment := seedHermeticAPIConfig(t, home, base)
+	configDir := filepath.Join(home, "xdg", "dci")
+	config, err := json.Marshal(map[string]interface{}{
+		"dci": map[string]interface{}{
+			"base": base,
+			"profiles": map[string]interface{}{"default": map[string]interface{}{
+				"auth": map[string]interface{}{
+					"name": "oauth-authorization-code",
+					"params": map[string]interface{}{
+						"authorize_url": base + "/authorize",
+						"client_id":     "cli",
+						"token_url":     base + "/token",
+					},
+				},
+			}},
+			"tls": map[string]interface{}{"insecure": true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return environment
+}
+
+// seedExpiredOAuthSession writes the cache.json of a user whose login has
+// lapsed: an access token expired yesterday plus a refresh token (the
+// hermetic token endpoint rejects it). This is the state the stale-session
+// reports came from — and with staleSpec, the spec cache sits beside it,
+// present but past its 24-hour stamp, so cli.Load would refetch.
+func seedExpiredOAuthSession(t *testing.T, cacheDir string, staleSpec bool) {
+	t.Helper()
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cache := map[string]interface{}{
+		"dci:default": map[string]interface{}{
+			"token":   "expired-token",
+			"type":    "Bearer",
+			"expires": time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+			"refresh": "stale-refresh",
+		},
+	}
+	if staleSpec {
+		cache["dci"] = map[string]interface{}{"expires": time.Now().Add(-time.Hour).Format(time.RFC3339)}
+		if err := os.WriteFile(filepath.Join(cacheDir, "dci.cbor"), []byte("stale"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "cache.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const helpWithoutCredentialsSpec = `{
+	"openapi": "3.0.0",
+	"info": {"title": "DCI test", "version": "1.0.0"},
+	"paths": {
+		"/budgets": {
+			"get": {
+				"operationId": "list-budgets",
+				"summary": "List budgets",
+				"description": "Returns the budgets your account can see.",
+				"tags": ["budgets"],
+				"parameters": [{"name": "maxResults", "in": "query", "schema": {"type": "integer"}}],
+				"responses": {"200": {"description": "OK"}}
+			}
+		}
+	}
+}`
+
+// Help must never need credentials: the API description is public, and
+// nothing help renders makes a request of its own. Each case here is a
+// state users hit — a fresh machine, an expired login — in agent and human
+// mode, through the real binary against a hermetic API that logs whether
+// anything ever tried to authenticate.
+func TestHelpRendersWithoutCredentials(t *testing.T) {
+	bin := buildBinary(t)
+
+	// DCI_API_KEY= (empty) shadows any key in the developer's environment:
+	// every path here must prove itself with nothing to authenticate with.
+	freshInstall := func(t *testing.T, mode string) ([]string, *recordingSpecServer) {
+		t.Helper()
+		home := t.TempDir()
+		server := newRecordingSpecServer(t, helpWithoutCredentialsSpec)
+		environment := append(seedHermeticOAuthConfig(t, home, server.URL), mode, "DCI_API_KEY=")
+		return append([]string{"HOME=" + home}, environment...), server
+	}
+	run := func(t *testing.T, environment []string, args ...string) cliResult {
+		t.Helper()
+		res := runCLIWithEnv(t, bin, strings.TrimPrefix(environment[0], "HOME="), environment[1:], args...)
+		if res.timedOut {
+			t.Fatalf("command timed out; output:\n%s", res.output)
+		}
+		return res
+	}
+	assertHelpRendered := func(t *testing.T, res cliResult, server *recordingSpecServer) {
+		t.Helper()
+		if res.exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
+		}
+		assertNoOAuthOrPanic(t, res.output)
+		if strings.Contains(res.output, "no credentials available") || strings.Contains(res.output, "internal error") {
+			t.Fatalf("help output carries the credentials failure or an internal error:\n%s", res.output)
+		}
+		if !server.saw("/openapi.yaml") {
+			t.Fatalf("the public description was never fetched; requests: %v", server.paths)
+		}
+		if server.authorizedRequests() != 0 || server.saw("/token") || server.saw("/authorize") {
+			t.Fatalf("help authenticated: %d authorized requests, paths %v", server.authorizedRequests(), server.paths)
+		}
+	}
+
+	t.Run("API command help on a fresh install, agent mode", func(t *testing.T) {
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		res := run(t, environment, "list-budgets", "--help")
+		assertHelpRendered(t, res, server)
+		if !strings.Contains(res.output, "Returns the budgets your account can see.") || !strings.Contains(res.output, "--max-results") {
+			t.Fatalf("help text missing the operation's description or flags:\n%s", res.output)
+		}
+	})
+
+	t.Run("API command --help-full on a fresh install, human mode", func(t *testing.T) {
+		environment, server := freshInstall(t, "DCI_AGENT_MODE=0")
+		res := run(t, environment, "list-budgets", "--help-full")
+		assertHelpRendered(t, res, server)
+		if !strings.Contains(res.output, "Returns the budgets your account can see.") {
+			t.Fatalf("help text missing the operation's description:\n%s", res.output)
+		}
+	})
+
+	t.Run("local question command help on a fresh install", func(t *testing.T) {
+		// restish loads the description for every argv under the API
+		// subcommand before cobra dispatches, so even this hand-registered
+		// command's help needs the warm cache.
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		res := run(t, environment, "budgets-at-risk", "--help")
+		assertHelpRendered(t, res, server)
+	})
+
+	t.Run("API command help with an expired session, agent mode", func(t *testing.T) {
+		// The reported repro: a login that lapsed weeks ago, refresh token
+		// included, and a spec cache past its stamp. Help used to die on
+		// "no credentials available" (an internal error on this path).
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		seedExpiredOAuthSession(t, filepath.Join(strings.TrimPrefix(environment[0], "HOME="), "cache"), true)
+		res := run(t, environment, "list-budgets", "--help")
+		assertHelpRendered(t, res, server)
+		if !strings.Contains(res.output, "Returns the budgets your account can see.") {
+			t.Fatalf("help text missing the operation's description:\n%s", res.output)
+		}
+	})
+
+	t.Run("root help with an expired session lists the API commands", func(t *testing.T) {
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		seedExpiredOAuthSession(t, filepath.Join(strings.TrimPrefix(environment[0], "HOME="), "cache"), true)
+		for _, args := range [][]string{{"--help"}, {"help"}} {
+			res := run(t, environment, args...)
+			assertHelpRendered(t, res, server)
+			assertRootHelpBranded(t, res.output)
+			if !strings.Contains(res.output, "list-budgets") {
+				t.Fatalf("root help (%v) omits the API commands:\n%s", args, res.output)
+			}
+		}
+	})
+
+	t.Run("root help on a fresh install never authenticates", func(t *testing.T) {
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		res := run(t, environment, "--help")
+		if res.exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
+		}
+		assertNoOAuthOrPanic(t, res.output)
+		assertRootHelpBranded(t, res.output)
+		if server.authorizedRequests() != 0 || server.saw("/token") || server.saw("/authorize") {
+			t.Fatalf("fresh-install root help authenticated: %v", server.paths)
+		}
+	})
+
+	t.Run("data command without credentials keeps the authentication envelope", func(t *testing.T) {
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		res := run(t, environment, "list-budgets")
+		assertStructuredCLIError(t, res, exitAuthentication, "AUTHENTICATION_REQUIRED")
+		if server.authorizedRequests() != 0 {
+			t.Fatalf("an unauthenticated data command sent %d authorized requests", server.authorizedRequests())
+		}
+	})
+
+	t.Run("data command with an expired session that cannot refresh reports AUTHENTICATION_REQUIRED", func(t *testing.T) {
+		// The refresh is rejected and the headless flow cannot open a
+		// browser. restish panics with that out of its pre-execute spec
+		// load, before its own recovery is armed — this used to print
+		// "dci encountered an internal error" and exit 1.
+		environment, server := freshInstall(t, "CLAUDECODE=1")
+		seedExpiredOAuthSession(t, filepath.Join(strings.TrimPrefix(environment[0], "HOME="), "cache"), false)
+		res := run(t, environment, "list-budgets")
+		if res.exitCode != exitAuthentication {
+			t.Fatalf("exit code = %d, want %d; output:\n%s", res.exitCode, exitAuthentication, res.output)
+		}
+		if strings.Contains(res.output, "internal error") {
+			t.Fatalf("credentials failure labelled an internal error:\n%s", res.output)
+		}
+		// restish's "WARN: Disabling TLS security checks" (the hermetic
+		// server's self-signed cert) precedes the envelope on stderr; the
+		// envelope itself is the last line.
+		lines := strings.Split(strings.TrimSpace(res.output), "\n")
+		var envelope structuredErrorEnvelope
+		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &envelope); err != nil {
+			t.Fatalf("last output line is not a JSON envelope: %v\n%s", err, res.output)
+		}
+		if envelope.Error.Code != "AUTHENTICATION_REQUIRED" || envelope.Error.Hint == "" {
+			t.Fatalf("envelope = %#v", envelope.Error)
+		}
+		if !server.saw("/token") {
+			t.Fatalf("the stored refresh token was never tried; requests: %v", server.paths)
+		}
+	})
+
+	t.Run("status reports the expired session and where it lives", func(t *testing.T) {
+		environment, _ := freshInstall(t, "CLAUDECODE=1")
+		cacheDir := filepath.Join(strings.TrimPrefix(environment[0], "HOME="), "cache")
+		seedExpiredOAuthSession(t, cacheDir, false)
+		res := run(t, environment, "status")
+		if res.exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", res.exitCode, res.output)
+		}
+		if !strings.Contains(res.output, "Session: cached OAuth token expired ") || !strings.Contains(res.output, "refresh token is stored") {
+			t.Fatalf("status misreports the expired session:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "Cache Dir: "+cacheDir) {
+			t.Fatalf("status does not name the cache dir %s:\n%s", cacheDir, res.output)
+		}
+	})
 }
 
 func assertNoOAuthOrPanic(t *testing.T, out string) {

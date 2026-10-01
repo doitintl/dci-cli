@@ -365,6 +365,35 @@ var loginFlowHeadless = func() bool {
 	return agentUAMode == uaModeAgent || !stderrIsTTY()
 }
 
+// headlessLoginError is Token()'s refusal to start the browser flow with no
+// human to finish it. It carries the error contract's shape so the
+// condition reports as AUTHENTICATION_REQUIRED with the authentication exit
+// code however it surfaces — restish panics with it out of MakeRequest, and
+// recoveringRun (help_spec.go) hands it back as an ordinary error — the
+// same envelope invocation_preflight.go produces when it catches the
+// condition up front, instead of a generic CLI_ERROR on one path and "dci
+// encountered an internal error" on the other. text is the one-line form a
+// human sees (message and remedy together); message and hint are the
+// envelope's split.
+type headlessLoginError struct {
+	text    string
+	message string
+	hint    string
+}
+
+func (loginError headlessLoginError) Error() string { return loginError.text }
+
+func (loginError headlessLoginError) ExitCode() int { return exitAuthentication }
+
+func (loginError headlessLoginError) StructuredError() structuredError {
+	return structuredError{
+		Code:      "AUTHENTICATION_REQUIRED",
+		Message:   loginError.message,
+		Hint:      loginError.hint,
+		Retryable: false,
+	}
+}
+
 // Token generates a new token using an authorization code.
 func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 	// Headless guard: everything below needs a human to complete the browser
@@ -380,9 +409,17 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 			// The `dci ai` session's dispatch child: the session itself can
 			// run the browser flow via /login (it suspends and hands over the
 			// real terminal), so point there instead of at the shell.
-			return nil, errors.New("you're not signed in — run /login to sign in")
+			return nil, headlessLoginError{
+				text:    "you're not signed in — run /login to sign in",
+				message: "you're not signed in — run /login to sign in",
+				hint:    "Run /login to sign in",
+			}
 		}
-		return nil, errors.New("no credentials available and this session cannot open a browser to log in: set DCI_API_KEY, or run dci login from an interactive terminal")
+		return nil, headlessLoginError{
+			text:    "no credentials available and this session cannot open a browser to log in: set DCI_API_KEY, or run dci login from an interactive terminal",
+			message: "no credentials available and this session cannot open a browser to log in",
+			hint:    "Set DCI_API_KEY to a DoiT API token, or run dci login from an interactive terminal",
+		}
 	}
 
 	// Generate a random code verifier string

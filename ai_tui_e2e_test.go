@@ -48,6 +48,8 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +57,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -819,6 +822,64 @@ func TestE2EDefaultHelpRoutesBareInvocation(t *testing.T) {
 	help := startTUISession(t, tuiSessionConfig{configDir: configDir, args: []string{}, rawFrame: true})
 	help.waitFor("(interactive AI session)") // the help screen's own example line
 	help.expectCleanExit()
+}
+
+// `dci <command> --help` at a real terminal with no credentials and a cold
+// spec cache. The spec load behind help used to run through the OAuth
+// handler, and at a human terminal that handler has a browser to open — so
+// asking for help started a login and waited on its callback. Help now
+// fetches the public description itself; the hermetic API records every
+// request so the test can prove nothing authenticated. (The harness's
+// DCI_AGENT_MODE=0 and the pty make this the human path; the agent-mode
+// equivalents are in main_test.go's TestHelpRendersWithoutCredentials.)
+func TestE2EAPICommandHelpRendersWithoutCredentials(t *testing.T) {
+	var authorized, authorizeHits int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "" {
+			atomic.AddInt32(&authorized, 1)
+		}
+		switch request.URL.Path {
+		case "/openapi.yaml", "/openapi.json":
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{
+				"openapi": "3.0.0",
+				"info": {"title": "DCI test", "version": "1.0.0"},
+				"paths": {"/widgets": {"get": {"operationId": "list-widgets", "summary": "List widgets",
+					"description": "Returns every widget the account can see.",
+					"responses": {"200": {"description": "OK"}}}}}
+			}`))
+		case "/authorize", "/token":
+			atomic.AddInt32(&authorizeHits, 1)
+			http.Error(writer, "not expected", http.StatusBadRequest)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	session := startTUISession(t, tuiSessionConfig{
+		args:     []string{"list-widgets", "--help"},
+		rawFrame: true,
+		extraEnv: []string{"DCI_NO_UPDATE_CHECK=1"},
+		prepare: func(configDir, _ string) {
+			// The real apis.json shape `dci login` leaves behind, with every
+			// endpoint on the hermetic server and its self-signed cert trusted
+			// — ensureConfig keeps an existing file as is.
+			config := fmt.Sprintf(`{"dci":{"base":%q,"profiles":{"default":{"auth":{"name":"oauth-authorization-code","params":{"authorize_url":%q,"client_id":"cli","token_url":%q}}}},"tls":{"insecure":true}}}`,
+				server.URL, server.URL+"/authorize", server.URL+"/token")
+			if err := os.WriteFile(filepath.Join(configDir, "apis.json"), []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	})
+	session.waitFor("Returns every widget the account can see.")
+	session.expectCleanExit()
+	if text := session.snapshot(); strings.Contains(text, "Open your browser") || strings.Contains(text, "credentials") {
+		t.Fatalf("help started a login or blamed credentials:\n%s", text)
+	}
+	if atomic.LoadInt32(&authorized) != 0 || atomic.LoadInt32(&authorizeHits) != 0 {
+		t.Fatalf("help authenticated: %d authorized requests, %d OAuth endpoint hits", authorized, authorizeHits)
+	}
 }
 
 // The argument-placeholder ghost (AI-PLACEHOLDER-SPEC P1): accepting a

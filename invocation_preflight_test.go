@@ -85,23 +85,48 @@ func TestPreflightAPIInvocationFailsBeforeLoadingWithoutCredentialsOrCache(t *te
 	}
 }
 
-func TestPreflightAPIInvocationRejectsColdCacheHeadlessHelp(t *testing.T) {
-	// Help on an API command needs the description; loading it with no
-	// credentials, no cached spec, and no interactive terminal used to
-	// dead-end in the browser-login wait. It must fail fast instead.
+func TestPreflightAPIInvocationAllowsColdCacheHeadlessHelp(t *testing.T) {
+	// Help on an API command needs only the description, which run() warms
+	// from the public /openapi.yaml before restish loads it (help_spec.go).
+	// No credentials, no cached spec, and no interactive terminal is the
+	// fresh-install case, and it must reach the help renderer rather than
+	// the credential gate — the gate used to turn `dci list-budgets --help`
+	// into AUTHENTICATION_REQUIRED on every new machine.
 	api := cli.API{Operations: []cli.Operation{{Name: "delete-report"}}}
 	loadCount := configureInvocationPreflightTest(t, api, false, false, false)
 
-	err := preflightAPIInvocation([]string{"dci", "dci", "delete-report", "--help"})
-	if err == nil {
-		t.Fatal("cold-cache headless help accepted")
-	}
-	detail := err.(invocationPreflightError).StructuredError()
-	if detail.Code != "AUTHENTICATION_REQUIRED" || err.(invocationPreflightError).ExitCode() != exitAuthentication {
-		t.Fatalf("error = %#v", err)
+	if err := preflightAPIInvocation([]string{"dci", "dci", "delete-report", "--help"}); err != nil {
+		t.Fatalf("cold-cache headless help rejected: %v", err)
 	}
 	if *loadCount != 0 {
 		t.Fatalf("help loaded operation metadata %d times", *loadCount)
+	}
+}
+
+func TestCachedOAuthSessionStates(t *testing.T) {
+	setupTestCache(t)
+	if session := cachedOAuthSession(); session.present || session.usable() {
+		t.Fatalf("empty cache reported a session: %+v", session)
+	}
+
+	cli.Cache.Set("dci:default.token", "tok")
+	cli.Cache.Set("dci:default.expires", time.Now().Add(time.Hour).Format(time.RFC3339))
+	if session := cachedOAuthSession(); !session.present || session.expired() || !session.usable() {
+		t.Fatalf("live token misreported: %+v", session)
+	}
+
+	// Expired with no refresh token: present on disk, but nothing can use
+	// it — the state `dci status` used to report as a live session.
+	cli.Cache.Set("dci:default.expires", time.Now().Add(-time.Hour).Format(time.RFC3339))
+	if session := cachedOAuthSession(); !session.present || !session.expired() || session.usable() || credentialsAvailableForInvocation() {
+		t.Fatalf("expired token misreported: %+v", session)
+	}
+
+	// Expired with a refresh token: the OAuth handler gets to try the
+	// refresh, so the gate lets the invocation through.
+	cli.Cache.Set("dci:default.refresh", "refresh")
+	if session := cachedOAuthSession(); !session.expired() || !session.refreshable || !session.usable() || !credentialsAvailableForInvocation() {
+		t.Fatalf("refreshable token misreported: %+v", session)
 	}
 }
 
