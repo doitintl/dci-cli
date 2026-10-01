@@ -1728,11 +1728,14 @@ func (recorder *recordingSpecServer) authorizedRequests() int {
 }
 
 // seedHermeticOAuthConfig is seedHermeticAPIConfig with the real OAuth
-// profile shape `dci login` writes, every endpoint pointed at base — so an
-// invocation that tries to authenticate against the hermetic server shows
-// up in its request log instead of reaching the DoiT Console.
-func seedHermeticOAuthConfig(t *testing.T, home, base string) []string {
+// profile shape `dci login` writes, every endpoint pointed at the hermetic
+// server — so an invocation that tries to authenticate against it shows
+// up in its request log instead of reaching the DoiT Console — and the
+// server's certificate pinned as tls.ca_cert, which is what the public
+// description fetch trusts (help_spec.go honors the CA, never `insecure`).
+func seedHermeticOAuthConfig(t *testing.T, home string, server *httptest.Server) []string {
 	t.Helper()
+	base := server.URL
 	environment := seedHermeticAPIConfig(t, home, base)
 	configDir := filepath.Join(home, "xdg", "dci")
 	config, err := json.Marshal(map[string]interface{}{
@@ -1748,7 +1751,7 @@ func seedHermeticOAuthConfig(t *testing.T, home, base string) []string {
 					},
 				},
 			}},
-			"tls": map[string]interface{}{"insecure": true},
+			"tls": map[string]interface{}{"insecure": true, "ca_cert": writeServerCAPEM(t, configDir, server)},
 		},
 	})
 	if err != nil {
@@ -1824,7 +1827,7 @@ func TestHelpRendersWithoutCredentials(t *testing.T) {
 		t.Helper()
 		home := t.TempDir()
 		server := newRecordingSpecServer(t, helpWithoutCredentialsSpec)
-		environment := append(seedHermeticOAuthConfig(t, home, server.URL), mode, "DCI_API_KEY=")
+		environment := append(seedHermeticOAuthConfig(t, home, server.Server), mode, "DCI_API_KEY=")
 		return append([]string{"HOME=" + home}, environment...), server
 	}
 	run := func(t *testing.T, environment []string, args ...string) cliResult {
