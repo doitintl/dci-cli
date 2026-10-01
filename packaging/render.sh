@@ -14,11 +14,22 @@ base_url="$3"
 template="$4"
 output="$5"
 
+# The values below are spliced into a sed program and into Ruby/JSON/YAML
+# manifests, so restrict them to characters that are inert in all of those.
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+  echo "ERROR: invalid version: expected MAJOR.MINOR.PATCH[-PRERELEASE]" >&2
+  exit 1
+fi
+if ! [[ "$base_url" =~ ^https://[A-Za-z0-9._~/-]+$ ]]; then
+  echo "ERROR: invalid base URL: expected https:// with only [A-Za-z0-9._~/-]" >&2
+  exit 1
+fi
+
 sha_for() {
   local file="$1"
   local hash
-  hash="$(grep "  ${file}$" "$checksum_file" | awk '{print $1}')"
-  if [ -z "$hash" ]; then
+  hash="$(awk -v f="$file" '$2 == f {print $1}' "$checksum_file")"
+  if ! [[ "$hash" =~ ^[0-9a-f]{64}$ ]]; then
     echo "ERROR: checksum not found for ${file} in ${checksum_file}" >&2
     exit 1
   fi

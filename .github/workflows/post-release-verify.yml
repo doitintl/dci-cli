@@ -24,20 +24,30 @@ jobs:
 
       - name: Resolve release tag
         id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
-            tag="${{ github.event.release.tag_name }}"
+            tag="$RELEASE_TAG"
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid release tag; expected vMAJOR.MINOR.PATCH[-PRERELEASE]."
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Download checksums
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           mkdir -p dist/verify
-          gh release download "${{ steps.release.outputs.tag }}" \
+          gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern checksums.txt \
             --dir dist/verify
@@ -73,20 +83,30 @@ jobs:
     steps:
       - name: Resolve release tag
         id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
-            tag="${{ github.event.release.tag_name }}"
+            tag="$RELEASE_TAG"
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid release tag; expected vMAJOR.MINOR.PATCH[-PRERELEASE]."
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Download amd64 deb
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           mkdir -p dist/verify
-          gh release download "${{ steps.release.outputs.tag }}" \
+          gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "*_amd64.deb" \
             --dir dist/verify
@@ -115,11 +135,20 @@ jobs:
     steps:
       - name: Resolve release tag
         id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
-            tag="${{ github.event.release.tag_name }}"
+            tag="$RELEASE_TAG"
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid release tag; expected vMAJOR.MINOR.PATCH[-PRERELEASE]."
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -129,9 +158,10 @@ jobs:
       - name: Download amd64 rpm
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           mkdir -p dist/verify
-          gh release download "${{ steps.release.outputs.tag }}" \
+          gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "*_amd64.rpm" \
             --dir dist/verify
@@ -188,11 +218,20 @@ jobs:
       - name: Resolve release tag
         id: release
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
-            tag="${{ github.event.release.tag_name }}"
+            tag="$RELEASE_TAG"
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid release tag; expected vMAJOR.MINOR.PATCH[-PRERELEASE]."
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -200,9 +239,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           mkdir -p dist/verify
-          gh release download "${{ steps.release.outputs.tag }}" \
+          gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "*_windows_amd64.zip" \
             --dir dist/verify
