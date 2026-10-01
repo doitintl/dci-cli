@@ -5,3 +5,5 @@ examples:
     command: "dci status"
   - description: Force agent mode to see the machine-oriented output.
     command: "dci status --agent"
+
+keywords: [logged in, signed in, who am i, current customer, which customer, active context, agent mode, configuration]

@@ -8,4 +8,6 @@ examples:
   - description: Just the first five.
     command: "dci budgets-at-risk --max-results 5"
 
+keywords: [overspend, breach, over budget, forecast, projected]
+
 related: [list-budgets, get-budget]

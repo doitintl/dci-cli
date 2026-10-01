@@ -15,6 +15,7 @@ var docsEntryPoints = [][2]string{
 	{"Agent documentation index", "https://help.doit.com/llms.txt"},
 	{"Agent documentation corpus", "https://help.doit.com/llms-full.txt"},
 	{"Embedded agent guidance", "dci skill <claude|codex|cursor|gemini|kiro|opencode>"},
+	{"Find a command for a task", "dci commands --search \"<task in plain words>\""},
 	{"Machine-readable commands", "dci commands --json"},
 }
 

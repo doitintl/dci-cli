@@ -54,6 +54,8 @@ type commandCatalogEntry struct {
 	Examples []commandCatalogExample `json:"examples,omitempty"`
 	Notes    string                  `json:"notes,omitempty"`
 	Related  []string                `json:"related,omitempty"`
+	// Keywords are the curated search words from the command doc; additive.
+	Keywords []string `json:"keywords,omitempty"`
 }
 
 type commandCatalogExample struct {
@@ -91,8 +93,12 @@ var requiredOperationFlags = map[string]map[string]bool{
 func registerCommandCatalog() {
 	command := &cobra.Command{
 		Use:   "commands",
-		Short: "Print the machine-readable command catalog",
-		Args:  cobra.NoArgs,
+		Short: "Print the machine-readable command catalog, or search it in plain words",
+		Long: "Print the machine-readable command catalog (every command with its arguments, flags, " +
+			"and curated examples), or pass --search to find the command for a task described in " +
+			"plain words — the catalog is large, so search first and read one command's --help " +
+			"rather than loading the whole catalog.",
+		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			apiCommand := findDCICommand()
 			if apiCommand == nil {
@@ -103,7 +109,12 @@ func registerCommandCatalog() {
 				return fmt.Errorf("load DCI command catalog: %w", err)
 			}
 			catalog := buildCommandCatalog(api)
-			if includeBeta, _ := command.Flags().GetBool("beta"); includeBeta {
+			query, searching := commandSearchRequested(command)
+			includeBeta, _ := command.Flags().GetBool("beta")
+			// Search always covers beta commands: a hit it hides is a command
+			// the caller never learns exists. Results carry stage: beta and the
+			// early-access note, so a gated hit is still an informed one.
+			if includeBeta || searching {
 				betaAPI, err := loadBetaAPI()
 				if err != nil {
 					return fmt.Errorf("load beta command catalog: %w", err)
@@ -117,13 +128,17 @@ func registerCommandCatalog() {
 					return strings.Join(catalog.Commands[i].Path, " ") < strings.Join(catalog.Commands[j].Path, " ")
 				})
 			}
+			if searching {
+				return runCommandSearch(command, catalog.Commands, query, os.Stdout)
+			}
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetIndent("", "  ")
 			return encoder.Encode(catalog)
 		},
 	}
-	command.Flags().Bool("json", false, "Emit JSON (the catalog's stable wire format)")
+	command.Flags().Bool("json", false, "Emit JSON (the catalog's stable wire format; with --search, the ranked results as JSON even at a terminal)")
 	command.Flags().Bool("beta", false, "Include beta commands (invoked as dci beta <command>; entries carry stage: beta)")
+	registerCommandSearchFlags(command)
 	cli.Root.AddCommand(command)
 }
 
@@ -262,6 +277,7 @@ func applyCommandDocToCatalogEntry(entry *commandCatalogEntry) {
 	}
 	entry.Notes = doc.Notes
 	entry.Related = doc.Related
+	entry.Keywords = doc.Keywords
 	positional := 0
 	for _, argument := range entry.Arguments {
 		if argument.Location == "path" {

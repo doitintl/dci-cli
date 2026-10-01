@@ -26,6 +26,9 @@ dci customer-context set <customer-context>
 ## Discovery and Read-Only Navigation
 
 ```bash
+# Find the command for a task before reading any --help
+dci commands --search "budgets about to overspend"
+dci commands --search "delete a report" --json
 dci list-alerts --output toon
 dci get-alert <alert-id> --output toon
 dci list-dimensions --output toon

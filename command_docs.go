@@ -46,6 +46,12 @@ type commandDoc struct {
 	// replaces omni's former command-notes/<command>.mdx overlays.
 	Notes   string   `yaml:"notes,omitempty" json:"notes,omitempty"`
 	Related []string `yaml:"related,omitempty" json:"related,omitempty"`
+	// Keywords are the plain words a user reaches for that the command name
+	// and spec summary do not contain ("spend", "how much", "logged in").
+	// They feed `dci commands --search` (command_search.go) at the same
+	// weight as the command name, and nothing else: --help and the Help
+	// Center page do not render them.
+	Keywords []string `yaml:"keywords,omitempty" json:"keywords,omitempty"`
 }
 
 type commandDocExample struct {

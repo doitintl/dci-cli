@@ -11,6 +11,8 @@ examples:
   - description: As JSON, for a CI preflight step.
     command: "dci validate --output json"
 
+keywords: [logged in, who am i, whoami, access check, permissions, credentials, api key]
+
 notes: |
   :::tip Authentication vs. access
   `dci login` proves authentication; `dci validate` confirms both identity and access under

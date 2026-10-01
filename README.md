@@ -56,6 +56,9 @@ dci --help
 # Get help for a specific command
 dci list-budgets --help
 
+# Find the command for a task described in plain words
+dci commands --search "budgets about to overspend"
+
 # Get the machine-readable command catalog
 dci commands --json
 ```
