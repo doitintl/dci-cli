@@ -324,7 +324,7 @@ func agentErrorContractEnabled() bool {
 }
 
 func executeCLI() error {
-	return executeCLIWith(cli.Run)
+	return executeCLIWith(recoveringRun(cli.Run))
 }
 
 func executeCLIWith(run func() error) error {
