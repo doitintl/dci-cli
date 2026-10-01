@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -247,30 +248,52 @@ func TestRefreshSpecCacheUnauthenticatedFetchesThePublicDescription(t *testing.T
 	}
 }
 
-func TestConfigureSpecHTTPClientTLSHonorsInsecureConfig(t *testing.T) {
+// writeServerCAPEM writes server's self-signed certificate as the PEM file
+// apis.json's tls.ca_cert points at, and returns its path.
+func writeServerCAPEM(t *testing.T, dir string, server *httptest.Server) string {
+	t.Helper()
+	path := filepath.Join(dir, "ca.pem")
+	block := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := os.WriteFile(path, block, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestConfigureSpecHTTPClientTLSTrustsTheConfiguredCA(t *testing.T) {
 	previousTransport := specHTTPClient.Transport
 	t.Cleanup(func() { specHTTPClient.Transport = previousTransport })
-	viper.Set("rsh-insecure", false)
-	t.Cleanup(func() { viper.Set("rsh-insecure", false) })
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("ok"))
+	}))
+	t.Cleanup(server.Close)
 
 	configDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), []byte(`{"dci":{"base":"https://api.example.test","tls":{}}}`), 0o600); err != nil {
+	// `insecure` alone is deliberately NOT honored for the public fetch:
+	// it would disable verification outright.
+	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), []byte(`{"dci":{"base":"https://api.example.test","tls":{"insecure":true}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	specHTTPClient.Transport = nil
 	configureSpecHTTPClientTLS(configDir)
 	if specHTTPClient.Transport != nil {
-		t.Fatal("transport replaced although apis.json trusts the system roots")
+		t.Fatal("transport replaced although apis.json names no CA")
 	}
 
-	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), []byte(`{"dci":{"base":"https://api.example.test","tls":{"insecure":true}}}`), 0o600); err != nil {
+	caPath := writeServerCAPEM(t, configDir, server)
+	if err := os.WriteFile(filepath.Join(configDir, "apis.json"), []byte(`{"dci":{"base":"https://api.example.test","tls":{"ca_cert":"`+caPath+`"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	configureSpecHTTPClientTLS(configDir)
 	transport, ok := specHTTPClient.Transport.(*http.Transport)
-	if !ok || transport.TLSClientConfig == nil || !transport.TLSClientConfig.InsecureSkipVerify {
-		t.Fatalf("transport = %#v, want InsecureSkipVerify from apis.json", specHTTPClient.Transport)
+	if !ok || transport.TLSClientConfig == nil || transport.TLSClientConfig.RootCAs == nil || transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatalf("transport = %#v, want a pinned RootCAs pool with verification on", specHTTPClient.Transport)
 	}
+	response, err := specHTTPClient.Get(server.URL + "/")
+	if err != nil {
+		t.Fatalf("fetch through the configured CA failed: %v", err)
+	}
+	response.Body.Close()
 }
 
 func TestRecoveringRunReturnsPanickedErrors(t *testing.T) {

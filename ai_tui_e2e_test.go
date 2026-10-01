@@ -863,10 +863,10 @@ func TestE2EAPICommandHelpRendersWithoutCredentials(t *testing.T) {
 		extraEnv: []string{"DCI_NO_UPDATE_CHECK=1"},
 		prepare: func(configDir, _ string) {
 			// The real apis.json shape `dci login` leaves behind, with every
-			// endpoint on the hermetic server and its self-signed cert trusted
-			// — ensureConfig keeps an existing file as is.
-			config := fmt.Sprintf(`{"dci":{"base":%q,"profiles":{"default":{"auth":{"name":"oauth-authorization-code","params":{"authorize_url":%q,"client_id":"cli","token_url":%q}}}},"tls":{"insecure":true}}}`,
-				server.URL, server.URL+"/authorize", server.URL+"/token")
+			// endpoint on the hermetic server and its certificate pinned as
+			// the CA — ensureConfig keeps an existing file as is.
+			config := fmt.Sprintf(`{"dci":{"base":%q,"profiles":{"default":{"auth":{"name":"oauth-authorization-code","params":{"authorize_url":%q,"client_id":"cli","token_url":%q}}}},"tls":{"ca_cert":%q}}}`,
+				server.URL, server.URL+"/authorize", server.URL+"/token", writeServerCAPEM(t, configDir, server))
 			if err := os.WriteFile(filepath.Join(configDir, "apis.json"), []byte(config), 0o600); err != nil {
 				t.Fatal(err)
 			}

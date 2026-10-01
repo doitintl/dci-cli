@@ -21,18 +21,19 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // specCacheTTL mirrors cli.Load's cacheAPI: a fetched description is good
@@ -143,13 +144,28 @@ func helpSpecUnavailableError(cause error) error {
 }
 
 // configureSpecHTTPClientTLS makes the unauthenticated description fetches
-// (this chapter, `dci commands`, the help-context enrichment) honor the
-// same TLS trust decision restish applies to every data request: the
-// `dci.tls.insecure` flag in apis.json, or --rsh-insecure for the
-// invocation. Without it a self-signed dev or test host that data commands
-// reach fine would fail every public fetch with a certificate error.
+// (this chapter, `dci commands`, the help-context enrichment) trust the
+// certificate authority apis.json tells restish to trust for data requests
+// (`dci.tls.ca_cert`, a PEM file), so a dev or test host signed by a
+// private CA serves help the same way it serves data. Only the pinned CA
+// is honored — never `tls.insecure`: that flag disables verification
+// outright, and a help fetch is not worth that. Against an insecure-only
+// host the public fetch simply fails and the stored credentials, if any,
+// drive restish's own load as before.
 func configureSpecHTTPClientTLS(configDir string) {
-	if !viper.GetBool("rsh-insecure") && !configTLSInsecure(filepath.Join(configDir, "apis.json")) {
+	caCertPath := configTLSCACert(filepath.Join(configDir, "apis.json"))
+	if caCertPath == "" {
+		return
+	}
+	pem, err := os.ReadFile(caCertPath)
+	if err != nil {
+		return
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
 		return
 	}
 	transport, ok := http.DefaultTransport.(*http.Transport)
@@ -157,26 +173,26 @@ func configureSpecHTTPClientTLS(configDir string) {
 		return
 	}
 	transport = transport.Clone()
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opted into by the user's own apis.json, exactly as restish honors it
+	transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	specHTTPClient.Transport = transport
 }
 
-func configTLSInsecure(configFile string) bool {
+func configTLSCACert(configFile string) string {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		return false
+		return ""
 	}
 	var config struct {
 		DCI struct {
 			TLS struct {
-				Insecure bool `json:"insecure"`
+				CACert string `json:"ca_cert"`
 			} `json:"tls"`
 		} `json:"dci"`
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
-		return false
+		return ""
 	}
-	return config.DCI.TLS.Insecure
+	return strings.TrimSpace(config.DCI.TLS.CACert)
 }
 
 // recoveringRun turns an error restish panics with before its own recovery
