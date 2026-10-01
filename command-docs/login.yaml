@@ -3,3 +3,5 @@ command: login
 examples:
   - description: Sign in through the DoiT Console in your browser.
     command: "dci login"
+
+keywords: [sign in, log in, authenticate, browser, oauth, session]

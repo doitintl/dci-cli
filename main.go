@@ -1401,6 +1401,7 @@ func maybeAgentOnboardingHint(configDir string) {
 		return // cannot persist the marker; stay silent rather than repeat forever
 	}
 	fmt.Fprintln(os.Stderr, "Agent mode is active. Useful entry points:")
+	fmt.Fprintln(os.Stderr, "  dci commands --search \"<task in plain words>\"  find the command for a task (e.g. --search \"budgets about to overspend\")")
 	fmt.Fprintln(os.Stderr, "  dci skill <agent>    install CLI usage guidance for this agent (claude, codex, cursor, gemini, kiro, opencode)")
 	fmt.Fprintln(os.Stderr, "  dci commands --json  machine-readable command catalog (args, flags, destructive metadata)")
 	fmt.Fprintln(os.Stderr, "  dci docs             documentation entry points, incl. https://help.doit.com/llms.txt")
@@ -1443,13 +1444,15 @@ const dciLongDescription = "Command-line interface for the Cloud Intelligence™
 	"(ask questions in plain English; /default help restores this screen instead).\n" +
 	"In pipes, scripts, and CI, bare `dci` prints this help.\n\n" +
 	"Documentation: https://help.doit.com/docs/cli or run `dci docs` for every entry point.\n" +
-	"AI agents: `dci skill <agent>` installs usage guidance; `dci commands --json` prints the machine-readable catalog."
+	"AI agents: `dci commands --search \"<task>\"` finds the command for a task described in plain words;\n" +
+	"`dci skill <agent>` installs usage guidance; `dci commands --json` prints the machine-readable catalog."
 
 var rootExamples = []string{
 	"  dci        (interactive AI session)",
 	"  dci status",
 	"  dci list-budgets",
 	"  dci list-reports --output table",
+	"  dci commands --search \"budgets about to overspend\"",
 }
 
 var apiExamples = []string{

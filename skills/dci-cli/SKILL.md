@@ -100,7 +100,8 @@ anatomy, and the flow archetypes.
 
 - Prefer env-scoped `DCI_CUSTOMER_CONTEXT=<customer-context> dci ...` over `dci customer-context set` unless the user explicitly wants a persistent local change.
 - Treat `create-*`, `update-*`, `delete-*`, invite, ingest, and comment-post commands as side-effectful.
-- Use `dci commands --json` when you need machine-readable argument, flag, output-shape, authentication, and destructive-operation metadata.
+- Use `dci commands --search "<task in plain words>"` to find the command for a task (e.g. `--search "budgets about to overspend"`): it returns the best-matching commands with a curated example each, so you never need the full catalog in context. Then read that one command's `--help`.
+- Use `dci commands --json` only when you need machine-readable argument, flag, output-shape, authentication, and destructive-operation metadata for the whole surface; it is large.
 - Run a side-effectful command with `--dry-run` first. Most commands print a local preview without sending a request; commands with an API-native `dryRun` parameter send a simulation request and return an action marked `"dry_run": true`.
 - Pass `--yes` only after the user has approved a command classified as destructive. Do not set `DCI_CONFIRM_DESTRUCTIVE=1` as a blanket bypass.
 - A destructive command given a name resolves it first: the confirmation names the true target (e.g. `delete-report targets report "Monthly Spend" (<report-id>)`), and the agent-mode error envelope carries `resolved: {input, name, id}`. Re-run with the ID from the hint, never the original fuzzy input.
@@ -114,7 +115,7 @@ anatomy, and the flow archetypes.
 - CLI guide: https://help.doit.com/docs/cli (append `.md` to any Help Center URL for plain Markdown, e.g. https://help.doit.com/docs/cli.md)
 - Machine-readable Help Center index: https://help.doit.com/llms.txt (full corpus: https://help.doit.com/llms-full.txt)
 - API reference: https://developer.doit.com/
-- From the terminal: `dci docs` prints these entry points; `dci <command> --help` is terse by default (`--help-full` adds the complete request/response schemas); `dci commands --json` is the machine-readable catalog.
+- From the terminal: `dci docs` prints these entry points; `dci commands --search "<task>"` finds the command for a task; `dci <command> --help` is terse by default (`--help-full` adds the complete request/response schemas); `dci commands --json` is the machine-readable catalog.
 
 ## Reference Map
 

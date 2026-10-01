@@ -12,4 +12,25 @@ examples:
   - description: A stacked chart under the table (human mode only).
     command: "dci query --chart < query.json"
 
+keywords:
+  [
+    spend,
+    cost,
+    usage,
+    how much,
+    breakdown,
+    by service,
+    by project,
+    by label,
+    last month,
+    trend,
+    analytics,
+    cloud analytics,
+    report config,
+    gcp,
+    aws,
+    azure,
+    cloud provider,
+  ]
+
 related: [get-report, get-report-config, update-report]

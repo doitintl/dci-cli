@@ -162,6 +162,12 @@ notes: |
 
 # Optional. Defaults to the other commands in the same group.
 related: [get-anomaly, list-anomalies, anomalies-recent]
+
+# Optional. Plain words a user reaches for that neither the command name nor
+# the spec summary contains. They feed `dci commands --search` at the same
+# weight as the command name and are not rendered in --help or on the web.
+# Add them when a search for the command's obvious task misses it.
+keywords: [spike, unusual spend, review, resolve]
 ```
 
 Rules:

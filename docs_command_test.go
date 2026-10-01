@@ -24,6 +24,7 @@ func TestDocsCommandListsHumanAndAgentEntryPoints(t *testing.T) {
 		"https://help.doit.com/llms.txt",
 		"https://help.doit.com/llms-full.txt",
 		"dci skill",
+		"dci commands --search",
 		"dci commands --json",
 	} {
 		if !strings.Contains(output.String(), expected) {
