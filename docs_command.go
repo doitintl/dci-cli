@@ -17,6 +17,7 @@ var docsEntryPoints = [][2]string{
 	{"Embedded agent guidance", "dci skill <claude|codex|cursor|gemini|kiro|opencode>"},
 	{"Find a command for a task", "dci commands --search \"<task in plain words>\""},
 	{"Machine-readable commands", "dci commands --json"},
+	{"Exit codes and errors", "dci --help (Exit codes paragraph); full table: https://help.doit.com/docs/cli#exit-codes"},
 }
 
 func newDocsCommand() *cobra.Command {

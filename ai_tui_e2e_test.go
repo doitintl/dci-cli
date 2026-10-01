@@ -821,6 +821,9 @@ func TestE2EDefaultHelpRoutesBareInvocation(t *testing.T) {
 
 	help := startTUISession(t, tuiSessionConfig{configDir: configDir, args: []string{}, rawFrame: true})
 	help.waitFor("(interactive AI session)") // the help screen's own example line
+	// The exit-code contract is part of the help screen, so a human (or an
+	// agent reading the same screen) learns it before the first failure.
+	help.waitFor("Exit codes: 0 success")
 	help.expectCleanExit()
 }
 
@@ -873,9 +876,17 @@ func TestE2EAPICommandHelpRendersWithoutCredentials(t *testing.T) {
 		},
 	})
 	session.waitFor("Returns every widget the account can see.")
+	// The command's help carries only the persistent flags that act on a
+	// list (help_flags.go): --search inline, the table flags folded into
+	// the pointer line, the report flags gone.
+	session.waitFor("Output flags (apply to every command; add --help-full to list them):")
 	session.expectCleanExit()
-	if text := session.snapshot(); strings.Contains(text, "Open your browser") || strings.Contains(text, "credentials") {
+	text := session.snapshot()
+	if strings.Contains(text, "Open your browser") || strings.Contains(text, "credentials") {
 		t.Fatalf("help started a login or blamed credentials:\n%s", text)
+	}
+	if !helpListsFlag(text, "search") || helpListsFlag(text, "chart") || helpListsFlag(text, "table-mode") {
+		t.Fatalf("list-widgets help lists the wrong persistent flags:\n%s", text)
 	}
 	if atomic.LoadInt32(&authorized) != 0 || atomic.LoadInt32(&authorizeHits) != 0 {
 		t.Fatalf("help authenticated: %d authorized requests, %d OAuth endpoint hits", authorized, authorizeHits)

@@ -26,6 +26,8 @@ func TestDocsCommandListsHumanAndAgentEntryPoints(t *testing.T) {
 		"dci skill",
 		"dci commands --search",
 		"dci commands --json",
+		"Exit codes and errors",
+		"https://help.doit.com/docs/cli#exit-codes",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("docs output missing %q", expected)
