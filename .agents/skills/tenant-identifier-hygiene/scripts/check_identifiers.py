@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -23,16 +24,25 @@ def normalize(text):
     return text
 
 
-def contains_identifier(text, fingerprints):
+def matching_identifier_fingerprints(text, fingerprints):
     text = normalize(text)
-    candidates = set(re.findall(r"[A-Za-z0-9]+", text))
-    for domain in re.findall(r"(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}", text):
+    candidates = re.findall(r"[A-Za-z0-9]+", text)
+    for domain in re.findall(
+        r"(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}(?![A-Za-z0-9_-])", text
+    ):
         labels = domain.lower().split(".")
-        candidates.update(".".join(labels[index:]) for index in range(len(labels) - 1))
-    return any(
-        hashlib.sha256(candidate.encode()).hexdigest() in fingerprints
+        candidates.extend(
+            ".".join(labels[index:]) for index in range(len(labels) - 1)
+        )
+    return [
+        digest
         for candidate in candidates
-    )
+        if (digest := hashlib.sha256(candidate.encode()).hexdigest()) in fingerprints
+    ]
+
+
+def contains_identifier(text, fingerprints):
+    return bool(matching_identifier_fingerprints(text, fingerprints))
 
 
 def git(*args):
@@ -49,6 +59,8 @@ def contains_identifier_in_path(path, fingerprints):
         while component:
             if contains_identifier(component, fingerprints):
                 return True
+            if component.lower().endswith(".invalid"):
+                break
             if "." not in component:
                 break
             component = component.rsplit(".", 1)[0]
@@ -68,6 +80,15 @@ def added_lines(patch):
             line_number += 1
 
 
+def removed_lines(patch):
+    in_hunk = False
+    for line in patch.splitlines():
+        if line.startswith("@@ "):
+            in_hunk = True
+        elif in_hunk and line.startswith("-"):
+            yield line[1:]
+
+
 def findings(base, head, fingerprints, cached=False):
     revisions = [base, head] if head else [base]
     options = ["--no-ext-diff", "--no-textconv", "--no-renames", "--no-color"]
@@ -76,16 +97,36 @@ def findings(base, head, fingerprints, cached=False):
     paths = git(
         "diff", *options, "--name-only", "-z", "--diff-filter=ACMT", *revisions, "--"
     )
+    introduced_paths = set(
+        git(
+            "diff", *options, "--name-only", "-z", "--diff-filter=AC", *revisions, "--"
+        ).split(b"\0")
+    )
     for raw_path in paths.split(b"\0"):
         if not raw_path:
             continue
         path = raw_path.decode("utf-8", errors="surrogateescape")
         restricted_path = contains_identifier_in_path(path, fingerprints)
-        if restricted_path:
+        if restricted_path and raw_path in introduced_paths:
             yield "<redacted filename>", 0
         patch = git("diff", *options, "--text", "--unified=0", *revisions, "--", path)
-        for number, line in added_lines(patch.decode("utf-8", errors="replace")):
-            if contains_identifier(line, fingerprints):
+        decoded_patch = patch.decode("utf-8", errors="replace")
+        existing_identifiers = Counter(
+            fingerprint
+            for line in removed_lines(decoded_patch)
+            for fingerprint in matching_identifier_fingerprints(line, fingerprints)
+        )
+        for number, line in added_lines(decoded_patch):
+            added_identifiers = Counter(
+                matching_identifier_fingerprints(line, fingerprints)
+            )
+            newly_added = False
+            for fingerprint, count in added_identifiers.items():
+                reused = min(count, existing_identifiers[fingerprint])
+                existing_identifiers[fingerprint] -= reused
+                if count > reused:
+                    newly_added = True
+            if newly_added:
                 display_path = "<redacted filename>" if restricted_path else ascii(path)
                 yield display_path, number
 
