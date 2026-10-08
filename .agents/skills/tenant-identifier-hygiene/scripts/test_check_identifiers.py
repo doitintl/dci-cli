@@ -52,6 +52,9 @@ class IdentifierTests(unittest.TestCase):
             "https://console.example.com",
             SYNTHETIC_ID.lower(),
             SYNTHETIC_DOMAIN + ".invalid",
+            SYNTHETIC_DOMAIN + "1",
+            SYNTHETIC_DOMAIN + "-foo",
+            SYNTHETIC_DOMAIN + "_suffix",
         ]:
             with self.subTest(value=value):
                 self.assertFalse(guard.contains_identifier(value, FINGERPRINTS))
@@ -103,6 +106,24 @@ class GitDiffTests(unittest.TestCase):
         self.write("runtime.txt", "new\n")
         self.assertEqual(self.scan(), [])
 
+    def test_allows_count_preserving_runtime_format_and_comment_changes(self):
+        self.write("runtime.txt", f"  {SYNTHETIC_ID}  # required routing\nold\n")
+        self.assertEqual(self.scan(), [])
+
+    def test_allows_runtime_reorder_and_line_ending_changes(self):
+        self.write("runtime.txt", f"old\n{SYNTHETIC_ID}\n")
+        self.assertEqual(self.scan(), [])
+        Path("runtime.txt").write_bytes(f"{SYNTHETIC_ID}\r\nold\r\n".encode())
+        self.assertEqual(self.scan(), [])
+
+    def test_rejects_increased_or_cross_file_identifier_occurrences(self):
+        self.write("runtime.txt", f"{SYNTHETIC_ID}\nold\n{SYNTHETIC_ID}\n")
+        self.assertEqual(self.scan(), [("'runtime.txt'", 3)])
+        self.write("runtime.txt", "old\n")
+        self.write("public.md", SYNTHETIC_ID + "\n")
+        self.run_git("add", "public.md")
+        self.assertEqual(self.scan(), [("'public.md'", 1)])
+
     def test_scans_staged_new_files_across_surfaces(self):
         for path in [
             ".hidden/example.md",
@@ -145,6 +166,32 @@ class GitDiffTests(unittest.TestCase):
         self.write(f"docs/{SYNTHETIC_DOMAIN}.md", "{CUSTOMER_ID}\n")
         self.run_git("add", ".")
         self.assertEqual(self.scan(), [("<redacted filename>", 0)])
+
+    def test_allows_invalid_suffixed_domain_filename(self):
+        path = f"docs/{SYNTHETIC_DOMAIN}.invalid.md"
+        self.write(path, "{CUSTOMER_ID}\n")
+        self.run_git("add", ".")
+        self.assertEqual(self.scan(), [])
+
+    def test_allows_cleanup_of_existing_restricted_filename(self):
+        path = f"docs/{SYNTHETIC_ID}.md"
+        self.write(path, SYNTHETIC_ID + "\n")
+        self.run_git("add", ".")
+        self.commit()
+        self.base = self.run_git("rev-parse", "HEAD").strip()
+        self.write(path, "{CUSTOMER_ID}\n")
+        self.assertEqual(self.scan(), [])
+        self.run_git("update-index", "--chmod=+x", "--", path)
+        self.assertEqual(self.scan(), [])
+
+    def test_existing_restricted_filename_still_redacts_new_content_match(self):
+        path = f"docs/{SYNTHETIC_ID}.md"
+        self.write(path, "{CUSTOMER_ID}\n")
+        self.run_git("add", ".")
+        self.commit()
+        self.base = self.run_git("rev-parse", "HEAD").strip()
+        self.write(path, SYNTHETIC_ID + "\n")
+        self.assertEqual(self.scan(), [("<redacted filename>", 1)])
 
     def test_forced_git_color_cannot_hide_matches(self):
         self.run_git("config", "color.ui", "always")

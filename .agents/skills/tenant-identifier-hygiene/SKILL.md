@@ -65,12 +65,16 @@ cases, findings, commit messages, PR descriptions, or review comments.
 
 ## Automated check and limits
 
-`scripts/check_identifiers.py` compares added lines and filenames against SHA-256
-fingerprints of known restricted identifiers. It checks all paths and extensions,
-including hidden files, docs, tests and notebooks, without a directory allowlist.
-It recognizes plain text, URL/HTML escapes, common JSON/hex escapes, and domain
-case/subdomains. It reports locations only and fails if Git/configuration cannot
-be read. Unchanged required runtime configuration is outside the added-line scan.
+`scripts/check_identifiers.py` compares newly introduced identifier occurrences
+and filenames against SHA-256 fingerprints of known restricted identifiers. It
+checks all paths and extensions, including hidden files, docs, tests and notebooks,
+without a directory allowlist. Same-file, count-preserving formatting, comment,
+line-ending and reorder changes remain existing configuration; copies, moves to a
+new path and additional occurrences are still checked. Existing restricted
+filenames can be cleaned up, but a newly introduced or renamed path is checked.
+The scanner recognizes plain text, URL/HTML escapes, common JSON/hex escapes, and
+domain case/subdomains. It reports locations only and fails if Git/configuration
+cannot be read.
 
 This is a regression check, not a classifier for every customer's ID. It does not
 detect unknown IDs, arbitrary encodings or values visible only in images, nor
