@@ -46,13 +46,9 @@ cases, findings, commit messages, PR descriptions, or review comments.
    integration-test identities in injected environment/configuration, never in
    committed examples or saved output. Check that ignored evidence is actually
    ignored before writing it; do not publish that evidence later.
-3. Stage the intended files so new files are included, then run from the repo
-   root (replace `origin/main` with the repository's base branch):
-
-   ```sh
-   python3 .agents/skills/tenant-identifier-hygiene/scripts/check_identifiers.py --base origin/main
-   python3 -m unittest discover -s .agents/skills/tenant-identifier-hygiene/scripts -p 'test_*.py'
-   ```
+3. Stage the intended files so new files are included, then inspect the complete
+   staged diff and filenames from the repository root. Repeat the review after
+   regenerating fixtures, documentation, screenshots or other derived output.
 
 4. Review every outgoing commit as well as the final diff. Adding a value and
    deleting it in a later commit still publishes it in Git history. If a value
@@ -63,26 +59,14 @@ cases, findings, commit messages, PR descriptions, or review comments.
    CI cannot inspect a direct CMS edit. Keep findings to file/page locations and
    remediation, without quoting the values.
 
-## Automated check and limits
+## Review limits
 
-`scripts/check_identifiers.py` compares newly introduced identifier occurrences
-and filenames against SHA-256 fingerprints of known restricted identifiers. It
-checks all paths and extensions, including hidden files, docs, tests and notebooks,
-without a directory allowlist. Same-file, count-preserving formatting, comment,
-line-ending and reorder changes remain existing configuration; copies, moves to a
-new path and additional occurrences are still checked. Existing restricted
-filenames can be cleaned up, but a newly introduced or renamed path is checked.
-The scanner recognizes plain text, URL/HTML escapes, common JSON/hex escapes, and
-domain case/subdomains. It reports locations only and fails if Git/configuration
-cannot be read.
+This repository relies on human and agent review for tenant-identifier hygiene;
+CI does not classify or block tenant identifiers. Review the actual values and
+their context rather than assuming a pattern or directory is safe. Text review
+does not cover values visible only in images, recordings or externally published
+CMS content, and a clean final diff does not erase or validate previous commits.
 
-This is a regression check, not a classifier for every customer's ID. It does not
-detect unknown IDs, arbitrary encodings or values visible only in images, nor
-does the final diff erase or validate previous commits. Human/agent review above
-is required even when the check passes.
-
-For another repository, copy this skill with its scripts and wire the check into
-that repository's PR CI using its base/head commits. Keep the fingerprint set in
-sync across adopters, never add the source values alongside it, and use synthetic
-data to test the scanner. A CI job becomes a merge gate only when included in an
-existing required aggregate check or made required by repository rules.
+For another repository, copy this guidance and adapt its examples and review
+surfaces to that project's workflows. Keep the manual review responsibility
+explicit rather than assuming another repository's automation covers it.

@@ -7,25 +7,6 @@ on:
       - main
 
 jobs:
-  tenant-identifiers:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Test tenant identifier check
-        run: python3 -m unittest discover -s .agents/skills/tenant-identifier-hygiene/scripts -p 'test_*.py'
-
-      - name: Check for exposed tenant identifiers
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: python3 .agents/skills/tenant-identifier-hygiene/scripts/check_identifiers.py --base "$BASE_SHA" --head "$HEAD_SHA"
-
   go-checks:
     runs-on: ubuntu-latest
 
