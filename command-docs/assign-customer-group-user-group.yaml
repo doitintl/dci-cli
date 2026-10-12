@@ -1,0 +1,21 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: assign-customer-group-user-group
+draft: true
+
+arguments:
+  customer-group-id: "Stable service-generated customer-group ID."
+  user-group-id: "Stable ID of a user group owned by the authenticated tenant."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci assign-customer-group-user-group <customer-group-id> <user-group-id>"
+
+related:
+  [
+    assign-customer-group-user,
+    create-customer-group,
+    delete-customer-group,
+    get-customer-group,
+    list-customer-group-user-groups,
+  ]
