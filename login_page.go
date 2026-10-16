@@ -271,22 +271,31 @@ func (h loginCallbackHandler) serveRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // readManualCode waits for a pasted code or redirect URL and sends the
-// extracted code (or "" for a pasted OAuth error) to the channel. Blank lines
-// are skipped so a stray Enter does not abort the login; a closed stdin just
-// leaves the browser callback as the only way in.
+// extracted code to the channel, or "" (after saying why) for a pasted OAuth
+// error or a closed stdin. Blank lines are skipped so a stray Enter does not
+// abort the login, and a pasted address with no code in it (typically the
+// sign-in URL itself) re-prompts. Ctrl-D ends the login rather than leaving
+// it parked: in a remote shell the browser callback can never arrive.
 func readManualCode(input chan string) {
 	r := bufio.NewReader(os.Stdin)
 	for {
 		line, err := r.ReadString('\n')
 		if strings.TrimSpace(line) != "" {
 			code, oauthErr := parseManualLoginInput(line)
-			if oauthErr != "" {
+			switch {
+			case oauthErr != "":
 				fmt.Fprintf(os.Stderr, "\nSign-in failed: %s\n", oauthErr)
+				input <- ""
+				return
+			case code != "":
+				input <- code
+				return
 			}
-			input <- code
-			return
+			fmt.Fprint(os.Stderr, "That address has no sign-in code in it. Paste the address the browser ended on after you signed in: ")
 		}
 		if err != nil {
+			fmt.Fprintln(os.Stderr, "\nNo code entered.")
+			input <- ""
 			return
 		}
 	}
@@ -296,7 +305,8 @@ func readManualCode(input chan string) {
 // prompt: the bare authorization code, or the whole address the browser
 // landed on (http://localhost:8484/?code=…&expires_in=90) — the natural thing
 // to copy from a "localhost refused to connect" page in a remote shell. A
-// pasted redirect carrying an OAuth error returns "" plus that error.
+// pasted redirect carrying an OAuth error returns "" plus that error; an
+// address carrying neither returns ("", "").
 func parseManualLoginInput(line string) (code, oauthErr string) {
 	text := strings.TrimSpace(line)
 	query := ""
@@ -308,10 +318,9 @@ func parseManualLoginInput(line string) (code, oauthErr string) {
 	default:
 		return text, ""
 	}
-	values, err := url.ParseQuery(query)
-	if err != nil {
-		return text, ""
-	}
+	// ParseQuery keeps every well-formed pair even when it reports an error
+	// on another, so a stray malformed parameter can't hide the code.
+	values, _ := url.ParseQuery(query)
 	if errName := values.Get("error"); errName != "" {
 		if details := values.Get("error_description"); details != "" {
 			return "", errName + ": " + details
@@ -553,22 +562,22 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 	// been piped in it is likely the request body to use after auth.
 	manualEntry := stdinIsTerminal()
 
-	// Bind synchronously so a busy port (typically a second `dci login` in
-	// another tab, the first still waiting) is reported instead of panicking
-	// in the serve goroutine. With manual entry available the login still
-	// works: the pasted redirect address carries the code either way.
-	listener, listenErr := net.Listen("tcp", redirectServer)
-	if listenErr != nil && !manualEntry {
-		return nil, fmt.Errorf("cannot start the sign-in callback on %s: %w", redirectServer, listenErr)
+	// Bind synchronously so a busy port is reported instead of panicking in
+	// the serve goroutine. Failing fast is the only safe answer: the holder is
+	// typically an earlier `dci login` still waiting in another tab, and the
+	// browser's redirect would land on IT — showing its success page while it
+	// redeems the code against its own PKCE verifier — so this login could
+	// never complete, not even by pasting.
+	listener, err := net.Listen("tcp", redirectServer)
+	if err != nil {
+		return nil, fmt.Errorf("cannot start the sign-in callback on %s — another dci login may still be waiting; cancel it (Ctrl-C in its terminal) and try again: %w", redirectServer, err)
 	}
-	if listenErr == nil {
-		go func() {
-			// Run in a goroutine until the server is closed or we get an error.
-			if err := s.Serve(listener); err != http.ErrServerClosed {
-				panic(err)
-			}
-		}()
-	}
+	go func() {
+		// Run in a goroutine until the server is closed or we get an error.
+		if err := s.Serve(listener); err != http.ErrServerClosed {
+			panic(err)
+		}
+	}()
 
 	// The login command's "Waiting for browser sign-in…" spinner redraws its
 	// line with \r, which overwrote the paste prompt below — so users in
@@ -587,13 +596,9 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 	manualCodeChan := make(chan string)
 	if manualEntry {
 		switch {
-		case remote != "" || listenErr != nil:
+		case remote != "":
 			fmt.Fprintln(os.Stderr, "")
-			if listenErr != nil {
-				fmt.Fprintf(os.Stderr, "Port %s is busy (another dci login still waiting?), so the browser can't hand the sign-in back to dci.\n", u.Port())
-			} else {
-				fmt.Fprintf(os.Stderr, "You're in %s, so the browser may not be able to hand the sign-in back to dci.\n", remote)
-			}
+			fmt.Fprintf(os.Stderr, "You're in %s, so the browser may not be able to hand the sign-in back to dci.\n", remote)
 			fmt.Fprintln(os.Stderr, "If the browser ends on a \"localhost refused to connect\" page after you sign in,")
 			fmt.Fprintln(os.Stderr, "copy that page's full address from the address bar and paste it here right away")
 			fmt.Fprintln(os.Stderr, "(the code in it expires in about 90 seconds).")
@@ -608,8 +613,10 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 	// select blocks until one code becomes available.
 	// There is currently no timeout.
 	var code string
+	fromBrowser := false
 	select {
 	case code = <-codeChan:
+		fromBrowser = true
 	case code = <-manualCodeChan:
 	}
 	fmt.Fprintln(os.Stderr, "")
@@ -621,7 +628,11 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 	}
 
 	if code == "" {
-		fmt.Fprintln(os.Stderr, "Unable to get a code. See browser for details. Aborting!")
+		if fromBrowser {
+			fmt.Fprintln(os.Stderr, "Unable to get a code. See browser for details. Aborting!")
+		} else {
+			fmt.Fprintln(os.Stderr, "Sign-in aborted.")
+		}
 		// No token was acquired here, but os.Exit still skips run()'s
 		// deferred cleanup — without this, an active DCI_API_BASE_URL
 		// override's temp dir (and its DCI_CONFIG_DIR/DCI_CACHE_DIR env
@@ -641,7 +652,10 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 	}
 
 	token, err := requestOAuthToken(ac.TokenURL, payload.Encode())
-	if err == nil {
+	// Only a browser callback served the success page with its click-to-run
+	// chip; after a pasted code there is nothing to click, so the grace
+	// window (keyed off exchangeDone) must not hold the prompt for 60s.
+	if err == nil && fromBrowser {
 		if offer := loginRunOffer; offer != nil {
 			close(offer.exchangeDone)
 		}
