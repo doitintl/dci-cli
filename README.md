@@ -7,7 +7,7 @@
 ## Installation
 
 ```bash
-# Linux (any distribution with glibc: Ubuntu, Debian, Fedora, RHEL, Cloud Shell, WSL)
+# Linux (glibc 2.34+: Ubuntu 22.04+, Debian 12+, RHEL 9+, Fedora, Cloud Shell, WSL)
 curl -fsSL https://raw.githubusercontent.com/doitintl/dci-cli/main/install.sh | sh
 
 # macOS (Homebrew; also works with Homebrew on Linux)

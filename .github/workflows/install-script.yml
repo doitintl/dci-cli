@@ -79,7 +79,7 @@ jobs:
             /usr/bin/dci --version | grep -F "version $LATEST"
           '
 
-  musl-rejected:
+  edge-systems:
     runs-on: ubuntu-latest
 
     steps:
@@ -89,9 +89,34 @@ jobs:
       - name: Alpine gets a clear glibc error
         run: |
           set +e
-          out=$(docker run --rm -v "$PWD/install.sh:/install.sh:ro" alpine:3.20 sh /install.sh 2>&1)
+          out=$(docker run --rm -v "$PWD/install.sh:/install.sh:ro" alpine:3.20 sh -c 'apk add -q curl && sh /install.sh' 2>&1)
           status=$?
           set -e
           echo "$out"
           test "$status" -ne 0
           echo "$out" | grep -F "dci needs glibc"
+
+      # A musl loader on a glibc host (Debian's musl-tools) must not trip the
+      # glibc check.
+      - name: Debian with musl-tools installs
+        run: |
+          docker run --rm -v "$PWD/install.sh:/install.sh:ro" debian:12 sh -euc '
+            apt-get update -qq && apt-get install -y -qq curl ca-certificates musl-tools >/dev/null
+            ls /lib/ld-musl-*
+            sh /install.sh
+            ~/.local/bin/dci --version
+          '
+
+      # Too-old glibc: a clear error naming the floor, and an existing dci is
+      # left in place rather than replaced by a binary that cannot start.
+      - name: Old glibc keeps the existing dci
+        run: |
+          docker run --rm -v "$PWD/install.sh:/install.sh:ro" ubuntu:20.04 sh -euc '
+            apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+            mkdir -p ~/.local/bin && printf "#!/bin/sh\necho old dci\n" > ~/.local/bin/dci && chmod +x ~/.local/bin/dci
+            if out=$(sh /install.sh 2>&1); then echo "$out"; echo "install unexpectedly succeeded"; exit 1; fi
+            echo "$out"
+            echo "$out" | grep -F "needs glibc 2.34 or newer"
+            test "$(~/.local/bin/dci)" = "old dci"
+            test -z "$(ls -A ~/.local/bin | grep -v "^dci$")"
+          '
