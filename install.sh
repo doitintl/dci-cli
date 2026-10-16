@@ -90,11 +90,36 @@ check_os() {
 		;;
 	*) fail "this installer supports Linux only -- for other systems see $RELEASES/latest" ;;
 	esac
-	# The binary links against glibc; on musl (Alpine) it would fail with a
-	# baffling "not found" at first run, so stop here with the real reason.
-	if ls /lib/ld-musl-* >/dev/null 2>&1; then
-		fail "dci needs glibc and this system uses musl (e.g. Alpine) -- use a glibc-based image such as Debian, Ubuntu, or Fedora"
-	fi
+}
+
+# GLIBC_HINT names the glibc floor of the release builds (their newest
+# GLIBC_x.y symbol version) for error messages only; the authoritative check
+# is running the downloaded binary before it replaces anything.
+GLIBC_HINT="glibc 2.34 or newer (e.g. Ubuntu 22.04+, Debian 12+, RHEL 9+, any current Fedora)"
+
+glibc_version() {
+	getconf GNU_LIBC_VERSION 2>/dev/null | sed 's/^glibc //'
+}
+
+# check_libc ARCH -- the binary links against glibc; without it (Alpine and
+# other musl systems) it would fail with a baffling "not found" at first run.
+# Glibc is detected by its presence, not by the absence of musl: Debian's
+# musl-tools package puts a musl loader on perfectly good glibc hosts.
+check_libc() {
+	[ -n "$(glibc_version)" ] && return 0
+	case "$1" in
+	amd64) loader=/lib64/ld-linux-x86-64.so.2 ;;
+	arm64) loader=/lib/ld-linux-aarch64.so.1 ;;
+	esac
+	[ -e "$loader" ] && return 0
+	fail "dci needs glibc, which this system doesn't have (musl-based systems such as Alpine aren't supported) -- use a glibc-based image such as Debian, Ubuntu, or Fedora"
+}
+
+# cannot_run WHAT OUTCOME -- explain a binary that won't start: almost always
+# a glibc older than the build needs.
+cannot_run() {
+	have=$(glibc_version)
+	fail "$1 doesn't run on this system, so $2. dci needs $GLIBC_HINT${have:+; this system has glibc $have}."
 }
 
 # fetch_checksums VERSION FILE -- the release's checksums.txt. With no version
@@ -145,6 +170,7 @@ install_user() {
 	version="$1"
 	dir="$2"
 	arch=$(detect_arch)
+	check_libc "$arch"
 	tmp="$3"
 
 	fetch_checksums "$version" "$tmp/checksums.txt"
@@ -162,18 +188,26 @@ install_user() {
 	[ -f "$tmp/x/dci" ] || fail "archive $archive has no dci binary"
 
 	mkdir -p "$dir" || fail "cannot create $dir"
-	# Copy next to the target, then rename: atomic, and safe while an older
-	# dci is running.
-	cp "$tmp/x/dci" "$dir/.dci.new.$$"
-	chmod 0755 "$dir/.dci.new.$$"
-	mv -f "$dir/.dci.new.$$" "$dir/dci"
+	# Stage next to the target, prove it runs, then rename: atomic, safe while
+	# an older dci is running, and a binary that can't start never replaces a
+	# working one. Staging in $dir (not $tmp) also sidesteps a noexec /tmp.
+	staged="$dir/.dci.new.$$"
+	cp "$tmp/x/dci" "$staged"
+	chmod 0755 "$staged"
+	# --version prints "<argv0> version X.Y.Z"; keep only the number, since
+	# argv0 here is the staging name.
+	if ! installed=$("$staged" --version 2>/dev/null); then
+		rm -f "$staged"
+		cannot_run "the downloaded dci" "nothing was installed"
+	fi
+	installed=${installed##* }
+	mv -f "$staged" "$dir/dci"
 
 	zsh_completions=""
 	install_completions "$tmp/x"
 
-	installed=$("$dir/dci" --version 2>/dev/null) || fail "installed $dir/dci but it does not run on this system"
 	say ""
-	say "Installed $installed to $dir/dci"
+	say "Installed dci $installed to $dir/dci"
 
 	other=$(command -v dci 2>/dev/null || true)
 	if [ -n "$other" ] && [ "$other" != "$dir/dci" ]; then
@@ -204,6 +238,7 @@ install_system() {
 	version="$1"
 	tmp="$2"
 	arch=$(detect_arch)
+	check_libc "$arch"
 	if has dpkg; then
 		format=deb
 	elif has rpm; then
@@ -233,10 +268,13 @@ install_system() {
 	if [ "$format" = deb ]; then
 		$sudo dpkg -i "$tmp/$package"
 	else
-		$sudo rpm -U --replacepkgs "$tmp/$package"
+		# --oldpackage lets a pinned --version roll back, as dpkg -i does.
+		$sudo rpm -U --replacepkgs --oldpackage "$tmp/$package"
 	fi
+	installed=$(/usr/bin/dci --version 2>/dev/null) ||
+		cannot_run "the installed /usr/bin/dci" "remove it with your package manager"
 	say ""
-	say "Installed $(dci --version 2>/dev/null || echo dci) system-wide."
+	say "Installed dci ${installed##* } system-wide."
 }
 
 main() {

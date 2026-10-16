@@ -83,9 +83,16 @@ it reads whatever the latest release publishes.
   survives a Cloud Shell restart). `dci update` classifies it as a standalone
   install and replaces it in place. `--system` installs the `.deb`/`.rpm`
   instead, which `dci update` then upgrades through the package.
-- **glibc only.** The binary links against glibc, so the script refuses musl
-  systems (Alpine) up front instead of leaving a binary that fails with "not
-  found".
+- **glibc only.** The binary links against glibc (2.34+, the newest `GLIBC_`
+  symbol version in the cgo build), so the script refuses systems without
+  glibc (Alpine) up front, detecting glibc by its presence rather than by a
+  musl loader (Debian's `musl-tools` installs one on glibc hosts). It also
+  runs the staged binary before replacing anything, so a too-old glibc gets
+  a clear error and keeps the existing `dci`. If the build image's glibc
+  moves, update `GLIBC_HINT` in the script and the README.
+- **Re-tested after every release.** `release.yml` dispatches
+  `install-script.yml` alongside the other post-release workflows (a
+  `GITHUB_TOKEN`-published release triggers none on its own).
 - **Truncation-safe.** All logic is in functions and `main "$@"` is the last
   line, so a partial download of the script cannot run.
 - Changes must pass `shellcheck -s sh install.sh` (POSIX sh: it runs under

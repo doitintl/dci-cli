@@ -75,6 +75,10 @@ jobs:
         run: |
           gh workflow run "Sync Package Manifests" --field tag="$RELEASE_TAG"
           gh workflow run "Post-release Verify" --field tag="$RELEASE_TAG"
+          # install.sh reads the latest release's asset names and archive
+          # layout; GITHUB_TOKEN-published releases trigger no workflows, so
+          # run its live test against the new release explicitly.
+          gh workflow run "Install Script"
 
       # Help Center changelog delivery (CHANGELOG-SPEC.md §7): hand the tag to
       # doiteng/scribe, whose deterministic job renders CHANGELOG.md into the
