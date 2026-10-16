@@ -1,0 +1,27 @@
+command: list-customer-group-user-groups
+
+arguments:
+  customer-group-id: >-
+    Customer group ID as shown by `dci list-customer-groups` (the `id` field).
+
+examples:
+  - description: The user groups assigned to a customer group.
+    command: "dci list-customer-group-user-groups <customer-group-id>"
+  - description: The response as JSON, for scripts.
+    command: "dci list-customer-group-user-groups <customer-group-id> --output json"
+  - description: Only the user group IDs.
+    command: "dci list-customer-group-user-groups <customer-group-id> --output json | jq -r '.userGroups[].userGroupId'"
+
+notes: |
+  User groups come back sorted by user group ID, as `userGroupId` entries. Users assigned
+  individually are listed by `dci list-customer-group-users`. Requires the users-manager
+  permission.
+
+related:
+  [
+    assign-customer-group-user-group,
+    unassign-customer-group-user-group,
+    list-customer-group-users,
+    get-customer-group,
+    list-customer-groups,
+  ]

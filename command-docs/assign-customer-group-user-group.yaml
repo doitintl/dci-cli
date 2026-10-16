@@ -1,0 +1,27 @@
+command: assign-customer-group-user-group
+
+arguments:
+  customer-group-id: >-
+    Customer group ID as shown by `dci list-customer-groups` (the `id` field).
+  user-group-id: >-
+    User group ID from the DoiT Console. No CLI command lists user groups, so copy the ID from
+    there.
+
+examples:
+  - description: Scope every member of a user group to a customer group.
+    command: "dci assign-customer-group-user-group <customer-group-id> <user-group-id>"
+  - description: In a script; the assignment returns no body, so branch on the exit code (non-zero when the group or user group does not exist).
+    command: "dci assign-customer-group-user-group <customer-group-id> <user-group-id> && echo assigned"
+
+notes: |
+  A successful assignment returns no body. Membership changes in the user group apply without
+  reassigning it: people added to the user group later see only the customer group's member
+  customers too. Requires the users-manager permission.
+
+related:
+  [
+    unassign-customer-group-user-group,
+    list-customer-group-user-groups,
+    assign-customer-group-user,
+    list-customer-groups,
+  ]
