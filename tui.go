@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -236,9 +237,30 @@ func styleUpdateNotice(notice string) string {
 // goroutines rewriting the same line would interleave garbage.
 var tuiSpinnerActive atomic.Bool
 
+// tuiSpinnerStop holds the running spinner's stop function so code that is
+// about to prompt on stderr can take the line back (stopActiveTUISpinner).
+var (
+	tuiSpinnerStopMu sync.Mutex
+	tuiSpinnerStop   func()
+)
+
+// stopActiveTUISpinner stops whichever spinner owns the line, if any. The
+// owner's own stop call then becomes a no-op. Needed by prompts that run
+// inside a spinner's span: the spinner's \r redraw would otherwise overwrite
+// the prompt — which is how the login flow's paste-the-code prompt went
+// unseen in Cloud Shell.
+func stopActiveTUISpinner() {
+	tuiSpinnerStopMu.Lock()
+	stop := tuiSpinnerStop
+	tuiSpinnerStopMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
 // startTUISpinner renders a single-line braille spinner on stderr and returns
 // a stop function that clears the line. A no-op outside tuiActive() or while
-// another spinner is already running.
+// another spinner is already running. The stop function is idempotent.
 func startTUISpinner(message string) func() {
 	if !tuiActive() || !tuiSpinnerActive.CompareAndSwap(false, true) {
 		return func() {}
@@ -262,11 +284,21 @@ func startTUISpinner(message string) func() {
 			}
 		}
 	}()
-	return func() {
-		close(stop)
-		<-done
-		tuiSpinnerActive.Store(false)
+	var once sync.Once
+	stopFn := func() {
+		once.Do(func() {
+			close(stop)
+			<-done
+			tuiSpinnerStopMu.Lock()
+			tuiSpinnerStop = nil
+			tuiSpinnerStopMu.Unlock()
+			tuiSpinnerActive.Store(false)
+		})
 	}
+	tuiSpinnerStopMu.Lock()
+	tuiSpinnerStop = stopFn
+	tuiSpinnerStopMu.Unlock()
+	return stopFn
 }
 
 // spinnerQuips are the waiting messages, one picked at random per request —

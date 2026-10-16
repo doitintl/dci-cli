@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -269,16 +270,87 @@ func (h loginCallbackHandler) serveRun(w http.ResponseWriter, r *http.Request) {
 	offer.clickOnce.Do(func() { close(offer.clicked) })
 }
 
-// readManualCode waits for user input and sends it to the channel with the
-// trailing newline removed.
+// readManualCode waits for a pasted code or redirect URL and sends the
+// extracted code (or "" for a pasted OAuth error) to the channel. Blank lines
+// are skipped so a stray Enter does not abort the login; a closed stdin just
+// leaves the browser callback as the only way in.
 func readManualCode(input chan string) {
 	r := bufio.NewReader(os.Stdin)
-	result, err := r.ReadString('\n')
-	if err != nil {
-		panic(err)
+	for {
+		line, err := r.ReadString('\n')
+		if strings.TrimSpace(line) != "" {
+			code, oauthErr := parseManualLoginInput(line)
+			if oauthErr != "" {
+				fmt.Fprintf(os.Stderr, "\nSign-in failed: %s\n", oauthErr)
+			}
+			input <- code
+			return
+		}
+		if err != nil {
+			return
+		}
 	}
+}
 
-	input <- strings.TrimRight(result, "\n")
+// parseManualLoginInput accepts what a user pastes at the manual-entry
+// prompt: the bare authorization code, or the whole address the browser
+// landed on (http://localhost:8484/?code=…&expires_in=90) — the natural thing
+// to copy from a "localhost refused to connect" page in a remote shell. A
+// pasted redirect carrying an OAuth error returns "" plus that error.
+func parseManualLoginInput(line string) (code, oauthErr string) {
+	text := strings.TrimSpace(line)
+	query := ""
+	switch {
+	case strings.Contains(text, "?"):
+		query = text[strings.Index(text, "?")+1:]
+	case strings.HasPrefix(text, "code=") || strings.HasPrefix(text, "error="):
+		query = text
+	default:
+		return text, ""
+	}
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		return text, ""
+	}
+	if errName := values.Get("error"); errName != "" {
+		if details := values.Get("error_description"); details != "" {
+			return "", errName + ": " + details
+		}
+		return "", errName
+	}
+	return values.Get("code"), ""
+}
+
+// remoteLoginSession names the remote shell dci is running in, or "" on a
+// local machine. In a remote shell the browser runs on a different machine,
+// so the OAuth redirect to localhost:8484 can't reach this process and the
+// user has to paste the redirect address back by hand. A var so tests can
+// pin either outcome.
+var remoteLoginSession = func() string {
+	switch {
+	case os.Getenv("CLOUD_SHELL") == "true":
+		return "Google Cloud Shell"
+	case os.Getenv("AWS_EXECUTION_ENV") == "CloudShell":
+		return "AWS CloudShell"
+	case os.Getenv("ACC_CLOUD") != "" || strings.HasPrefix(os.Getenv("AZUREPS_HOST_ENVIRONMENT"), "cloud-shell"):
+		return "Azure Cloud Shell"
+	case os.Getenv("CODESPACES") == "true":
+		return "a GitHub Codespace"
+	case os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_TTY") != "":
+		return "an SSH session"
+	}
+	return ""
+}
+
+// loginOpenBrowser opens the authorize URL; a var so tests never launch a
+// real browser.
+var loginOpenBrowser = openInBrowser
+
+// stdinIsTerminal gates the manual-entry prompt: only a live terminal is read,
+// since a piped stdin is likely the request body to use after auth. A var so
+// tests can force it.
+var stdinIsTerminal = func() bool {
+	return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
 }
 
 // oauthTokenResponse parses token-provider responses regardless of whether
@@ -476,24 +548,59 @@ func (ac *authorizationCodeTokenSource) Token() (*oauth2.Token, error) {
 		MaxHeaderBytes: 1024,
 	}
 
-	go func() {
-		// Run in a goroutine until the server is closed or we get an error.
-		if err := s.ListenAndServe(); err != http.ErrServerClosed {
-			panic(err)
-		}
-	}()
-
-	// Open auth URL in browser, print for manual use in case open fails.
-	fmt.Fprintln(os.Stderr, "Open your browser to log in using the URL:")
-	fmt.Fprintln(os.Stderr, authorizeURL.String())
-	_ = openInBrowser(authorizeURL.String())
-
 	// Provide a way to manually enter the code, e.g. for remote SSH sessions.
 	// Only read from stdin if it is a live terminal, if a file or command has
 	// been piped in it is likely the request body to use after auth.
+	manualEntry := stdinIsTerminal()
+
+	// Bind synchronously so a busy port (typically a second `dci login` in
+	// another tab, the first still waiting) is reported instead of panicking
+	// in the serve goroutine. With manual entry available the login still
+	// works: the pasted redirect address carries the code either way.
+	listener, listenErr := net.Listen("tcp", redirectServer)
+	if listenErr != nil && !manualEntry {
+		return nil, fmt.Errorf("cannot start the sign-in callback on %s: %w", redirectServer, listenErr)
+	}
+	if listenErr == nil {
+		go func() {
+			// Run in a goroutine until the server is closed or we get an error.
+			if err := s.Serve(listener); err != http.ErrServerClosed {
+				panic(err)
+			}
+		}()
+	}
+
+	// The login command's "Waiting for browser sign-in…" spinner redraws its
+	// line with \r, which overwrote the paste prompt below — so users in
+	// Cloud Shell never learned they could paste the code and were stuck on
+	// "localhost refused to connect". The prompt owns the line instead.
+	if manualEntry {
+		stopActiveTUISpinner()
+	}
+
+	// Open auth URL in browser, print for manual use in case open fails.
+	remote := remoteLoginSession()
+	fmt.Fprintln(os.Stderr, "Open your browser to log in using the URL:")
+	fmt.Fprintln(os.Stderr, authorizeURL.String())
+	_ = loginOpenBrowser(authorizeURL.String())
+
 	manualCodeChan := make(chan string)
-	if isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd()) {
-		fmt.Fprint(os.Stderr, "Alternatively, enter the code manually: ")
+	if manualEntry {
+		switch {
+		case remote != "" || listenErr != nil:
+			fmt.Fprintln(os.Stderr, "")
+			if listenErr != nil {
+				fmt.Fprintf(os.Stderr, "Port %s is busy (another dci login still waiting?), so the browser can't hand the sign-in back to dci.\n", u.Port())
+			} else {
+				fmt.Fprintf(os.Stderr, "You're in %s, so the browser may not be able to hand the sign-in back to dci.\n", remote)
+			}
+			fmt.Fprintln(os.Stderr, "If the browser ends on a \"localhost refused to connect\" page after you sign in,")
+			fmt.Fprintln(os.Stderr, "copy that page's full address from the address bar and paste it here right away")
+			fmt.Fprintln(os.Stderr, "(the code in it expires in about 90 seconds).")
+			fmt.Fprint(os.Stderr, "Paste the address: ")
+		default:
+			fmt.Fprint(os.Stderr, "Alternatively, paste the code or the browser's redirect address here: ")
+		}
 		go readManualCode(manualCodeChan)
 	}
 

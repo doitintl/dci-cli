@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -595,5 +597,157 @@ func TestExecLoginRunSuggestionReplacesTheProcessImage(t *testing.T) {
 		if gotArgv[i+1] != want {
 			t.Fatalf("exec argv = %v, want suffix %v", gotArgv, loginRunSuggestion)
 		}
+	}
+}
+
+func TestParseManualLoginInput(t *testing.T) {
+	cases := []struct {
+		name, input, wantCode, wantErr string
+	}{
+		{"bare code", "abc123\n", "abc123", ""},
+		{"bare code with CRLF and spaces", "  abc123\r\n", "abc123", ""},
+		{"full redirect URL from the address bar", "http://localhost:8484/?code=whRWBx3y_n82s0&expires_in=90\n", "whRWBx3y_n82s0", ""},
+		{"redirect URL without scheme", "localhost:8484/?expires_in=90&code=xyz", "xyz", ""},
+		{"bare query string", "code=xyz&expires_in=90", "xyz", ""},
+		{"OAuth error redirect", "http://localhost:8484/?error=access_denied&error_description=User+cancelled", "", "access_denied: User cancelled"},
+		{"OAuth error without description", "http://localhost:8484/?error=access_denied", "", "access_denied"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, oauthErr := parseManualLoginInput(tc.input)
+			if code != tc.wantCode || oauthErr != tc.wantErr {
+				t.Fatalf("parseManualLoginInput(%q) = (%q, %q), want (%q, %q)", tc.input, code, oauthErr, tc.wantCode, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestRemoteLoginSession(t *testing.T) {
+	remoteEnv := []string{"CLOUD_SHELL", "AWS_EXECUTION_ENV", "ACC_CLOUD", "AZUREPS_HOST_ENVIRONMENT", "CODESPACES", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}
+	cases := []struct {
+		name, key, value, want string
+	}{
+		{"local machine", "", "", ""},
+		{"Google Cloud Shell (incl. the Firebase console's)", "CLOUD_SHELL", "true", "Google Cloud Shell"},
+		{"AWS CloudShell", "AWS_EXECUTION_ENV", "CloudShell", "AWS CloudShell"},
+		{"AWS Lambda is not CloudShell", "AWS_EXECUTION_ENV", "AWS_Lambda_go1.x", ""},
+		{"Azure Cloud Shell", "ACC_CLOUD", "PROD", "Azure Cloud Shell"},
+		{"Codespaces", "CODESPACES", "true", "a GitHub Codespace"},
+		{"SSH", "SSH_CONNECTION", "10.0.0.1 51000 10.0.0.2 22", "an SSH session"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, key := range remoteEnv {
+				t.Setenv(key, "")
+			}
+			if tc.key != "" {
+				t.Setenv(tc.key, tc.value)
+			}
+			if got := remoteLoginSession(); got != tc.want {
+				t.Fatalf("remoteLoginSession() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStopActiveTUISpinnerReleasesTheLine(t *testing.T) {
+	forceTUI(t, true)
+	stop := startTUISpinner("Waiting for browser sign-in…")
+	stopActiveTUISpinner()
+	if tuiSpinnerActive.Load() {
+		t.Fatal("stopActiveTUISpinner must release the line")
+	}
+	stop() // the owner's own stop must now be a harmless no-op
+	stopActiveTUISpinner()
+}
+
+// TestTokenAcceptsPastedRedirectInRemoteShell replays the Cloud Shell report:
+// the browser cannot reach the callback, so the user pastes the address it
+// landed on. The login spinner must yield the line to the paste prompt, and
+// a busy callback port must not panic the process.
+func TestTokenAcceptsPastedRedirectInRemoteShell(t *testing.T) {
+	cases := []struct {
+		name       string
+		remote     string
+		occupyPort bool
+		wantPrompt string
+	}{
+		{"Cloud Shell", "Google Cloud Shell", false, "You're in Google Cloud Shell"},
+		{"callback port already taken", "", true, "is busy"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				if r.Form.Get("code") != "pasted-code" {
+					http.Error(w, "bad code "+r.Form.Get("code"), http.StatusBadRequest)
+					return
+				}
+				fmt.Fprint(w, `{"token_type":"Bearer","access_token":"tok","expires_in":3600}`)
+			}))
+			t.Cleanup(tokenServer.Close)
+
+			blocker, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			port := blocker.Addr().(*net.TCPAddr).Port
+			if !tc.occupyPort {
+				blocker.Close()
+			} else {
+				t.Cleanup(func() { blocker.Close() })
+			}
+
+			forceTUI(t, true)
+			restore := stubLoginFlow(t, tc.remote)
+			defer restore()
+
+			stdinR, stdinW, _ := os.Pipe()
+			stderrR, stderrW, _ := os.Pipe()
+			origStdin, origStderr := os.Stdin, os.Stderr
+			os.Stdin, os.Stderr = stdinR, stderrW
+			t.Cleanup(func() { os.Stdin, os.Stderr = origStdin, origStderr })
+			stderrText := make(chan string, 1)
+			go func() {
+				b, _ := io.ReadAll(stderrR)
+				stderrText <- string(b)
+			}()
+
+			stopSpinner := startTUISpinner("Waiting for browser sign-in… (Ctrl-C to cancel)")
+			fmt.Fprintf(stdinW, "\nhttp://127.0.0.1:%d/?code=pasted-code&expires_in=90\n", port)
+			ac := &authorizationCodeTokenSource{
+				ClientID:     "cli",
+				AuthorizeURL: "https://console.example.com/sign-in/oauth",
+				TokenURL:     tokenServer.URL,
+				RedirectURL:  fmt.Sprintf("http://127.0.0.1:%d", port),
+			}
+			token, err := ac.Token()
+			stopSpinner()
+			os.Stderr = origStderr
+			stderrW.Close()
+			out := <-stderrText
+
+			if err != nil || token.AccessToken != "tok" {
+				t.Fatalf("Token() = %v, %v\n%s", token, err, out)
+			}
+			if !strings.Contains(out, tc.wantPrompt) || !strings.Contains(out, "Paste the address: ") {
+				t.Fatalf("missing remote paste instructions:\n%s", out)
+			}
+			if strings.Contains(out[strings.Index(out, "Paste the address: "):], "Waiting for browser sign-in") {
+				t.Fatalf("spinner kept redrawing over the paste prompt:\n%s", out)
+			}
+		})
+	}
+}
+
+func stubLoginFlow(t *testing.T, remote string) func() {
+	t.Helper()
+	prevHeadless, prevRemote, prevStdin, prevOpen := loginFlowHeadless, remoteLoginSession, stdinIsTerminal, loginOpenBrowser
+	loginFlowHeadless = func() bool { return false }
+	remoteLoginSession = func() string { return remote }
+	stdinIsTerminal = func() bool { return true }
+	loginOpenBrowser = func(string) error { return nil }
+	return func() {
+		loginFlowHeadless, remoteLoginSession, stdinIsTerminal, loginOpenBrowser = prevHeadless, prevRemote, prevStdin, prevOpen
 	}
 }
