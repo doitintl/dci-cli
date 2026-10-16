@@ -1,0 +1,97 @@
+name: Install Script
+
+# Exercises install.sh (the `curl … | sh` Linux installer) against the real
+# GitHub Releases on every change to it, and weekly so a change to the
+# release assets (names, archive layout, checksums.txt) that breaks the
+# installer is caught without waiting for a user report.
+
+on:
+  pull_request:
+    paths:
+      - install.sh
+      - .github/workflows/install-script.yml
+  push:
+    branches:
+      - main
+    paths:
+      - install.sh
+      - .github/workflows/install-script.yml
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Shellcheck install.sh
+        run: shellcheck -s sh install.sh
+
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        image: ["ubuntu:24.04", "debian:12", "fedora:41"]
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve latest release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "version=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+
+      # Inside a stock container, as a non-root user: the default install
+      # goes to ~/.local/bin with completions, a pinned version is honored,
+      # and --system installs the distro package.
+      - name: Install in ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+          LATEST: ${{ steps.latest.outputs.version }}
+        run: |
+          docker run --rm -e LATEST -v "$PWD/install.sh:/install.sh:ro" "$IMAGE" sh -euc '
+            if command -v apt-get >/dev/null; then
+              apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+            else
+              dnf install -y -q util-linux shadow-utils >/dev/null  # su, useradd
+            fi
+            useradd -m tester
+
+            su tester -c "sh /install.sh"
+            su tester -c "~/.local/bin/dci --version" | grep -F "version $LATEST"
+            su tester -c "test -f ~/.local/share/bash-completion/completions/dci && test -f ~/.config/fish/completions/dci.fish && test -f ~/.local/share/zsh/site-functions/_dci"
+
+            su tester -c "sh /install.sh --version 2.7.5"
+            su tester -c "~/.local/bin/dci --version" | grep -F "version 2.7.5"
+
+            sh /install.sh --system
+            /usr/bin/dci --version | grep -F "version $LATEST"
+          '
+
+  musl-rejected:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Alpine gets a clear glibc error
+        run: |
+          set +e
+          out=$(docker run --rm -v "$PWD/install.sh:/install.sh:ro" alpine:3.20 sh /install.sh 2>&1)
+          status=$?
+          set -e
+          echo "$out"
+          test "$status" -ne 0
+          echo "$out" | grep -F "dci needs glibc"
