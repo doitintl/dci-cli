@@ -7,6 +7,7 @@ This document covers how `dci` releases are built, published, and distributed ac
 | Channel          | Install command                                                                 |
 |------------------|---------------------------------------------------------------------------------|
 | GitHub Releases  | Download from [Releases](https://github.com/doitintl/dci-cli/releases/latest)  |
+| Linux installer  | `curl -fsSL https://raw.githubusercontent.com/doitintl/dci-cli/main/install.sh \| sh` |
 | Homebrew (macOS) | `brew install doitintl/dci-cli/dci`                                             |
 | Scoop (Windows)  | `scoop bucket add doitintl https://github.com/doitintl/dci-cli && scoop install dci` |
 | WinGet (Windows) | `winget install DoiT.dci`                                                       |
@@ -28,6 +29,7 @@ This document covers how `dci` releases are built, published, and distributed ac
    - **`release.yml`** — builds binaries, archives, `.deb`/`.rpm` packages, and publishes a GitHub Release.
    - **`sync-manifests.yml`** — renders and commits Homebrew and Scoop manifests to this repo, and submits a PR to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) for WinGet.
    - **`post-release-verify.yml`** — smoke-tests Homebrew, `.deb`, `.rpm`, and Windows zip installs.
+   - **`install-script.yml`** (not tag-triggered) — runs `install.sh` against the live releases on every change to it and weekly; see [Linux installer](#linux-installer).
 
 ## Release Artifacts
 
@@ -62,6 +64,33 @@ Shell completions:
 - `post-release-verify.yml` asserts the completion files land in the Homebrew,
   `.deb`, `.rpm`, and Windows zip installs.
 
+## Linux Installer
+
+`install.sh` at the repo root is the one-command Linux install, served straight
+from `main` via raw.githubusercontent.com. It is not part of the release build:
+it reads whatever the latest release publishes.
+
+- **Version and checksum come from `checksums.txt`.** With no `--version`, the
+  script downloads `releases/latest/download/checksums.txt` and takes the
+  version from the archive name in it, so it never calls the GitHub API (whose
+  unauthenticated limit shared Cloud Shell and CI IPs hit). A checksum mismatch
+  or a missing checksum tool is a hard failure.
+- **It depends on the release asset names** `dci_<version>_linux_<arch>.tar.gz`
+  / `.deb` / `.rpm` and on the archive layout (`dci` at the root,
+  `completions/`). Renaming either in `.goreleaser.yaml` breaks the installer;
+  `install-script.yml` catches that weekly at the latest.
+- **Default install is `~/.local/bin`** (no root; the only location that
+  survives a Cloud Shell restart). `dci update` classifies it as a standalone
+  install and replaces it in place. `--system` installs the `.deb`/`.rpm`
+  instead, which `dci update` then upgrades through the package.
+- **glibc only.** The binary links against glibc, so the script refuses musl
+  systems (Alpine) up front instead of leaving a binary that fails with "not
+  found".
+- **Truncation-safe.** All logic is in functions and `main "$@"` is the last
+  line, so a partial download of the script cannot run.
+- Changes must pass `shellcheck -s sh install.sh` (POSIX sh: it runs under
+  dash on Debian/Ubuntu).
+
 ## Repository Layout (Distribution Files)
 
 ```
@@ -69,6 +98,8 @@ Shell completions:
 .github/workflows/release.yml      # Tag-triggered release
 .github/workflows/sync-manifests.yml
 .github/workflows/post-release-verify.yml
+.github/workflows/install-script.yml # Tests install.sh against live releases
+install.sh                          # One-command Linux installer (served from main)
 packaging/render.sh                 # Template renderer for manifests
 packaging/completions.sh            # Generates shell completion scripts
 packaging/homebrew/dci.rb.tmpl

@@ -7,7 +7,10 @@
 ## Installation
 
 ```bash
-# macOS (Homebrew)
+# Linux (any distribution with glibc: Ubuntu, Debian, Fedora, RHEL, Cloud Shell, WSL)
+curl -fsSL https://raw.githubusercontent.com/doitintl/dci-cli/main/install.sh | sh
+
+# macOS (Homebrew; also works with Homebrew on Linux)
 brew install doitintl/dci-cli/dci
 
 # Windows (WinGet)
@@ -22,6 +25,19 @@ sudo dpkg -i dci_*_linux_amd64.deb
 
 # Linux (.rpm)
 sudo rpm -i dci_*_linux_amd64.rpm
+```
+
+The Linux install command downloads the release for your machine, verifies its checksum, and installs `dci` to `~/.local/bin` with tab completion for bash, zsh, and fish. It needs no `sudo`, and it is the right choice for Google Cloud Shell, which keeps only your home directory when the session restarts. Options go after `sh -s --`:
+
+```bash
+# A specific version
+curl -fsSL https://raw.githubusercontent.com/doitintl/dci-cli/main/install.sh | sh -s -- --version 2.8.0
+
+# A different directory
+curl -fsSL https://raw.githubusercontent.com/doitintl/dci-cli/main/install.sh | sh -s -- --dir ~/bin
+
+# The .deb/.rpm package, system-wide (uses sudo)
+curl -fsSL https://raw.githubusercontent.com/doitintl/dci-cli/main/install.sh | sh -s -- --system
 ```
 
 Prebuilt binaries for all platforms are available on the [Releases](https://github.com/doitintl/dci-cli/releases/latest) page.
@@ -147,9 +163,10 @@ DCI_NO_RESOLVE=1 dci ...        # turn name resolution off entirely (for scripts
 
 ## Shell Completion
 
-Tab completion for commands and flags is installed automatically by Homebrew
-and the `.deb`/`.rpm` packages (bash, zsh, and fish). The release archives also
-ship the scripts under `completions/`.
+Tab completion for commands and flags is installed automatically by Homebrew,
+the `.deb`/`.rpm` packages, and the Linux install command (bash, zsh, and fish;
+for zsh, the install command prints the one `fpath` line to add to `~/.zshrc`).
+The release archives also ship the scripts under `completions/`.
 
 On Windows (WinGet or Scoop), add this line to your PowerShell profile:
 
@@ -333,7 +350,7 @@ Run `dci update` (alias: `dci upgrade`) to update in place on any OS. It knows h
 
 - **Homebrew / Scoop / WinGet** installs run the package manager's own upgrade command for you.
 - **`.deb`/`.rpm`** installs download the new package, verify its checksum, and run the install step with `sudo` (you'll be asked for your password).
-- **Standalone binaries** (tarball, `~/bin`, CI) are replaced directly after validating the release checksum.
+- **Standalone binaries** (the Linux install command, tarball, `~/bin`, CI) are replaced directly after validating the release checksum.
 
 Useful flags: `--check` only reports whether an update is available, `--yes` skips the confirmation, and `--version vX.Y.Z` pins or rolls back a standalone install to a specific release. In agent mode the command never installs without `--yes` and reports a JSON result.
 
