@@ -1,0 +1,18 @@
+command: list-composer-recipes
+
+examples:
+  - description: Recipes that currently have active findings, most severe first.
+    command: "dci list-composer-recipes --filter has_active_results:true"
+  - description: Critical and high severity recipes on AWS or Google Cloud; quote a filter that contains `|`.
+    command: "dci list-composer-recipes --filter 'severity:critical,high|provider:aws,gcp'"
+  - description: Cost recipes, the most active findings first.
+    command: "dci list-composer-recipes --filter pillar:cost --sort-by active_results_count"
+  - description: Every page as JSON, for scripts.
+    command: "dci list-composer-recipes --all --output json"
+
+notes: |
+  Only recipes with results in your recently scanned cloud accounts are listed. Dismissed recipes
+  appear with `status: dismissed` and every count set to 0. Pass a recipe's `id` to
+  `dci list-composer-recipe-results` to see its findings.
+
+related: [list-composer-recipe-results]

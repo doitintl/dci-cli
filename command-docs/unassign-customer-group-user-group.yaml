@@ -1,0 +1,27 @@
+command: unassign-customer-group-user-group
+
+arguments:
+  customer-group-id: >-
+    Customer group ID as shown by `dci list-customer-groups` (the `id` field).
+  user-group-id: >-
+    User group ID as shown by `dci list-customer-group-user-groups <customer-group-id>` (the
+    `userGroupId` field).
+
+examples:
+  - description: Preview the removal without sending a request.
+    command: "dci unassign-customer-group-user-group <customer-group-id> <user-group-id> --dry-run"
+  - description: Remove a user group from a customer group without an interactive prompt, for scripts.
+    command: "dci unassign-customer-group-user-group <customer-group-id> <user-group-id> --yes"
+
+notes: |
+  The user group and its members keep their accounts and roles; only the customer-group scope
+  that came through this user group is removed. Members also assigned individually (see
+  `dci list-customer-group-users`) keep that assignment. Requires the users-manager permission.
+
+related:
+  [
+    assign-customer-group-user-group,
+    list-customer-group-user-groups,
+    unassign-customer-group-user,
+    delete-customer-group,
+  ]

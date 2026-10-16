@@ -1,0 +1,22 @@
+command: list-composer-recipe-results
+
+arguments:
+  recipe-id: >-
+    Recipe ID as shown by `dci list-composer-recipes` (the `id` field).
+
+examples:
+  - description: The recipe's findings from each account's most recent scan, newest first.
+    command: "dci list-composer-recipe-results <recipe-id>"
+  - description: Only active findings in two regions; quote a filter that contains `|`.
+    command: "dci list-composer-recipe-results <recipe-id> --filter 'region:us-east-1,us-west-2|status:active'"
+  - description: The findings with the largest potential savings first.
+    command: "dci list-composer-recipe-results <recipe-id> --sort-by cost_estimation_potential_savings"
+  - description: Resolved findings, which need results from every scan (`last_scan_only:false`).
+    command: "dci list-composer-recipe-results <recipe-id> --filter 'status:resolved|last_scan_only:false'"
+
+notes: |
+  An unknown, dismissed, or not-entitled recipe returns an empty list rather than an error. By
+  default only each account's most recent scan counts, so the number of findings can be lower than
+  the recipe's `totalResultsCount` in `dci list-composer-recipes`.
+
+related: [list-composer-recipes]
