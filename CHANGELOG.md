@@ -26,6 +26,39 @@ latest version, run `dci update`, or see
 [install and update](https://help.doit.com/docs/cli#download-and-install) in
 the CLI guide.
 
+## v2.9.0 — October 16, 2026
+
+### New
+
+- Install on Linux with one command:
+  `curl -fsSL https://raw.githubusercontent.com/doitintl/dci-cli/main/install.sh | sh`.
+  It downloads the build for your machine, verifies its checksum, and
+  installs `dci` with tab completion to `~/.local/bin` — no `sudo` needed,
+  and the install survives Google Cloud Shell restarts. `dci update` keeps
+  it current. Add `--version`, `--dir`, or `--system` (to install the
+  `.deb`/`.rpm` package instead) after `sh -s --`. Requires glibc 2.34 or
+  newer, such as Ubuntu 22.04, Debian 12, or RHEL 9. See
+  [Download and install](https://help.doit.com/docs/cli#download-and-install).
+- `--help` shows curated examples for the Composer recipe commands —
+  `dci list-composer-recipes` and `dci list-composer-recipe-results`,
+  including how to quote filters such as `'severity:critical,high|provider:aws,gcp'`
+  — and for assigning whole user groups to customer groups with
+  `dci assign-customer-group-user-group` and its list and unassign
+  commands.
+
+### Fixed
+
+- `dci login` works from Google Cloud Shell (including the one in the
+  Firebase console), SSH sessions, and other remote shells. When the
+  browser ends on a "localhost refused to connect" page after you sign in,
+  paste that page's address at the prompt and the login completes. The
+  prompt used to be hidden behind the progress spinner and accepted only a
+  bare code. See
+  [Authentication](https://help.doit.com/docs/cli#authentication).
+- Starting `dci login` while another login is still waiting for the
+  browser now stops with a message to cancel the other one, instead of
+  crashing.
+
 ## v2.8.0 — October 1, 2026
 
 ### New
