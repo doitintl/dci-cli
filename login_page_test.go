@@ -611,6 +611,8 @@ func TestParseManualLoginInput(t *testing.T) {
 		{"bare query string", "code=xyz&expires_in=90", "xyz", ""},
 		{"OAuth error redirect", "http://localhost:8484/?error=access_denied&error_description=User+cancelled", "", "access_denied: User cancelled"},
 		{"OAuth error without description", "http://localhost:8484/?error=access_denied", "", "access_denied"},
+		{"the sign-in URL itself has no code", "https://console.doit.com/sign-in/oauth?client_id=cli&response_type=code", "", ""},
+		{"a malformed parameter does not hide the code", "http://localhost:8484/?bad=%zz&code=xyz", "xyz", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -663,91 +665,142 @@ func TestStopActiveTUISpinnerReleasesTheLine(t *testing.T) {
 
 // TestTokenAcceptsPastedRedirectInRemoteShell replays the Cloud Shell report:
 // the browser cannot reach the callback, so the user pastes the address it
-// landed on. The login spinner must yield the line to the paste prompt, and
-// a busy callback port must not panic the process.
+// landed on. The login spinner must yield the line to the paste prompt, a
+// pasted sign-in URL (no code) must re-prompt instead of aborting, and the
+// click-to-run grace window must stay disarmed — the browser never showed
+// the success page, so there is nothing to click.
 func TestTokenAcceptsPastedRedirectInRemoteShell(t *testing.T) {
-	cases := []struct {
-		name       string
-		remote     string
-		occupyPort bool
-		wantPrompt string
-	}{
-		{"Cloud Shell", "Google Cloud Shell", false, "You're in Google Cloud Shell"},
-		{"callback port already taken", "", true, "is busy"},
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.Form.Get("code") != "pasted-code" {
+			http.Error(w, "bad code "+r.Form.Get("code"), http.StatusBadRequest)
+			return
+		}
+		fmt.Fprint(w, `{"token_type":"Bearer","access_token":"tok","expires_in":3600}`)
+	}))
+	t.Cleanup(tokenServer.Close)
+	port := freeLoopbackPort(t)
+
+	forceTUI(t, true)
+	stubLoginFlow(t, "Google Cloud Shell")
+	previousOffer := loginRunOffer
+	loginRunOffer = newRunOffer()
+	t.Cleanup(func() { loginRunOffer = previousOffer })
+
+	stdinW, readStderr := redirectLoginStdio(t)
+	stopSpinner := startTUISpinner("Waiting for browser sign-in… (Ctrl-C to cancel)")
+	fmt.Fprintf(stdinW, "\nhttps://console.example.com/sign-in/oauth?client_id=cli\nhttp://127.0.0.1:%d/?code=pasted-code&expires_in=90\n", port)
+	ac := &authorizationCodeTokenSource{
+		ClientID:     "cli",
+		AuthorizeURL: "https://console.example.com/sign-in/oauth",
+		TokenURL:     tokenServer.URL,
+		RedirectURL:  fmt.Sprintf("http://127.0.0.1:%d", port),
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_ = r.ParseForm()
-				if r.Form.Get("code") != "pasted-code" {
-					http.Error(w, "bad code "+r.Form.Get("code"), http.StatusBadRequest)
-					return
-				}
-				fmt.Fprint(w, `{"token_type":"Bearer","access_token":"tok","expires_in":3600}`)
-			}))
-			t.Cleanup(tokenServer.Close)
+	token, err := ac.Token()
+	stopSpinner()
+	out := readStderr()
 
-			blocker, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			port := blocker.Addr().(*net.TCPAddr).Port
-			if !tc.occupyPort {
-				blocker.Close()
-			} else {
-				t.Cleanup(func() { blocker.Close() })
-			}
-
-			forceTUI(t, true)
-			restore := stubLoginFlow(t, tc.remote)
-			defer restore()
-
-			stdinR, stdinW, _ := os.Pipe()
-			stderrR, stderrW, _ := os.Pipe()
-			origStdin, origStderr := os.Stdin, os.Stderr
-			os.Stdin, os.Stderr = stdinR, stderrW
-			t.Cleanup(func() { os.Stdin, os.Stderr = origStdin, origStderr })
-			stderrText := make(chan string, 1)
-			go func() {
-				b, _ := io.ReadAll(stderrR)
-				stderrText <- string(b)
-			}()
-
-			stopSpinner := startTUISpinner("Waiting for browser sign-in… (Ctrl-C to cancel)")
-			fmt.Fprintf(stdinW, "\nhttp://127.0.0.1:%d/?code=pasted-code&expires_in=90\n", port)
-			ac := &authorizationCodeTokenSource{
-				ClientID:     "cli",
-				AuthorizeURL: "https://console.example.com/sign-in/oauth",
-				TokenURL:     tokenServer.URL,
-				RedirectURL:  fmt.Sprintf("http://127.0.0.1:%d", port),
-			}
-			token, err := ac.Token()
-			stopSpinner()
-			os.Stderr = origStderr
-			stderrW.Close()
-			out := <-stderrText
-
-			if err != nil || token.AccessToken != "tok" {
-				t.Fatalf("Token() = %v, %v\n%s", token, err, out)
-			}
-			if !strings.Contains(out, tc.wantPrompt) || !strings.Contains(out, "Paste the address: ") {
-				t.Fatalf("missing remote paste instructions:\n%s", out)
-			}
-			if strings.Contains(out[strings.Index(out, "Paste the address: "):], "Waiting for browser sign-in") {
-				t.Fatalf("spinner kept redrawing over the paste prompt:\n%s", out)
-			}
-		})
+	if err != nil || token.AccessToken != "tok" {
+		t.Fatalf("Token() = %v, %v\n%s", token, err, out)
+	}
+	if !strings.Contains(out, "You're in Google Cloud Shell") || !strings.Contains(out, "Paste the address: ") {
+		t.Fatalf("missing remote paste instructions:\n%s", out)
+	}
+	if !strings.Contains(out, "has no sign-in code in it") {
+		t.Fatalf("pasting the sign-in URL did not re-prompt:\n%s", out)
+	}
+	if strings.Contains(out[strings.Index(out, "Paste the address: "):], "Waiting for browser sign-in") {
+		t.Fatalf("spinner kept redrawing over the paste prompt:\n%s", out)
+	}
+	select {
+	case <-loginRunOffer.exchangeDone:
+		t.Fatal("a pasted code armed the click-to-run grace window")
+	default:
 	}
 }
 
-func stubLoginFlow(t *testing.T, remote string) func() {
+// TestTokenFailsFastOnBusyCallbackPort: the holder of 8484 is typically an
+// earlier login still waiting, which would catch the browser redirect and
+// redeem the code itself — so this login must stop with a remedy, not panic
+// or wait for a paste that can never work.
+func TestTokenFailsFastOnBusyCallbackPort(t *testing.T) {
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { blocker.Close() })
+	stubLoginFlow(t, "")
+
+	ac := &authorizationCodeTokenSource{
+		AuthorizeURL: "https://console.example.com/sign-in/oauth",
+		RedirectURL:  "http://" + blocker.Addr().String(),
+	}
+	_, err = ac.Token()
+	if err == nil || !strings.Contains(err.Error(), "another dci login may still be waiting") {
+		t.Fatalf("Token() error = %v", err)
+	}
+}
+
+// TestReadManualCodeEndsOnClosedStdin: Ctrl-D at the paste prompt must end
+// the login — in a remote shell no callback will ever arrive to unblock it.
+func TestReadManualCodeEndsOnClosedStdin(t *testing.T) {
+	stdinW, readStderr := redirectLoginStdio(t)
+	stdinW.Close()
+	codes := make(chan string, 1)
+	go readManualCode(codes)
+	select {
+	case code := <-codes:
+		if code != "" {
+			t.Fatalf("code = %q, want empty", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readManualCode did not return on a closed stdin")
+	}
+	if out := readStderr(); !strings.Contains(out, "No code entered.") {
+		t.Fatalf("stderr = %q", out)
+	}
+}
+
+func freeLoopbackPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// redirectLoginStdio swaps os.Stdin/os.Stderr for pipes. It returns the
+// stdin writer and a function that restores stderr and returns everything
+// written to it.
+func redirectLoginStdio(t *testing.T) (*os.File, func() string) {
+	t.Helper()
+	stdinR, stdinW, _ := os.Pipe()
+	stderrR, stderrW, _ := os.Pipe()
+	origStdin, origStderr := os.Stdin, os.Stderr
+	os.Stdin, os.Stderr = stdinR, stderrW
+	t.Cleanup(func() { os.Stdin, os.Stderr = origStdin, origStderr })
+	text := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(stderrR)
+		text <- string(b)
+	}()
+	return stdinW, func() string {
+		os.Stderr = origStderr
+		stderrW.Close()
+		return <-text
+	}
+}
+
+func stubLoginFlow(t *testing.T, remote string) {
 	t.Helper()
 	prevHeadless, prevRemote, prevStdin, prevOpen := loginFlowHeadless, remoteLoginSession, stdinIsTerminal, loginOpenBrowser
 	loginFlowHeadless = func() bool { return false }
 	remoteLoginSession = func() string { return remote }
 	stdinIsTerminal = func() bool { return true }
 	loginOpenBrowser = func(string) error { return nil }
-	return func() {
+	t.Cleanup(func() {
 		loginFlowHeadless, remoteLoginSession, stdinIsTerminal, loginOpenBrowser = prevHeadless, prevRemote, prevStdin, prevOpen
-	}
+	})
 }
