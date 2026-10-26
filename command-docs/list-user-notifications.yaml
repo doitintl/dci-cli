@@ -1,0 +1,14 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: list-user-notifications
+draft: true
+
+arguments:
+  user-id: "The unique ID of the user (including invited users). Must belong to the tenant resolved from the
+bearer token and optional `X-Tenant-Id`."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci list-user-notifications <user-id>"
+
+related: [create-user-notification, delete-user-notification, get-user-notification, update-user-notification]
