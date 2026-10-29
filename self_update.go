@@ -27,6 +27,7 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/creativeprojects/go-selfupdate"
+	"github.com/creativeprojects/go-selfupdate/update"
 	"github.com/rest-sh/restish/cli"
 	"github.com/spf13/cobra"
 )
@@ -459,14 +460,62 @@ func parseVersionOutput(out string) (string, error) {
 // can exercise runUpdate's self-channel flows without touching GitHub.
 var performSelfUpdate = selfUpdateBinary
 
-// selfUpdateBinary replaces the running binary with the release asset for
-// this GOOS/GOARCH, validated against the release's checksums.txt. The
-// library replaces atomically with rollback and handles the Windows
-// can't-overwrite-a-running-exe rename.
-func selfUpdateBinary(target string) error {
-	updater, err := selfupdate.NewUpdater(selfupdate.Config{
+// newSelfUpdater builds the updater for the standalone path; a var so the
+// fake-source test can point release discovery and asset download at a local
+// server instead of GitHub.
+var newSelfUpdater = func() (*selfupdate.Updater, error) {
+	return selfupdate.NewUpdater(selfupdate.Config{
 		Validator: &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"},
 	})
+}
+
+// executablePathForUpdate resolves the binary selfUpdateBinary replaces; a
+// var so the fake-source test can aim it at a scratch install instead of the
+// running test binary.
+var executablePathForUpdate = executablePath
+
+// updateArchiveMember is the executable name GoReleaser ships inside the
+// release archives (.goreleaser.yaml builds `binary: dci`) — a property of the
+// release layout, deliberately independent of the installed filename.
+const updateArchiveMember = "dci"
+
+// stageReleaseTarget returns the path updater.UpdateTo must write the new
+// binary to. The library picks the executable out of the release archive by the
+// target path's basename (decompressAndUpdate splits it and regex-matches it
+// against the tar member), so an install renamed by its owner —
+// dci-standalone, dci.bak — would look for itself in the archive and fail
+// (#91). Such installs stage the replacement under the archive's member name
+// in a unique directory next to the real binary; the caller swaps it onto the
+// running path with update.Apply. An install already named after the member
+// (dci, dci.exe) updates in place exactly as before. The staged file only
+// needs to exist: update.Apply renames it aside, then overwrites it — its
+// content is never read.
+func stageReleaseTarget(exe string) (path string, cleanup func(), err error) {
+	if strings.TrimSuffix(filepath.Base(exe), ".exe") == updateArchiveMember {
+		return exe, func() {}, nil
+	}
+	dir, err := os.MkdirTemp(filepath.Dir(exe), ".dci-update-")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup = func() { _ = os.RemoveAll(dir) }
+	staged := filepath.Join(dir, updateArchiveMember)
+	if err = os.WriteFile(staged, nil, 0o755); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return staged, cleanup, nil
+}
+
+// selfUpdateBinary replaces the running binary with the release asset for
+// this GOOS/GOARCH, validated against the release's checksums.txt. A renamed
+// install stages the download under the archive's member name (see
+// stageReleaseTarget); update.Apply then swaps it onto the running path, so
+// the atomic replace, rollback, and Windows can't-overwrite-a-running-exe
+// rename all stay the library's own. Two simultaneous updates can still race
+// on the final swap; unchanged limitation.
+func selfUpdateBinary(target string) error {
+	updater, err := newSelfUpdater()
 	if err != nil {
 		return fmt.Errorf("initialize updater: %w", err)
 	}
@@ -478,11 +527,30 @@ func selfUpdateBinary(target string) error {
 	if !found || release == nil {
 		return fmt.Errorf("release %s has no asset for %s/%s", target, runtime.GOOS, runtime.GOARCH)
 	}
-	exe := executablePath()
+	exe := executablePathForUpdate()
 	if exe == "" {
 		return fmt.Errorf("could not resolve the running executable path")
 	}
-	if err := updater.UpdateTo(ctx, release, exe); err != nil {
+	staged, cleanup, err := stageReleaseTarget(exe)
+	if err != nil {
+		return fmt.Errorf("stage %s: %w", exe, err)
+	}
+	defer cleanup()
+	if err := updater.UpdateTo(ctx, release, staged); err != nil {
+		return fmt.Errorf("replace %s: %w", exe, err)
+	}
+	if staged == exe {
+		return nil
+	}
+	updated, err := os.Open(staged)
+	if err != nil {
+		return fmt.Errorf("replace %s: %w", exe, err)
+	}
+	defer updated.Close()
+	if err := update.Apply(updated, update.Options{TargetPath: exe}); err != nil {
+		if rollback := update.RollbackError(err); rollback != nil {
+			return fmt.Errorf("replace %s: rollback failed, no binary at the path: %w", exe, rollback)
+		}
 		return fmt.Errorf("replace %s: %w", exe, err)
 	}
 	return nil

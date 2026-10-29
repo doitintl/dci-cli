@@ -67,6 +67,7 @@ Requirements on top of the library defaults:
 - **Checksum verification is mandatory**, against the `checksums.txt` GoReleaser already publishes (.goreleaser.yaml:69–70). No verified checksum → no update, loud error. (Cosign signatures can layer on later; not in scope.)
 - **No downgrades** by default; `--version vX.Y.Z` pins an explicit version in either direction for rollbacks.
 - **Permission failure is a clean error**: if the binary's directory is not writable (e.g. a root-owned `/usr/local/bin`), report the path and suggest sudo'ing the printed command — never escalate privileges itself.
+- **Renamed installs still update in place** (#91): go-selfupdate picks the executable out of the release archive by the target path's basename, and the archives always ship it as `dci` — so an install renamed by its owner stages the download under that member name in a unique `.dci-update-*` directory next to the binary, and the final swap onto the running path runs through `update.Apply` (atomic replace, rollback, and the Windows rename dance stay the library's own). An install named `dci`/`dci.exe` updates in place directly, as before.
 - The GitHub API call reuses the existing 5s-timeout client and User-Agent conventions (update.go:113–119).
 
 Flags: `--check` (report only — today's `dci upgrade` behavior), `--yes`, `--version <tag>`.
