@@ -29,6 +29,26 @@ func names(entries []os.DirEntry) []string {
 	return out
 }
 
+// writeOldExe creates a scratch install named after name holding placeholder
+// content, returning its directory and path.
+func writeOldExe(t *testing.T, name string) (dir, exe string) {
+	t.Helper()
+	dir = t.TempDir()
+	exe = filepath.Join(dir, name)
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir, exe
+}
+
+// aimExe points the self-update at exe instead of the running test binary.
+func aimExe(t *testing.T, exe string) {
+	t.Helper()
+	original := executablePathForUpdate
+	executablePathForUpdate = func() string { return exe }
+	t.Cleanup(func() { executablePathForUpdate = original })
+}
+
 // fakeUpdateEnv pins the pieces of runUpdate's environment that tests need
 // deterministic: released version, human/agent mode, confirm answer, and a
 // captured external-command runner.
@@ -452,53 +472,34 @@ func TestParseVersionOutput(t *testing.T) {
 
 func TestStageReleaseTarget(t *testing.T) {
 	t.Run("already named after the archive member updates in place", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "dci")
-		if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		staged, cleanup, err := stageReleaseTarget(exe)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if staged != exe {
-			t.Fatalf("staged = %q, want the exe path unchanged", staged)
-		}
-		cleanup()
-		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
-			t.Fatalf("dir entries = %v, %v; want only the binary, no staging dir", names(entries), err)
-		}
-	})
-
-	t.Run("windows canonical dci.exe updates in place", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "dci.exe")
-		if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		staged, cleanup, err := stageReleaseTarget(exe)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer cleanup()
-		if staged != exe {
-			t.Fatalf("staged = %q, want the exe path unchanged (the archive member matches dci.exe too)", staged)
+		// dci and the canonical Windows dci.exe both match the archive
+		// member, so both take the direct path.
+		for _, name := range []string{"dci", "dci.exe"} {
+			dir, exe := writeOldExe(t, name)
+			staged, cleanup, err := stageReleaseTarget(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			if staged != exe {
+				t.Fatalf("%s: staged = %q, want the exe path unchanged", name, staged)
+			}
+			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+				t.Fatalf("%s: dir entries = %v, %v; want only the binary, no staging dir", name, names(entries), err)
+			}
 		}
 	})
 
 	t.Run("renamed install stages under the archive member name", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "dci-standalone")
-		if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		dir, exe := writeOldExe(t, "dci-standalone")
 		staged, cleanup, err := stageReleaseTarget(exe)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer cleanup()
-		if filepath.Base(staged) != "dci" || filepath.Dir(filepath.Dir(staged)) != dir ||
-			filepath.Base(filepath.Dir(staged)) == dir {
+		stagingDir := filepath.Dir(staged)
+		if filepath.Base(staged) != "dci" || !strings.HasPrefix(filepath.Base(stagingDir), ".dci-update-") ||
+			filepath.Dir(stagingDir) != dir {
 			t.Fatalf("staged = %q, want %s/.dci-update-*/dci", staged, dir)
 		}
 		if info, err := os.Stat(staged); err != nil || !info.Mode().IsRegular() {
@@ -519,11 +520,7 @@ func TestStageReleaseTarget(t *testing.T) {
 		if os.Geteuid() == 0 {
 			t.Skip("root writes anywhere; the permission failure cannot be staged")
 		}
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "dci-standalone")
-		if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		dir, exe := writeOldExe(t, "dci-standalone")
 		if err := os.Chmod(dir, 0o555); err != nil {
 			t.Fatal(err)
 		}
@@ -627,19 +624,8 @@ func TestSelfUpdateBinaryReplacesInstall(t *testing.T) {
 	payload := []byte("the updated dci binary")
 	fakeReleaseSource(t, payload, "")
 
-	aimExe := func(t *testing.T, exe string) {
-		t.Helper()
-		original := executablePathForUpdate
-		executablePathForUpdate = func() string { return exe }
-		t.Cleanup(func() { executablePathForUpdate = original })
-	}
-
 	t.Run("renamed install", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "dci-standalone")
-		if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		dir, exe := writeOldExe(t, "dci-standalone")
 		aimExe(t, exe)
 
 		if err := selfUpdateBinary("v2.9.0"); err != nil {
@@ -654,11 +640,7 @@ func TestSelfUpdateBinaryReplacesInstall(t *testing.T) {
 	})
 
 	t.Run("install named after the archive member", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "dci")
-		if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		dir, exe := writeOldExe(t, "dci")
 		aimExe(t, exe)
 
 		if err := selfUpdateBinary("v2.9.0"); err != nil {
@@ -680,14 +662,8 @@ func TestSelfUpdateBinaryRejectsBadChecksum(t *testing.T) {
 	payload := []byte("the updated dci binary")
 	fakeReleaseSource(t, payload, "deadbeef")
 
-	dir := t.TempDir()
-	exe := filepath.Join(dir, "dci-standalone")
-	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	original := executablePathForUpdate
-	executablePathForUpdate = func() string { return exe }
-	t.Cleanup(func() { executablePathForUpdate = original })
+	dir, exe := writeOldExe(t, "dci-standalone")
+	aimExe(t, exe)
 
 	if err := selfUpdateBinary("v2.9.0"); err == nil {
 		t.Fatal("a bad checksum must abort the update")

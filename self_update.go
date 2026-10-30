@@ -490,7 +490,7 @@ const updateArchiveMember = "dci"
 // (dci, dci.exe) updates in place exactly as before. The staged file only
 // needs to exist: update.Apply renames it aside, then overwrites it — its
 // content is never read.
-func stageReleaseTarget(exe string) (path string, cleanup func(), err error) {
+func stageReleaseTarget(exe string) (string, func(), error) {
 	if strings.TrimSuffix(filepath.Base(exe), ".exe") == updateArchiveMember {
 		return exe, func() {}, nil
 	}
@@ -498,7 +498,7 @@ func stageReleaseTarget(exe string) (path string, cleanup func(), err error) {
 	if err != nil {
 		return "", func() {}, err
 	}
-	cleanup = func() { _ = os.RemoveAll(dir) }
+	cleanup := func() { _ = os.RemoveAll(dir) }
 	staged := filepath.Join(dir, updateArchiveMember)
 	if err = os.WriteFile(staged, nil, 0o755); err != nil {
 		cleanup()
