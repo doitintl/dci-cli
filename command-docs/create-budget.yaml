@@ -17,11 +17,13 @@ examples:
   - description: A budget that tracks last period's spend instead of a fixed amount, with 5% growth per month.
     command: >-
       dci create-budget name: "Team Backyard", type: recurring, timeInterval: month,
-      usePrevSpend: true, growthPerPeriod: 5, currency: USD, startPeriod: 1788220800000
+      usePrevSpend: true, growthPerPeriod: 5, currency: USD, startPeriod: 1788220800000,
+      scopes: [{"id": "cloud_provider", "type": "fixed", "mode": "is", "values": ["amazon-web-services"]}]
   - description: A fixed budget for one quarter (startPeriod and endPeriod are epoch milliseconds, UTC).
     command: >-
       dci create-budget name: "Q4 migration", type: fixed, amount: 25000, currency: USD,
-      startPeriod: 1788220800000, endPeriod: 1798675200000
+      startPeriod: 1788220800000, endPeriod: 1798675200000,
+      scopes: [{"id": "cloud_provider", "type": "fixed", "mode": "is", "values": ["amazon-web-services"]}]
   - description: Create the budget and capture its ID, for example to pass to accept-budget-suggestion.
     command: "dci create-budget --output json < budget.json | jq -r .id"
 
