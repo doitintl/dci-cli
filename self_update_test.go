@@ -1,6 +1,9 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -8,10 +11,43 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/creativeprojects/go-selfupdate"
 )
+
+// names renders directory entries for failure messages.
+func names(entries []os.DirEntry) []string {
+	out := make([]string, len(entries))
+	for i, entry := range entries {
+		out[i] = entry.Name()
+	}
+	return out
+}
+
+// writeOldExe creates a scratch install named after name holding placeholder
+// content, returning its directory and path.
+func writeOldExe(t *testing.T, name string) (dir, exe string) {
+	t.Helper()
+	dir = t.TempDir()
+	exe = filepath.Join(dir, name)
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir, exe
+}
+
+// aimExe points the self-update at exe instead of the running test binary.
+func aimExe(t *testing.T, exe string) {
+	t.Helper()
+	original := executablePathForUpdate
+	executablePathForUpdate = func() string { return exe }
+	t.Cleanup(func() { executablePathForUpdate = original })
+}
 
 // fakeUpdateEnv pins the pieces of runUpdate's environment that tests need
 // deterministic: released version, human/agent mode, confirm answer, and a
@@ -431,5 +467,211 @@ func TestParseVersionOutput(t *testing.T) {
 		if got, err := parseVersionOutput(out); err == nil {
 			t.Errorf("parseVersionOutput(%q) = %q, want an error", out, got)
 		}
+	}
+}
+
+func TestStageReleaseTarget(t *testing.T) {
+	t.Run("already named after the archive member updates in place", func(t *testing.T) {
+		// dci and the canonical Windows dci.exe both match the archive
+		// member, so both take the direct path.
+		for _, name := range []string{"dci", "dci.exe"} {
+			dir, exe := writeOldExe(t, name)
+			staged, cleanup, err := stageReleaseTarget(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			if staged != exe {
+				t.Fatalf("%s: staged = %q, want the exe path unchanged", name, staged)
+			}
+			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+				t.Fatalf("%s: dir entries = %v, %v; want only the binary, no staging dir", name, names(entries), err)
+			}
+		}
+	})
+
+	t.Run("renamed install stages under the archive member name", func(t *testing.T) {
+		dir, exe := writeOldExe(t, "dci-standalone")
+		staged, cleanup, err := stageReleaseTarget(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanup()
+		stagingDir := filepath.Dir(staged)
+		if filepath.Base(staged) != "dci" || !strings.HasPrefix(filepath.Base(stagingDir), ".dci-update-") ||
+			filepath.Dir(stagingDir) != dir {
+			t.Fatalf("staged = %q, want %s/.dci-update-*/dci", staged, dir)
+		}
+		if info, err := os.Stat(staged); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("staged file = %v, %v; want a regular file the library can replace", info, err)
+		}
+		cleanup()
+		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+			t.Fatalf("dir entries after cleanup = %v, %v; want only the binary", names(entries), err)
+		}
+	})
+
+	t.Run("unwritable directory fails without touching the original", func(t *testing.T) {
+		// Windows ignores directory chmod bits and Geteuid is meaningless
+		// there, so the failure cannot be staged portably.
+		if runtime.GOOS == "windows" {
+			t.Skip("directory chmod does not restrict writes on windows")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("root writes anywhere; the permission failure cannot be staged")
+		}
+		dir, exe := writeOldExe(t, "dci-standalone")
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+		if _, _, err := stageReleaseTarget(exe); err == nil {
+			t.Fatal("staging in an unwritable directory must fail")
+		}
+		if got, err := os.ReadFile(exe); err != nil || string(got) != "old" {
+			t.Fatalf("original = %q, %v; want it untouched", got, err)
+		}
+	})
+}
+
+// buildFakeTar gzips a one-member tar — the shape GoReleaser publishes for
+// darwin/linux release assets — with the executable under the given member
+// name.
+func buildFakeTar(t *testing.T, member string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: member, Mode: 0o755, Size: int64(len(content))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// fakeReleaseSource serves a go-selfupdate HTTPSource manifest with one
+// release (v2.9.0) whose asset is a tar.gz shipping the executable under the
+// archive member name, plus its checksums.txt — the layout GoReleaser
+// publishes. It repoints newSelfUpdater at the server so selfUpdateBinary's
+// real DetectVersion/UpdateTo/Apply path runs offline. checksumHex overrides
+// the recorded digest ("" = correct) to exercise checksum rejection.
+func fakeReleaseSource(t *testing.T, payload []byte, checksumHex string) {
+	t.Helper()
+	assetName := fmt.Sprintf("dci_2.9.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	archive := buildFakeTar(t, "dci", payload)
+	sum := sha256.Sum256(archive)
+	digest := hex.EncodeToString(sum[:])
+	if checksumHex != "" {
+		digest = checksumHex
+	}
+
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	// Handlers may register after the server starts; the manifest needs the
+	// server URL for the asset links.
+	mux.HandleFunc("/doitintl/dci-cli/manifest.yaml", func(writer http.ResponseWriter, request *http.Request) {
+		fmt.Fprintf(writer, `releases:
+  - id: 1
+    tag_name: v2.9.0
+    assets:
+      - id: 2
+        name: %s
+        url: %s/asset
+      - id: 3
+        name: checksums.txt
+        url: %s/checksums
+`, assetName, server.URL, server.URL)
+	})
+	mux.HandleFunc("/asset", func(writer http.ResponseWriter, request *http.Request) {
+		writer.Write(archive)
+	})
+	mux.HandleFunc("/checksums", func(writer http.ResponseWriter, request *http.Request) {
+		fmt.Fprintf(writer, "%s  %s\n", digest, assetName)
+	})
+
+	originalUpdater := newSelfUpdater
+	newSelfUpdater = func() (*selfupdate.Updater, error) {
+		source, err := selfupdate.NewHttpSource(selfupdate.HttpConfig{BaseURL: server.URL})
+		if err != nil {
+			return nil, err
+		}
+		return selfupdate.NewUpdater(selfupdate.Config{
+			Source:    source,
+			Validator: &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"},
+		})
+	}
+	t.Cleanup(func() { newSelfUpdater = originalUpdater })
+}
+
+// The real DetectVersion → UpdateTo → update.Apply path against a fake release
+// source: a renamed install updates in place through the staging contract
+// (#91), an install named after the archive member never stages, and a bad
+// checksum leaves the original untouched.
+func TestSelfUpdateBinaryReplacesInstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake release ships a tar.gz; windows release assets are zip")
+	}
+	payload := []byte("the updated dci binary")
+	fakeReleaseSource(t, payload, "")
+
+	t.Run("renamed install", func(t *testing.T) {
+		dir, exe := writeOldExe(t, "dci-standalone")
+		aimExe(t, exe)
+
+		if err := selfUpdateBinary("v2.9.0"); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(exe); err != nil || !bytes.Equal(got, payload) {
+			t.Fatalf("updated binary = %q, %v; want the release payload", got, err)
+		}
+		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+			t.Fatalf("dir entries = %v, %v; want only the binary, no staging or backup junk", names(entries), err)
+		}
+	})
+
+	t.Run("install named after the archive member", func(t *testing.T) {
+		dir, exe := writeOldExe(t, "dci")
+		aimExe(t, exe)
+
+		if err := selfUpdateBinary("v2.9.0"); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(exe); err != nil || !bytes.Equal(got, payload) {
+			t.Fatalf("updated binary = %q, %v; want the release payload", got, err)
+		}
+		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+			t.Fatalf("dir entries = %v, %v; want only the binary, no staging dir", names(entries), err)
+		}
+	})
+}
+
+func TestSelfUpdateBinaryRejectsBadChecksum(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake release ships a tar.gz; windows release assets are zip")
+	}
+	payload := []byte("the updated dci binary")
+	fakeReleaseSource(t, payload, "deadbeef")
+
+	dir, exe := writeOldExe(t, "dci-standalone")
+	aimExe(t, exe)
+
+	if err := selfUpdateBinary("v2.9.0"); err == nil {
+		t.Fatal("a bad checksum must abort the update")
+	}
+	if got, err := os.ReadFile(exe); err != nil || string(got) != "old" {
+		t.Fatalf("original = %q, %v; want it untouched", got, err)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
+		t.Fatalf("dir entries = %v, %v; want only the binary, no partial junk", names(entries), err)
 	}
 }
