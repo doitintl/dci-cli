@@ -1,0 +1,17 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: create-customer-notification
+draft: true
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci create-customer-notification < body.json"
+
+related:
+  [
+    create-user-notification,
+    delete-customer-notification,
+    delete-user-notification,
+    get-customer-notification,
+    get-user-notification,
+  ]
