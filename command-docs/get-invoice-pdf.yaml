@@ -1,0 +1,13 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: get-invoice-pdf
+draft: true
+
+arguments:
+  id: "Invoice number."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci get-invoice-pdf <invoice-pdf-id>"
+
+related: [get-invoice, list-invoices]
