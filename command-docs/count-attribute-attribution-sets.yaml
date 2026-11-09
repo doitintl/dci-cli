@@ -1,0 +1,17 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: count-attribute-attribution-sets
+draft: true
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci count-attribute-attribution-sets"
+
+related:
+  [
+    get-attribute-attribution-set,
+    get-attribute-workload-details,
+    get-attribute-workloads-cost-data-status,
+    get-attribute-workloads-signals,
+    list-attribute-attribution-set-versions,
+  ]
