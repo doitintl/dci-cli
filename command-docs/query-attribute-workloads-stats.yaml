@@ -1,0 +1,32 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: query-attribute-workloads-stats
+draft: true
+
+arguments:
+  dimension: "What one row (or one series) stands for:
+
+- `workload`: one Kubernetes workload on one cluster. Only these rows carry `workloadId`,
+  the input of the `/attribute/v1/workloads/w/*` operations.
+- `workloadName`: all workloads with the same name, across clusters.
+- `workloadType`: one workload type.
+- `namespace`: one Kubernetes namespace.
+- `platform`: one cluster (name, type, region, account and cloud).
+- `accountId`: one cloud account that hosts clusters.
+- `resource`: one billed cloud resource used by workloads.
+- `resourceType`: one billed service.
+- `costDescription`: one billing SKU description.
+- `platformCloudProvider`: one cloud that clusters run on."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci query-attribute-workloads-stats <dimension> filterConditions.and: []"
+
+related:
+  [
+    count-attribute-attribution-sets,
+    get-attribute-attribution-set,
+    get-attribute-workload-details,
+    get-attribute-workloads-cost-data-status,
+    get-attribute-workloads-signals,
+  ]

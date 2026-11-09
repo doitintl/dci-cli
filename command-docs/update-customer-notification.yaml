@@ -1,0 +1,21 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: update-customer-notification
+draft: true
+
+arguments:
+  id: "The unique ID of the notification config returned by create or list.
+An id that is not a cost-anomaly config for this tenant returns `404`."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci update-customer-notification <customer-notification-id> settings.costAnomalies.repeat: null"
+
+related:
+  [
+    create-customer-notification,
+    create-user-notification,
+    delete-customer-notification,
+    delete-user-notification,
+    get-customer-notification,
+  ]
