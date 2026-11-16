@@ -1,0 +1,20 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: list-attribute-workloads-resource-tag-keys
+draft: true
+
+arguments:
+  field: "The tag source. Only `resourceTags` (tags of the billed cloud resources) is supported."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci list-attribute-workloads-resource-tag-keys <field>"
+
+related:
+  [
+    count-attribute-attribution-sets,
+    get-attribute-attribution-set,
+    get-attribute-workload-details,
+    get-attribute-workloads-cost-data-status,
+    get-attribute-workloads-signals,
+  ]
