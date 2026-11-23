@@ -1,0 +1,19 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: get-customer-subscription
+draft: true
+
+arguments:
+  id: "Subscription id returned by list or create. Ids are independent ids of a scheduled subscription, an alert, or a budget. The server looks up a scheduled subscription, then an alert, then a budget. An id found in more than one of those collections is `409` `customers.subscription_id_ambiguous`. That is an invariant breach. There is no second identifier to send, and a client cannot disambiguate it. Auto-generated ids do not collide."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci get-customer-subscription <customer-subscription-id>"
+
+related:
+  [
+    create-customer-subscription,
+    delete-customer-subscription,
+    list-customer-subscriptions,
+    update-customer-subscription,
+  ]
