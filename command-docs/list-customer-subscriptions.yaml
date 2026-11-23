@@ -1,0 +1,11 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: list-customer-subscriptions
+draft: true
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci list-customer-subscriptions"
+
+related:
+  [create-customer-subscription, delete-customer-subscription, get-customer-subscription, update-customer-subscription]

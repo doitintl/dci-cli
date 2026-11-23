@@ -1,0 +1,21 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: delete-user-notification
+draft: true
+
+arguments:
+  user-id: "The unique ID of the user. Must belong to the tenant resolved from the bearer token and optional `X-Tenant-Id`."
+  id: "The unique ID of the notification config returned by create or list."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci delete-user-notification <user-id> <user-notification-id>"
+
+related:
+  [
+    create-customer-notification,
+    create-user-notification,
+    delete-customer-notification,
+    get-customer-notification,
+    get-user-notification,
+  ]

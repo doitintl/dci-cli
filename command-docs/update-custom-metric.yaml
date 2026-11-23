@@ -1,0 +1,13 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: update-custom-metric
+draft: true
+
+arguments:
+  id: "Identifier of the custom metric, as returned in `id`."
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci update-custom-metric <custom-metric-id> < body.json"
+
+related: [create-custom-metric, delete-custom-metric, get-custom-metric, list-custom-metrics]

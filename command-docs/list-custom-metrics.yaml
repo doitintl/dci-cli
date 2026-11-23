@@ -1,0 +1,10 @@
+# Scaffolded by tools/commanddocs from the OpenAPI spec. Curate the examples
+# (two to four, common case first), then remove draft: true.
+command: list-custom-metrics
+draft: true
+
+examples:
+  - description: "TODO: describe the common case (schema-generated example; verify every value)."
+    command: "dci list-custom-metrics"
+
+related: [create-custom-metric, delete-custom-metric, get-custom-metric, update-custom-metric]
