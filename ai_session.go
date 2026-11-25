@@ -29,7 +29,7 @@ import (
 
 const (
 	aiSettingsFileName = "ai_settings.json"
-	aiDefaultModel     = "claude-opus-5"
+	aiDefaultModel     = "claude-opus-5-5"
 	aiMaxToolRounds    = 16
 	// aiMaxOutputTokens bounds one API turn. Adaptive thinking counts against
 	// max_tokens: analytical questions (aggregating a 200-row result) have
@@ -46,10 +46,10 @@ const (
 // aiKnownModels is the selectable set shown by /model. Other claude-* ids are
 // accepted with a warning — the API is the final validator.
 var aiKnownModels = []string{
-	"claude-opus-5",
-	"claude-sonnet-5",
-	"claude-opus-4-8",
-	"claude-haiku-4-5",
+	"claude-opus-5-5",
+	"claude-fable-5-2",
+	"claude-sonnet-5-5",
+	"claude-haiku-5-5",
 }
 
 type aiSettings struct {

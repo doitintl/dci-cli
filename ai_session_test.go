@@ -606,11 +606,11 @@ func TestAISessionParamsLayout(t *testing.T) {
 
 func TestAISettingsRoundTripAndResolution(t *testing.T) {
 	dir := t.TempDir()
-	if err := saveAISettings(dir, aiSettings{APIKey: "sk-test", Model: "claude-sonnet-5"}); err != nil {
+	if err := saveAISettings(dir, aiSettings{APIKey: "sk-test", Model: "claude-sonnet-5-5"}); err != nil {
 		t.Fatal(err)
 	}
 	loaded := loadAISettings(dir)
-	if loaded.APIKey != "sk-test" || loaded.Model != "claude-sonnet-5" {
+	if loaded.APIKey != "sk-test" || loaded.Model != "claude-sonnet-5-5" {
 		t.Fatalf("loaded = %+v", loaded)
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "sk-env")
@@ -627,7 +627,7 @@ func TestAISettingsRoundTripAndResolution(t *testing.T) {
 	if err := aiValidateModel("gpt-4"); err == nil {
 		t.Fatal("non-claude model accepted")
 	}
-	if err := aiValidateModel("claude-opus-5"); err != nil {
+	if err := aiValidateModel("claude-opus-5-5"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -659,8 +659,8 @@ func TestResolveAIEffortAndModelOverrides(t *testing.T) {
 		t.Fatalf("env default must win over settings, got %q", got)
 	}
 	t.Setenv("DCI_AI_EFFORT", "")
-	t.Setenv("DCI_AI_MODEL", "claude-sonnet-5")
-	if got := resolveAIModel(aiSettings{Model: "claude-opus-5"}); got != "claude-sonnet-5" {
+	t.Setenv("DCI_AI_MODEL", "claude-sonnet-5-5")
+	if got := resolveAIModel(aiSettings{Model: "claude-opus-5-5"}); got != "claude-sonnet-5-5" {
 		t.Fatalf("model env must win, got %q", got)
 	}
 }
