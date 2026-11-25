@@ -26,6 +26,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/rest-sh/restish/cli"
+	"github.com/rest-sh/restish/oauth"
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -242,6 +244,69 @@ func aiProvidedEndpoint() (string, error) {
 	return parsed.String(), nil
 }
 
+// aiDCIBearer returns the DoiT access token for the vend call, refreshing an
+// expired one first. Every other request gets this from restish's auth
+// handler (authorizationCodeHandler.OnRequest, login_page.go); the vend call
+// bypasses restish, so before this it sent an expired bearer, got a 401, and
+// told the user to log in again although their refresh token was still good.
+//
+// The cache file is re-read first: in a session the commands the model runs
+// are child processes that refresh the token on disk, so the in-memory copy
+// can be stale, and refreshing from it would write an older token over the
+// children's newer one.
+//
+// The refresh never opens a browser. Restish's RefreshTokenSource falls back
+// to its wrapped source when the refresh fails, and in the real handler that
+// source is the interactive PKCE login, which must not start in the middle of
+// a session turn or a piped one-shot. Here the fallback just reports that the
+// session needs a new login.
+func aiDCIBearer() (string, error) {
+	if cli.Cache == nil {
+		return "", nil
+	}
+	reloadCredentialCache()
+	const key = "dci:default"
+	bearer := strings.TrimSpace(cli.Cache.GetString(key + ".token"))
+	if bearer == "" {
+		return "", nil
+	}
+	// No recorded expiry means nothing to refresh against; send the token
+	// as-is and let the API judge it. DCI_API_KEY lands here with a far-future
+	// expiry (applyAPIKeyAuth), so it is reused without a refresh too.
+	if cli.Cache.GetTime(key + ".expires").IsZero() {
+		return bearer, nil
+	}
+	source := &oauth.RefreshTokenSource{
+		ClientID:     dciOAuthClientID,
+		TokenURL:     dciOAuthTokenURL,
+		RefreshToken: cli.Cache.GetString(key + ".refresh"),
+		TokenSource:  aiNoInteractiveLogin{},
+	}
+	// TokenHandler reuses the cached token while it is valid, otherwise
+	// refreshes it and writes the new one back to the cache, then sets the
+	// Authorization header on the request it is given.
+	probe, err := http.NewRequest(http.MethodPost, "https://dci.invalid/", nil)
+	if err != nil {
+		return "", err
+	}
+	if err := oauth.TokenHandler(source, key, probe); err != nil {
+		return "", errors.New("your DoiT session has expired — run dci login and ask again")
+	}
+	_, refreshed, found := strings.Cut(probe.Header.Get("Authorization"), " ")
+	if !found || strings.TrimSpace(refreshed) == "" {
+		return "", errors.New("your DoiT session has expired — run dci login and ask again")
+	}
+	return strings.TrimSpace(refreshed), nil
+}
+
+// aiNoInteractiveLogin is the fallback when the refresh token cannot renew
+// the session: it fails instead of starting the browser login.
+type aiNoInteractiveLogin struct{}
+
+func (aiNoInteractiveLogin) Token() (*oauth2.Token, error) {
+	return nil, errors.New("the DoiT session cannot be refreshed without signing in again")
+}
+
 // fetchAIProvidedToken calls the vend endpoint with the same cached bearer
 // every other CLI call uses (dci login and DCI_API_KEY both land in the
 // restish cache slot — see applyAPIKeyOverride, main.go). Error strings are
@@ -253,9 +318,9 @@ func fetchAIProvidedToken(ctx context.Context) (aiVendedToken, error) {
 	if err != nil {
 		return aiVendedToken{}, err
 	}
-	bearer := ""
-	if cli.Cache != nil {
-		bearer = strings.TrimSpace(cli.Cache.GetString("dci:default.token"))
+	bearer, err := aiDCIBearer()
+	if err != nil {
+		return aiVendedToken{}, err
 	}
 	if bearer == "" {
 		return aiVendedToken{}, errors.New("DoiT-provided AI access needs a DoiT sign-in — run dci login first")

@@ -584,6 +584,18 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 	}
 }
 
+// The DoiT Console OAuth client written into apis.json. Shared with the AI
+// vend call (ai_credentials.go), which refreshes the session outside
+// restish's request path and so cannot read these back from the profile —
+// restish keeps its parsed API configs private. dciOAuthTokenURL is a var
+// only so tests can point the refresh at an httptest server.
+const (
+	dciOAuthAuthorizeURL = "https://console.doit.com/sign-in/oauth"
+	dciOAuthClientID     = "cli"
+)
+
+var dciOAuthTokenURL = "https://console.doit.com/api/auth/token"
+
 func writeConfig(configFile, base string) error {
 	config := map[string]interface{}{
 		"$schema": "https://rest.sh/schemas/apis.json",
@@ -594,9 +606,9 @@ func writeConfig(configFile, base string) error {
 					"auth": map[string]interface{}{
 						"name": "oauth-authorization-code",
 						"params": map[string]interface{}{
-							"authorize_url": "https://console.doit.com/sign-in/oauth",
-							"client_id":     "cli",
-							"token_url":     "https://console.doit.com/api/auth/token",
+							"authorize_url": dciOAuthAuthorizeURL,
+							"client_id":     dciOAuthClientID,
+							"token_url":     dciOAuthTokenURL,
 						},
 					},
 				},
