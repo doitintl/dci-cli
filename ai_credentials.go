@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -242,9 +244,236 @@ func aiProvidedEndpoint() (string, error) {
 	return parsed.String(), nil
 }
 
-// fetchAIProvidedToken calls the vend endpoint with the same cached bearer
-// every other CLI call uses (dci login and DCI_API_KEY both land in the
-// restish cache slot — see applyAPIKeyOverride, main.go). Error strings are
+// aiDCIBearer returns the DoiT access token for the vend call, refreshing an
+// expired one first. Every other request gets this from restish's auth
+// handler (authorizationCodeHandler.OnRequest, login_page.go); the vend call
+// bypasses restish, so before this it sent an expired bearer, got a 401, and
+// told the user to log in again although their refresh token was still good.
+//
+// Why this does not reuse restish's oauth.TokenHandler:
+//   - TokenHandler stores the refreshed token with cli.Cache.Set, which is
+//     viper's override layer. reloadCredentialCache (ReadInConfig) never
+//     replaces overrides, so after one refresh the session would keep its
+//     own token over a later /login, account switch or logout done by a
+//     child process, and could write the old account back to disk later.
+//   - Its token request uses http.DefaultClient with no timeout and no
+//     context, so a stalled token endpoint would hang the turn past Esc.
+//   - It runs on the session goroutine while the TUI reads cli.Cache, and
+//     viper is not safe for a concurrent write.
+//
+// So the session state is read from, and the refresh written to, a scratch
+// viper loaded from cache.json; cli.Cache is never touched here and picks
+// the new token up on the TUI's next reloadCredentialCache. The refresh is a
+// single request bounded by ctx and aiDCIRefreshTimeout, and it never falls
+// back to the browser login, which must not start in the middle of a turn.
+func aiDCIBearer(ctx context.Context) (string, error) {
+	// DCI_API_KEY is a long-lived key with nothing to refresh;
+	// applyAPIKeyAuth puts it in cli.Cache only, never on disk.
+	if key := strings.TrimSpace(os.Getenv(apiKeyEnvName)); key != "" {
+		return key, nil
+	}
+	cache := aiDCICacheFromDisk()
+	if cache == nil {
+		return "", nil
+	}
+	bearer := strings.TrimSpace(cache.GetString(aiDCICacheKey + ".token"))
+	if bearer == "" {
+		return "", nil
+	}
+	// No recorded expiry means nothing to refresh against; send the token
+	// as-is and let the API judge it.
+	expiry := cache.GetTime(aiDCICacheKey + ".expires")
+	if expiry.IsZero() || time.Until(expiry) > aiDCIRefreshMargin {
+		return bearer, nil
+	}
+	refresh := strings.TrimSpace(cache.GetString(aiDCICacheKey + ".refresh"))
+	if refresh == "" {
+		return "", errAIDCISessionExpired
+	}
+	token, err := aiRefreshDCIToken(ctx, refresh)
+	if err != nil {
+		return "", err
+	}
+	// Same keys and shapes restish's TokenHandler writes, so ordinary
+	// commands read this token back unchanged.
+	cache.Set(aiDCICacheKey+".expires", token.expiry)
+	cache.Set(aiDCICacheKey+".type", token.tokenType)
+	cache.Set(aiDCICacheKey+".token", token.accessToken)
+	if token.refreshToken != "" {
+		// A refresh response without a new refresh token means the old one
+		// stays valid; keep it.
+		cache.Set(aiDCICacheKey+".refresh", token.refreshToken)
+	}
+	if err := cache.WriteConfig(); err != nil {
+		// Failing here rather than using the token: a rotated refresh token
+		// that never reached disk would be lost, and the next refresh would
+		// fail with a misleading "run dci login".
+		return "", fmt.Errorf("could not save the renewed DoiT session: %w", err)
+	}
+	return token.accessToken, nil
+}
+
+const aiDCICacheKey = "dci:default" // main.go pins the restish profile to "default"
+
+// aiDCIRefreshMargin renews a token this close to expiry, matching the
+// oauth2 package's expiryDelta that restish's ReuseTokenSource applies.
+const aiDCIRefreshMargin = 10 * time.Second
+
+// aiDCIRefreshTimeout bounds the token request like the vend call's client;
+// a var so tests can shorten it.
+var aiDCIRefreshTimeout = 15 * time.Second
+
+var errAIDCISessionExpired = errors.New("your DoiT session has expired — run dci login and ask again")
+
+// aiDCICacheFromDisk loads restish's cache.json into a private viper, or
+// returns nil when there is no readable cache (not signed in).
+func aiDCICacheFromDisk() *viper.Viper {
+	path := ""
+	if cli.Cache != nil {
+		path = cli.Cache.ConfigFileUsed()
+	}
+	if path == "" {
+		if dir := viper.GetString("cache-dir"); dir != "" {
+			path = filepath.Join(dir, "cache.json")
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	cache := viper.New()
+	cache.SetConfigFile(path)
+	if err := cache.ReadInConfig(); err != nil {
+		return nil
+	}
+	return cache
+}
+
+// aiDCIOAuthParams returns the OAuth params of the dci profile in apis.json,
+// the same ones restish's handler refreshes ordinary commands with, falling
+// back to the values writeConfig puts there. An apis.json that names its own
+// token URL or client is honored, so its refresh token never goes to a
+// token endpoint that did not issue it.
+func aiDCIOAuthParams() map[string]string {
+	params := map[string]string{}
+	if data, err := os.ReadFile(aiDCIAPIsConfigPath()); err == nil {
+		var config struct {
+			DCI struct {
+				Profiles map[string]struct {
+					Auth struct {
+						Name   string            `json:"name"`
+						Params map[string]string `json:"params"`
+					} `json:"auth"`
+				} `json:"profiles"`
+			} `json:"dci"`
+		}
+		if json.Unmarshal(data, &config) == nil {
+			if auth := config.DCI.Profiles["default"].Auth; auth.Name == "oauth-authorization-code" {
+				for k, v := range auth.Params {
+					params[k] = v
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(params["token_url"]) == "" || strings.TrimSpace(params["client_id"]) == "" {
+		params["token_url"] = dciOAuthTokenURL
+		params["client_id"] = dciOAuthClientID
+	}
+	return params
+}
+
+// aiDCIAPIsConfigPath is the apis.json restish loaded (its config-directory,
+// which under DCI_API_BASE_URL is the per-invocation copy). A var so tests
+// can point it away from the developer's real config.
+var aiDCIAPIsConfigPath = func() string {
+	dir := viper.GetString("config-directory")
+	if dir == "" {
+		dir = dciConfigDir()
+	}
+	return filepath.Join(dir, "apis.json")
+}
+
+type aiDCIToken struct {
+	accessToken  string
+	tokenType    string
+	refreshToken string
+	expiry       time.Time
+}
+
+// aiRefreshDCIToken trades the refresh token for a new access token with the
+// same request restish's RefreshTokenSource sends (oauth/refresh.go and
+// oauth/request.go @ v0.21.2), but bounded by ctx and aiDCIRefreshTimeout.
+// Only a refusal from the token endpoint means the session is over; an
+// outage or a cancelled turn is reported as what it is.
+func aiRefreshDCIToken(ctx context.Context, refresh string) (aiDCIToken, error) {
+	params := aiDCIOAuthParams()
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {params["client_id"]},
+		"refresh_token": {refresh},
+		"scope":         {strings.Join(strings.Split(params["scopes"], ","), " ")},
+	}
+	for k, v := range params {
+		switch k {
+		case "client_id", "client_secret", "scopes", "authorize_url", "token_url", "redirect_url":
+		default:
+			form.Set(k, v) // custom endpoint params, as restish copies them
+		}
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, aiDCIRefreshTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(reqCtx, http.MethodPost, params["token_url"], strings.NewReader(form.Encode()))
+	if err != nil {
+		return aiDCIToken{}, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		if ctx.Err() != nil {
+			return aiDCIToken{}, ctx.Err()
+		}
+		return aiDCIToken{}, fmt.Errorf("could not reach the DoiT sign-in service to renew your session: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	switch {
+	case response.StatusCode == http.StatusOK:
+	case response.StatusCode >= 400 && response.StatusCode < 500 &&
+		response.StatusCode != http.StatusRequestTimeout && response.StatusCode != http.StatusTooManyRequests:
+		// invalid_grant and friends: the refresh token is revoked or expired.
+		// 408 and 429 are transient and fall through to the retry message.
+		return aiDCIToken{}, errAIDCISessionExpired
+	default:
+		return aiDCIToken{}, fmt.Errorf("the DoiT sign-in service could not renew your session (%s) — try again shortly", response.Status)
+	}
+	var decoded struct {
+		TokenType    string    `json:"token_type"`
+		AccessToken  string    `json:"access_token"`
+		RefreshToken string    `json:"refresh_token"`
+		ExpiresIn    int64     `json:"expires_in"`
+		Expiry       time.Time `json:"expiry"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&decoded); err != nil || strings.TrimSpace(decoded.AccessToken) == "" {
+		return aiDCIToken{}, errors.New("the DoiT sign-in service returned an unreadable session renewal — run dci login and ask again")
+	}
+	expiry := decoded.Expiry
+	if expiry.IsZero() {
+		expiry = time.Now().Add(time.Duration(decoded.ExpiresIn) * time.Second)
+	}
+	tokenType := decoded.TokenType
+	if tokenType == "" {
+		tokenType = "Bearer" // oauth2.Token.Type()'s default, which restish stores
+	}
+	return aiDCIToken{
+		accessToken:  strings.TrimSpace(decoded.AccessToken),
+		tokenType:    tokenType,
+		refreshToken: decoded.RefreshToken,
+		expiry:       expiry,
+	}, nil
+}
+
+// fetchAIProvidedToken calls the vend endpoint with the same bearer every
+// other CLI call uses: DCI_API_KEY, or the dci login session, renewed first
+// when it has expired (aiDCIBearer). Error strings are
 // user-facing and self-contained: they flow verbatim through the session's
 // error event, so each names its fix and deliberately avoids the raw
 // status-code vocabulary aiFriendlyAPIError rewrites (ai_tui.go).
@@ -253,9 +482,9 @@ func fetchAIProvidedToken(ctx context.Context) (aiVendedToken, error) {
 	if err != nil {
 		return aiVendedToken{}, err
 	}
-	bearer := ""
-	if cli.Cache != nil {
-		bearer = strings.TrimSpace(cli.Cache.GetString("dci:default.token"))
+	bearer, err := aiDCIBearer(ctx)
+	if err != nil {
+		return aiVendedToken{}, err
 	}
 	if bearer == "" {
 		return aiVendedToken{}, errors.New("DoiT-provided AI access needs a DoiT sign-in — run dci login first")

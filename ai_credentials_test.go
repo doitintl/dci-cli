@@ -6,15 +6,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rest-sh/restish/cli"
+	"github.com/spf13/viper"
 )
 
 // seedCachedToken swaps in a fresh restish token cache holding token — the
@@ -162,7 +166,7 @@ func TestAIProvidedTokenSourceRejectsEmptyToken(t *testing.T) {
 }
 
 func TestFetchAIProvidedToken(t *testing.T) {
-	seedCachedToken(t, "cli-bearer")
+	seedCacheFile(t, map[string]any{"token": "cli-bearer"}) // the vend call reads the session from disk
 
 	// Pin the customer context: the vend URL carries it, and the 401 wording
 	// branches on whether one is set — ambient config must not leak in.
@@ -230,7 +234,7 @@ func TestFetchAIProvidedToken(t *testing.T) {
 	})
 
 	t.Run("missing sign-in never dials", func(t *testing.T) {
-		seedCachedToken(t, "")
+		seedCacheFile(t, map[string]any{})
 		t.Setenv(aiProvidedURLEnvName, "http://127.0.0.1:1") // would fail if dialed
 		_, err := fetchAIProvidedToken(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "dci login") {
@@ -297,4 +301,287 @@ func TestAILooksLikeAuthError(t *testing.T) {
 	if aiLooksLikeAuthError(errors.New("429 rate_limit_error")) {
 		t.Fatal("rate limit misread as auth error")
 	}
+}
+
+// seedCacheFile backs cli.Cache with a real cache file holding the given
+// dci:default entry, the way a signed-in CLI has it on disk. The refresh path
+// re-reads that file and writes refreshed tokens back to it, which an
+// in-memory-only cache cannot exercise.
+func seedCacheFile(t *testing.T, entry map[string]any) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "cache.json")
+	writeCacheFile(t, path, entry)
+	old := cli.Cache
+	cli.Cache = viper.New()
+	cli.Cache.SetConfigFile(path)
+	if err := cli.Cache.ReadInConfig(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cli.Cache = old })
+	// Keep the developer's real apis.json out of the refresh params.
+	oldAPIs := aiDCIAPIsConfigPath
+	apisPath := filepath.Join(filepath.Dir(path), "apis.json")
+	aiDCIAPIsConfigPath = func() string { return apisPath }
+	t.Cleanup(func() { aiDCIAPIsConfigPath = oldAPIs })
+	return path
+}
+
+func writeCacheFile(t *testing.T, path string, entry map[string]any) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"dci:default": entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fakeTokenEndpoint stands in for the Console token URL; handler answers the
+// refresh request. It returns a pointer to the request count.
+func fakeTokenEndpoint(t *testing.T, handler http.HandlerFunc) *int {
+	t.Helper()
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		handler(w, r)
+	}))
+	t.Cleanup(server.Close)
+	oldURL := dciOAuthTokenURL
+	dciOAuthTokenURL = server.URL
+	t.Cleanup(func() { dciOAuthTokenURL = oldURL })
+	return &calls
+}
+
+func TestAIDCIBearerRefresh(t *testing.T) {
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+
+	t.Run("expired token is refreshed before the vend call", func(t *testing.T) {
+		path := seedCacheFile(t, map[string]any{"token": "stale-bearer", "type": "Bearer", "expires": past, "refresh": "refresh-1"})
+		calls := fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "refresh-1" || r.Form.Get("client_id") != dciOAuthClientID {
+				t.Errorf("refresh form = %v", r.Form)
+			}
+			fmt.Fprint(w, `{"access_token":"fresh-bearer","token_type":"Bearer","expires_in":3600}`)
+		})
+		vend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.Header.Get("Authorization"); got != "Bearer fresh-bearer" {
+				t.Errorf("vend Authorization = %q, want the refreshed bearer", got)
+			}
+			fmt.Fprint(w, `{"access_token":"sk-ant-oat01-test","expires_in":1800}`)
+		}))
+		defer vend.Close()
+		t.Setenv(aiProvidedURLEnvName, vend.URL)
+		if _, err := fetchAIProvidedToken(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if *calls != 1 {
+			t.Fatalf("token endpoint calls = %d, want 1", *calls)
+		}
+		data, _ := os.ReadFile(path)
+		if !strings.Contains(string(data), "fresh-bearer") {
+			t.Fatalf("refreshed token not written back to the cache file: %s", data)
+		}
+	})
+
+	t.Run("failed refresh asks for a login and never goes interactive", func(t *testing.T) {
+		seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "revoked"})
+		calls := fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+		})
+		_, err := aiDCIBearer(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "dci login") {
+			t.Fatalf("expected a dci login error, got %v", err)
+		}
+		if *calls != 1 {
+			t.Fatalf("token endpoint calls = %d, want 1", *calls)
+		}
+	})
+
+	t.Run("no refresh token asks for a login without dialing", func(t *testing.T) {
+		seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past})
+		calls := fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {})
+		if _, err := aiDCIBearer(context.Background()); err == nil || !strings.Contains(err.Error(), "dci login") {
+			t.Fatalf("expected a dci login error, got %v", err)
+		}
+		if *calls != 0 {
+			t.Fatalf("token endpoint calls = %d, want 0", *calls)
+		}
+	})
+
+	t.Run("valid token is reused without a refresh", func(t *testing.T) {
+		seedCacheFile(t, map[string]any{"token": "good-bearer", "expires": future, "refresh": "refresh-1"})
+		calls := fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {})
+		got, err := aiDCIBearer(context.Background())
+		if err != nil || got != "good-bearer" || *calls != 0 {
+			t.Fatalf("got %q, err %v, refresh calls %d", got, err, *calls)
+		}
+	})
+
+	t.Run("no recorded expiry sends the token as-is", func(t *testing.T) {
+		seedCacheFile(t, map[string]any{"token": "raw-bearer"})
+		calls := fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {})
+		got, err := aiDCIBearer(context.Background())
+		if err != nil || got != "raw-bearer" || *calls != 0 {
+			t.Fatalf("got %q, err %v, refresh calls %d", got, err, *calls)
+		}
+	})
+
+	t.Run("a token a child process refreshed on disk is picked up", func(t *testing.T) {
+		path := seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1"})
+		// A command the model ran refreshed the session after this process
+		// loaded the cache.
+		writeCacheFile(t, path, map[string]any{"token": "child-bearer", "expires": future, "refresh": "refresh-2"})
+		calls := fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {})
+		got, err := aiDCIBearer(context.Background())
+		if err != nil || got != "child-bearer" || *calls != 0 {
+			t.Fatalf("got %q, err %v, refresh calls %d", got, err, *calls)
+		}
+	})
+
+	t.Run("after a refresh, a login or logout on disk still wins", func(t *testing.T) {
+		path := seedCacheFile(t, map[string]any{"token": "stale-bearer", "type": "Bearer", "expires": past, "refresh": "refresh-1"})
+		fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{"access_token":"fresh-bearer","token_type":"Bearer","expires_in":3600}`)
+		})
+		if got, err := aiDCIBearer(context.Background()); err != nil || got != "fresh-bearer" {
+			t.Fatalf("first call: got %q, err %v", got, err)
+		}
+		// /login as another account, run as a child process.
+		writeCacheFile(t, path, map[string]any{"token": "other-account", "expires": future, "refresh": "refresh-9"})
+		reloadCredentialCache() // what the TUI does after a child command
+		if got, err := aiDCIBearer(context.Background()); err != nil || got != "other-account" {
+			t.Fatalf("after login: got %q, err %v", got, err)
+		}
+		if got := cli.Cache.GetString("dci:default.token"); got != "other-account" {
+			t.Fatalf("session cache still shadows the disk: %q", got)
+		}
+		// dci logout, run as a child process.
+		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		reloadCredentialCache()
+		if got, err := aiDCIBearer(context.Background()); err != nil || got != "" {
+			t.Fatalf("after logout: got %q, err %v", got, err)
+		}
+	})
+
+	t.Run("a stalled token endpoint gives up when the turn is cancelled", func(t *testing.T) {
+		seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1"})
+		release := make(chan struct{})
+		fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		})
+		defer close(release)
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+		start := time.Now()
+		if _, err := aiDCIBearer(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("cancel did not interrupt the refresh")
+		}
+	})
+
+	t.Run("a stalled token endpoint times out", func(t *testing.T) {
+		seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1"})
+		release := make(chan struct{})
+		fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		})
+		defer close(release)
+		old := aiDCIRefreshTimeout
+		aiDCIRefreshTimeout = 100 * time.Millisecond
+		t.Cleanup(func() { aiDCIRefreshTimeout = old })
+		_, err := aiDCIBearer(context.Background())
+		if err == nil || strings.Contains(err.Error(), "dci login") || !strings.Contains(err.Error(), "could not reach") {
+			t.Fatalf("expected a could-not-reach error, got %v", err)
+		}
+	})
+
+	for _, status := range []int{http.StatusBadGateway, http.StatusTooManyRequests, http.StatusRequestTimeout} {
+		t.Run(fmt.Sprintf("a transient %d from the token endpoint is not reported as an expired session", status), func(t *testing.T) {
+			seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1"})
+			fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			})
+			_, err := aiDCIBearer(context.Background())
+			if err == nil || strings.Contains(err.Error(), "dci login") {
+				t.Fatalf("expected a transient error, got %v", err)
+			}
+		})
+	}
+
+	t.Run("a refresh without a new refresh token keeps the old one", func(t *testing.T) {
+		path := seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1", "other": "kept"})
+		fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{"access_token":"fresh-bearer","token_type":"Bearer","expires_in":3600}`)
+		})
+		if _, err := aiDCIBearer(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		reread := viper.New()
+		reread.SetConfigFile(path)
+		if err := reread.ReadInConfig(); err != nil {
+			t.Fatal(err)
+		}
+		if got := reread.GetString("dci:default.refresh"); got != "refresh-1" {
+			t.Fatalf("refresh token = %q, want refresh-1", got)
+		}
+		if exp := reread.GetTime("dci:default.expires"); !exp.After(time.Now()) {
+			t.Fatalf("expiry not moved forward: %v", exp)
+		}
+		if got := reread.GetString("dci:default.other"); got != "kept" {
+			t.Fatalf("unrelated cache key lost: %q", got)
+		}
+	})
+
+	t.Run("the token URL and client in apis.json are honored", func(t *testing.T) {
+		path := seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1"})
+		// The fallback endpoint must not be dialed.
+		fallback := fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {})
+		custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			if r.Form.Get("client_id") != "custom-client" || r.Form.Get("audience") != "dci" {
+				t.Errorf("refresh form = %v", r.Form)
+			}
+			fmt.Fprint(w, `{"access_token":"custom-bearer","expires_in":3600}`)
+		}))
+		defer custom.Close()
+		apis := map[string]any{"dci": map[string]any{"profiles": map[string]any{"default": map[string]any{"auth": map[string]any{
+			"name":   "oauth-authorization-code",
+			"params": map[string]string{"client_id": "custom-client", "token_url": custom.URL, "audience": "dci"},
+		}}}}}
+		data, _ := json.Marshal(apis)
+		if err := os.WriteFile(filepath.Join(filepath.Dir(path), "apis.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := aiDCIBearer(context.Background())
+		if err != nil || got != "custom-bearer" || *fallback != 0 {
+			t.Fatalf("got %q, err %v, fallback calls %d", got, err, *fallback)
+		}
+	})
+
+	t.Run("DCI_API_KEY is never refreshed", func(t *testing.T) {
+		seedCacheFile(t, map[string]any{"token": "x"})
+		t.Setenv(apiKeyEnvName, "api-key-token")
+		oldProfile := viper.GetString("rsh-profile")
+		viper.Set("rsh-profile", "default") // restish's default; unset in tests
+		t.Cleanup(func() { viper.Set("rsh-profile", oldProfile) })
+		applyAPIKeyAuth()
+		calls := fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {})
+		got, err := aiDCIBearer(context.Background())
+		if err != nil || got != "api-key-token" || *calls != 0 {
+			t.Fatalf("got %q, err %v, refresh calls %d", got, err, *calls)
+		}
+	})
 }
