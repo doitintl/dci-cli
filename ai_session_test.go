@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -662,5 +663,72 @@ func TestResolveAIEffortAndModelOverrides(t *testing.T) {
 	t.Setenv("DCI_AI_MODEL", "claude-sonnet-5-5")
 	if got := resolveAIModel(aiSettings{Model: "claude-opus-5-5"}); got != "claude-sonnet-5-5" {
 		t.Fatalf("model env must win, got %q", got)
+	}
+}
+
+// TestAISessionSystemPromptStableAcrossCustomerSwitch is the regression for
+// preserved thinking's prefix check: Opus 5.5 / Fable 5.x sign each thinking
+// block against the top-level system prompt, so a system prompt that changes
+// after set_customer_context (or /customer) makes the next request a 400. The
+// system blocks must stay byte-identical for the whole conversation; the new
+// tenant reaches the model through the tool result or an appended message.
+func TestAISessionSystemPromptStableAcrossCustomerSwitch(t *testing.T) {
+	var captured []anthropic.MessageNewParams
+	turns := []string{
+		aiTestToolUseTurn(aiTestSwitchBlock("call-1", "acme.com")),
+		aiTestTextTurn,
+		aiTestTextTurn,
+	}
+	session := newTestSession(t, turns, &scriptedRunner{})
+	session.tenantAware = true
+	scripted := session.streamer
+	session.streamer = func(ctx context.Context, params anthropic.MessageNewParams, onDelta, onThinking func(string)) (anthropic.Message, error) {
+		captured = append(captured, params)
+		return scripted(ctx, params, onDelta, onThinking)
+	}
+
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "switch to acme"}); err != nil {
+		t.Fatal(err)
+	}
+	collectTurnEvents(t, session)
+	// The user then persists a different context with /customer.
+	if err := os.WriteFile(customerContextPath(session.configDir), []byte("globex.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session.ClearCustomerOverride()
+	if err := session.Send(aiUserInput{Kind: aiInputChat, Text: "and now?"}); err != nil {
+		t.Fatal(err)
+	}
+	collectTurnEvents(t, session)
+
+	if len(captured) != 3 {
+		t.Fatalf("captured %d requests, want 3", len(captured))
+	}
+	first, _ := json.Marshal(captured[0].System)
+	for i, params := range captured[1:] {
+		if got, _ := json.Marshal(params.System); string(got) != string(first) {
+			t.Fatalf("request %d changed the system prompt:\nfirst: %s\nlater: %s", i+2, first, got)
+		}
+	}
+	if strings.Contains(string(first), "acme.com") || strings.Contains(string(first), "globex.com") {
+		t.Fatalf("frozen system prompt names a later context: %s", first)
+	}
+
+	// The agent's switch is reported in its tool result.
+	toolResult, _ := json.Marshal(captured[1].Messages[2])
+	if !strings.Contains(string(toolResult), "acme.com") {
+		t.Fatalf("tool result does not name the new customer: %s", toolResult)
+	}
+	// The /customer change is appended to the next user message.
+	last := captured[2].Messages[len(captured[2].Messages)-1]
+	encoded, _ := json.Marshal(last)
+	if !strings.Contains(string(encoded), "Session context update") || !strings.Contains(string(encoded), "globex.com") {
+		t.Fatalf("next user message does not announce the /customer change: %s", encoded)
+	}
+	// Earlier history is untouched (append-only).
+	before, _ := json.Marshal(captured[1].Messages)
+	after, _ := json.Marshal(captured[2].Messages[:len(captured[1].Messages)])
+	if string(before) != string(after) {
+		t.Fatal("history before the new question was rewritten")
 	}
 }
