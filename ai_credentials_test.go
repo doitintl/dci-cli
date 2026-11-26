@@ -508,16 +508,18 @@ func TestAIDCIBearerRefresh(t *testing.T) {
 		}
 	})
 
-	t.Run("a token endpoint outage is not reported as an expired session", func(t *testing.T) {
-		seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1"})
-		fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusBadGateway)
+	for _, status := range []int{http.StatusBadGateway, http.StatusTooManyRequests, http.StatusRequestTimeout} {
+		t.Run(fmt.Sprintf("a transient %d from the token endpoint is not reported as an expired session", status), func(t *testing.T) {
+			seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1"})
+			fakeTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			})
+			_, err := aiDCIBearer(context.Background())
+			if err == nil || strings.Contains(err.Error(), "dci login") {
+				t.Fatalf("expected a transient error, got %v", err)
+			}
 		})
-		_, err := aiDCIBearer(context.Background())
-		if err == nil || strings.Contains(err.Error(), "dci login") {
-			t.Fatalf("expected an outage error, got %v", err)
-		}
-	})
+	}
 
 	t.Run("a refresh without a new refresh token keeps the old one", func(t *testing.T) {
 		path := seedCacheFile(t, map[string]any{"token": "stale-bearer", "expires": past, "refresh": "refresh-1", "other": "kept"})

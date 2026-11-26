@@ -437,8 +437,10 @@ func aiRefreshDCIToken(ctx context.Context, refresh string) (aiDCIToken, error) 
 	defer func() { _ = response.Body.Close() }()
 	switch {
 	case response.StatusCode == http.StatusOK:
-	case response.StatusCode >= 400 && response.StatusCode < 500:
+	case response.StatusCode >= 400 && response.StatusCode < 500 &&
+		response.StatusCode != http.StatusRequestTimeout && response.StatusCode != http.StatusTooManyRequests:
 		// invalid_grant and friends: the refresh token is revoked or expired.
+		// 408 and 429 are transient and fall through to the retry message.
 		return aiDCIToken{}, errAIDCISessionExpired
 	default:
 		return aiDCIToken{}, fmt.Errorf("the DoiT sign-in service could not renew your session (%s) — try again shortly", response.Status)
