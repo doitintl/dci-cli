@@ -570,22 +570,22 @@ func TestAIContextSwitchEventRefreshesIdentity(t *testing.T) {
 
 func TestAIModelVerb(t *testing.T) {
 	m := aiTestModel(t)
-	m = aiType(m, "/model claude-sonnet-5")
+	m = aiType(m, "/model claude-sonnet-5-5")
 	updated, _ := aiPress(m, tea.KeyEnter)
 	m = updated
-	if !strings.Contains(aiTranscriptText(m), "Model set to claude-sonnet-5") {
+	if !strings.Contains(aiTranscriptText(m), "Model set to claude-sonnet-5-5") {
 		t.Fatal("/model confirmation missing from the transcript")
 	}
-	if m.modelName != "claude-sonnet-5" {
+	if m.modelName != "claude-sonnet-5-5" {
 		t.Fatalf("modelName = %q", m.modelName)
 	}
-	if got := loadAISettings(m.configDir).Model; got != "claude-sonnet-5" {
+	if got := loadAISettings(m.configDir).Model; got != "claude-sonnet-5-5" {
 		t.Fatalf("persisted model = %q", got)
 	}
 	m = aiType(m, "/model gpt-4")
 	updated, _ = aiPress(m, tea.KeyEnter)
 	m = updated
-	if m.modelName != "claude-sonnet-5" {
+	if m.modelName != "claude-sonnet-5-5" {
 		t.Fatalf("invalid model applied: %q", m.modelName)
 	}
 }

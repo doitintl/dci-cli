@@ -29,7 +29,7 @@ import (
 
 const (
 	aiSettingsFileName = "ai_settings.json"
-	aiDefaultModel     = "claude-opus-5"
+	aiDefaultModel     = "claude-opus-5-5"
 	aiMaxToolRounds    = 16
 	// aiMaxOutputTokens bounds one API turn. Adaptive thinking counts against
 	// max_tokens: analytical questions (aggregating a 200-row result) have
@@ -46,10 +46,10 @@ const (
 // aiKnownModels is the selectable set shown by /model. Other claude-* ids are
 // accepted with a warning — the API is the final validator.
 var aiKnownModels = []string{
-	"claude-opus-5",
-	"claude-sonnet-5",
-	"claude-opus-4-8",
-	"claude-haiku-4-5",
+	"claude-opus-5-5",
+	"claude-fable-5-2",
+	"claude-sonnet-5-5",
+	"claude-haiku-5-5",
 }
 
 type aiSettings struct {
@@ -242,13 +242,19 @@ type localAISession struct {
 	approvals chan aiUserInput
 	done      chan struct{} // closed by Close; emit drains against it
 
-	mu      sync.Mutex
-	history []anthropic.MessageParam
-	pending []string // injected slash results, consumed by the next question
-	running bool
-	cancel  context.CancelFunc
-	turnSeq int
-	closed  bool
+	mu sync.Mutex
+	// systemTail is the volatile system block, frozen at the conversation's
+	// first request (see aiVolatileSystem for why it must never change), and
+	// announcedContext is the context the model was last told about — in
+	// systemTail, a set_customer_context result, or an appended update.
+	systemTail       string
+	announcedContext string
+	history          []anthropic.MessageParam
+	pending          []string // injected slash results, consumed by the next question
+	running          bool
+	cancel           context.CancelFunc
+	turnSeq          int
+	closed           bool
 }
 
 // errAITurnRunning is returned by Send(chat) while a turn is in flight.
@@ -407,8 +413,31 @@ func aiCommandResultContext(input aiUserInput) string {
 	return b.String()
 }
 
+// freezeSystemTailLocked renders the volatile system block on first use and
+// keeps it for the rest of the conversation.
+func (s *localAISession) freezeSystemTailLocked() {
+	if s.systemTail != "" {
+		return
+	}
+	override := s.executor.CustomerOverride()
+	s.systemTail = aiVolatileSystem(s.configDir, time.Now(), override)
+	s.announcedContext = aiSessionContextLines(s.configDir, override)
+}
+
 func (s *localAISession) composeUserMessageLocked(question string) anthropic.MessageParam {
-	blocks := make([]anthropic.ContentBlockParamUnion, 0, len(s.pending)+1)
+	blocks := make([]anthropic.ContentBlockParamUnion, 0, len(s.pending)+2)
+	if s.systemTail == "" {
+		s.freezeSystemTailLocked()
+	} else if current := aiSessionContextLines(s.configDir, s.executor.CustomerOverride()); current != s.announcedContext {
+		// The context changed outside the agent's own tool call (/customer,
+		// a re-login): the frozen system prompt is now stale, so the update
+		// rides in the conversation, appended where it became true.
+		if current == "" {
+			current = "No customer context is active.\n"
+		}
+		blocks = append(blocks, anthropic.NewTextBlock("Session context update (supersedes the context in the system prompt):\n"+current))
+		s.announcedContext = aiSessionContextLines(s.configDir, s.executor.CustomerOverride())
+	}
 	for _, injected := range s.pending {
 		blocks = append(blocks, anthropic.NewTextBlock(injected))
 	}
@@ -459,11 +488,13 @@ func (s *localAISession) tools() []anthropic.ToolUnionParam {
 
 func (s *localAISession) params() anthropic.MessageNewParams {
 	s.mu.Lock()
+	s.freezeSystemTailLocked()
 	history := append([]anthropic.MessageParam{}, s.history...)
 	model := s.model
+	tail := s.systemTail
 	s.mu.Unlock()
 	stable := anthropic.TextBlockParam{Text: s.stablePrompt, CacheControl: anthropic.NewCacheControlEphemeralParam()}
-	volatile := anthropic.TextBlockParam{Text: aiVolatileSystem(s.configDir, time.Now(), s.executor.CustomerOverride())}
+	volatile := anthropic.TextBlockParam{Text: tail}
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(model),
 		MaxTokens: aiMaxOutputTokens,
@@ -760,6 +791,11 @@ func (s *localAISession) executeSerialToolCall(turnID string, toolUse anthropic.
 		started := time.Now()
 		from, to, outcome := s.executor.SetCustomer(input)
 		if !outcome.IsError {
+			// The tool result below is how the model learns the new tenant
+			// (the system prompt stays frozen), so record it as announced.
+			s.mu.Lock()
+			s.announcedContext = aiSessionContextLines(s.configDir, s.executor.CustomerOverride())
+			s.mu.Unlock()
 			s.emit(aiEvent{ContextSwitched: &aiContextSwitched{From: from, To: to, By: "agent"}})
 		}
 		s.emit(aiEvent{ToolResult: &aiToolResult{

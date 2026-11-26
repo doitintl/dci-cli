@@ -158,11 +158,24 @@ func aiCatalogPromptSection(catalog []aiCatalogEntry) string {
 	return b.String()
 }
 
-// aiVolatileSystem is the post-breakpoint tail: everything here may change
-// between requests without touching the cached prefix.
+// aiVolatileSystem is the post-breakpoint tail of the system prompt. The
+// session renders it ONCE, at the start of the conversation, and resends it
+// byte-identical on every request: models with preserved thinking (Opus 5.5,
+// Fable 5.x) sign each thinking block against the top-level system prompt, so
+// editing it mid-conversation invalidates every earlier thinking block and
+// the next request fails with HTTP 400. Later changes to these facts (a
+// customer switch, a re-login) reach the model as appended messages instead —
+// see localAISession.composeUserMessageLocked.
 func aiVolatileSystem(configDir string, now time.Time, customerOverride string) string {
+	return fmt.Sprintf("Today's date: %s.\n", now.Format("2006-01-02")) + aiSessionContextLines(configDir, customerOverride)
+}
+
+// aiSessionContextLines is the part of the volatile tail that can change
+// during a session: the active customer context and the signed-in identity.
+// The session compares it before each question to detect a change it must
+// announce in the conversation.
+func aiSessionContextLines(configDir string, customerOverride string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Today's date: %s.\n", now.Format("2006-01-02"))
 	switch context := readCustomerContext(configDir); {
 	case customerOverride != "":
 		// The agent's own session-scoped switch (set_customer_context) wins

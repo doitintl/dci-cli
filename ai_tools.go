@@ -380,7 +380,10 @@ func (e *aiToolExecutor) SetCustomer(input aiSetCustomerInput) (from, to string,
 	e.mu.Lock()
 	e.customerOverride = token
 	e.mu.Unlock()
-	return from, token, aiToolOutcome{Data: fmt.Sprintf("customer context switched from %q to %q for this session (the saved context is unchanged)", from, token)}
+	// The result is the model's only notice of the switch: the system prompt
+	// is frozen for the conversation (aiVolatileSystem), so say that the new
+	// tenant supersedes the one it names.
+	return from, token, aiToolOutcome{Data: fmt.Sprintf("customer context switched from %q to %q for this session (the saved context is unchanged). Active customer context is now %s; this supersedes the context in the system prompt.", from, token, token)}
 }
 
 // aiCapToolResult bounds one tool result entering model context (§7.6),
