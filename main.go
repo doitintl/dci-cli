@@ -584,11 +584,11 @@ func applyAPIBaseOverride(realConfigDir string, args []string) (cleanup func()) 
 	}
 }
 
-// The DoiT Console OAuth client written into apis.json. Shared with the AI
-// vend call (ai_credentials.go), which refreshes the session outside
-// restish's request path and so cannot read these back from the profile —
-// restish keeps its parsed API configs private. dciOAuthTokenURL is a var
-// only so tests can point the refresh at an httptest server.
+// The DoiT Console OAuth client written into apis.json. The AI vend call
+// (ai_credentials.go) refreshes the session outside restish's request path;
+// it reads the params from apis.json itself and falls back to these when the
+// file lacks them. dciOAuthTokenURL is a var only so tests can point that
+// fallback at an httptest server.
 const (
 	dciOAuthAuthorizeURL = "https://console.doit.com/sign-in/oauth"
 	dciOAuthClientID     = "cli"
